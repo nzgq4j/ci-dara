@@ -2,7 +2,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbo",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
     "prettier-fix": "prettier --write .",
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
+    "@prisma/adapter-pg": "7.8.0",
     "@prisma/client": "^7.8.0",
     "@radix-ui/react-avatar": "^1.2.0",
     "@radix-ui/react-dialog": "^1.1.17",
@@ -43,6 +44,7 @@
     "dotenv": "^17.4.2",
     "lucide-react": "0.330.0",
     "next": "14.2.3",
+    "pg": "^8.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.80.0",

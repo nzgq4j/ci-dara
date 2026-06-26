@@ -1,6 +1,6 @@
 import { toDateTime } from '@/utils/helpers';
 import { stripe } from '@/utils/stripe/config';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
 import type { Database, Tables, TablesInsert } from 'types_db';
 
@@ -12,10 +12,25 @@ const TRIAL_PERIOD_DAYS = 0;
 
 // Note: supabaseAdmin uses the SERVICE_ROLE_KEY which you must only use in a secure server-side context
 // as it has admin privileges and overwrites RLS policies!
-const supabaseAdmin = createClient<Database>(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+//
+// The client is created lazily (on first property access) rather than at module
+// load time. Constructing it at module scope makes `next build`'s page-data
+// collection evaluate it during the build, where env vars may be empty, causing
+// `createClient` to throw "supabaseKey is required". Deferring to request time
+// avoids that while keeping every call site (`supabaseAdmin.from(...)`) unchanged.
+let _supabaseAdmin: SupabaseClient<Database> | null = null;
+const supabaseAdmin = new Proxy({} as SupabaseClient<Database>, {
+  get(_target, prop) {
+    if (!_supabaseAdmin) {
+      _supabaseAdmin = createClient<Database>(
+        process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+        process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+      );
+    }
+    const value = (_supabaseAdmin as any)[prop];
+    return typeof value === 'function' ? value.bind(_supabaseAdmin) : value;
+  }
+});
 
 const upsertProductRecord = async (product: Stripe.Product) => {
   const productData: Product = {
