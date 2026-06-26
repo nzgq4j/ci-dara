@@ -18,14 +18,13 @@ export async function extractText(filename: string, buffer: Buffer): Promise<str
   const lower = filename.toLowerCase();
   try {
     if (lower.endsWith('.pdf')) {
-      const { PDFParse } = await import('pdf-parse');
-      const parser = new PDFParse({ data: buffer });
-      try {
-        const result: any = await parser.getText();
-        return String(result?.text ?? '');
-      } finally {
-        await parser.destroy();
-      }
+      // unpdf bundles a serverless-friendly (worker-free) pdfjs build, which
+      // avoids the worker / asset-tracing failures pdf-parse hits on Vercel.
+      const { extractText: pdfExtractText } = await import('unpdf');
+      const { text } = await pdfExtractText(new Uint8Array(buffer), {
+        mergePages: true
+      });
+      return text || '';
     }
     if (lower.endsWith('.docx')) {
       const mammoth: any = await import('mammoth');
@@ -35,7 +34,9 @@ export async function extractText(filename: string, buffer: Buffer): Promise<str
     if (lower.endsWith('.txt') || lower.endsWith('.md')) {
       return buffer.toString('utf8');
     }
-  } catch {
+  } catch (e) {
+    // Surface the reason in the function logs; caller marks status 'failed'.
+    console.error(`[extractText] failed for ${filename}:`, e);
     return '';
   }
   return '';
