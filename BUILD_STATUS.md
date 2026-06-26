@@ -1,106 +1,121 @@
-# DARA — Build Status
+# DARA — Build Status & Decisions
 
 _Last updated: 2026-06-26_
 
-Production: **https://ci-dara.vercel.app** (Vercel project `crucible-insight/ci-dara`)
-Branch: `main` — all work below is committed and deployed.
+**Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (all work below committed & deployed)
+**Stack:** Next.js 14 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage) · Stripe · Vercel
 
 ---
 
 ## 1. Summary
 
 The app was migrated to a new Supabase project, its (previously never-passing)
-build was fixed, and the DARA persona + evaluation system was ported from the
-original WordPress plugin and wired end-to-end. The app builds green and deploys
-to production.
+build was fixed, the DARA persona + evaluation engine was ported from the
+WordPress plugin and wired end-to-end, and admin/billing and a prototype-matched
+UID redesign were added. The app builds green and is deployed to production.
 
 ---
 
-## 2. Completed
+## 2. Key decisions (with rationale)
+
+| Area | Decision | Why |
+|------|----------|-----|
+| **Prisma 7 runtime** | Use `@prisma/adapter-pg` driver adapter, constructed with `DATABASE_URL` | Prisma 7 no longer reads the datasource URL from the schema or `prisma.config.ts` at runtime; a driver adapter is the supported path. URLs stay in `prisma.config.ts` for the CLI. |
+| **PDF extraction** | `unpdf` (not `pdf-parse`) | `pdf-parse` v2 works locally but fails in Vercel's serverless runtime (pdfjs worker/asset tracing). `unpdf` ships a worker-free serverless pdfjs build. DOCX still uses `mammoth`. |
+| **Auth provisioning** | Call `provisionNewUser` on email+password sign-in too | Provisioning previously only ran in `/auth/callback` (OAuth/magic-link), so password users had "no account information". |
+| **Admin model** | Platform admin via email allow-list (`PLATFORM_ADMIN_EMAILS`, fallback list); company admin via `UserRole = company_admin` | No super-admin concept existed in the schema; email allow-list is simple and explicit. |
+| **API keys at rest** | AES-256-GCM (`utils/dara/crypto.ts`) keyed off `APP_KEY` | BYOK keys must be encrypted; the WP `Crypto` class was not portable. |
+| **Stripe checkout** | Custom plan cards → Stripe Checkout Session (promotion codes enabled) | User chose custom cards over the hosted pricing table; coupon support needed for testing. |
+| **Stripe billing model** | Webhook syncs to the Prisma `Company` (`plan/planStatus/stripeCustomerId/stripeSubId`) | That's what the app's trial gating / admin actually read; the Supabase template billing tables were dropped. |
+| **Stripe environment** | Live keys, tested with a coupon | User opted to run against live as-is. |
+| **Webhook endpoint** | `https://dara.crucibleinsight.com/api/webhooks` | Canonical custom domain (matches `NEXT_PUBLIC_SITE_URL`); both domains are Vercel-served. (A trailing-dot typo in the Stripe endpoint URL was the cause of the first failed sync.) |
+| **Plan↔price map** | Base=$150 `price_1Tm7jq…`, Pro=$399 `price_1Tm7kH…`, Enterprise=$899 `price_1Tm7kr…` | Existing live Stripe catalog. `starter` plan is labelled **"Base"** in the UI. |
+| **UI design system** | Port `DARA App Prototype.dc.html` (from the claude.ai design project via DesignSync) | IBM Plex fonts, accent `#3b6ef0`, layered dark palette, 220px sectioned sidebar, full-screen app shell (marketing chrome gated off `/app`). |
+
+---
+
+## 3. Completed
 
 ### Infrastructure / migration
-- Migrated to new Supabase project `djcgfejogflbqaqtuhtk`.
-- Connection strings updated in `.env.local` **and** Vercel env (all envs):
-  `DATABASE_URL` (transaction pooler, 6543), `DIRECT_URL` (session pooler, 5432),
+- New Supabase project `djcgfejogflbqaqtuhtk`; all connection strings + keys in
+  `.env.local` and Vercel: `DATABASE_URL`, `DIRECT_URL`,
   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SITE_URL`, `PLATFORM_ANTHROPIC_KEY`.
-- `prisma db push` created all tables in the new DB; `prisma generate` wired into
-  the build (`prisma generate && next build`).
-- **Prisma 7 runtime fix:** added the `@prisma/adapter-pg` driver adapter — Prisma 7
-  no longer reads the datasource URL from the schema/`prisma.config.ts` at runtime,
-  so the client is constructed with a pg adapter using `DATABASE_URL`.
-- Private Supabase Storage bucket `dara-documents` created.
-- Seeded login user `david@crucibleinsight.com` (email pre-confirmed).
+  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SITE_URL`, `PLATFORM_ANTHROPIC_KEY`,
+  `APP_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
+- `prisma db push` + `prisma generate` (wired into the build); pg driver adapter.
+- Private Supabase Storage bucket `dara-documents`.
+- Seed login user `david@crucibleinsight.com` (pre-confirmed).
 
 ### Build fixes (pre-existing breakage)
-- Standardized Supabase client typing across `@supabase/ssr` and
-  `@supabase/supabase-js` (was a hard type error).
-- Deferred the Supabase admin client creation to first use (build-time page-data
-  collection was constructing it with an empty key).
-- Account provisioning now also runs on **email+password** sign-in (previously only
-  on `/auth/callback`, so password users had "no account information").
+- Supabase client typing across `@supabase/ssr` / `supabase-js`; lazy admin
+  client; `prisma generate` in the build script; client BigInt/Date no longer
+  passed to the client `Header` (fixed a client-side exception on mutations).
 
 ### Features
-- **Solicitation detail page** (`/app/solicitations/[id]`): edit/delete the
-  solicitation; full CRUD on **criteria** and **offerors**.
-- **Personas** (`/app/personas`): five built-in evaluator personas auto-seeded
-  (Technical Evaluator, Contracting Officer, Past Performance, Management & Risk,
-  Small Business); full CRUD + active toggle + restore-defaults.
-- **Evaluation pipeline** (`utils/dara/`):
-  - `prompt.ts` — system/user prompt builder + JSON parser (per-criterion-type
-    schemas: scored_factor / compliance / administrative).
-  - `providers.ts` — Anthropic / OpenAI / Google clients + company AI-config
-    resolution (platform key or BYOK).
-  - `evaluator.ts` — runs one evaluation (offeror × persona) across all criteria.
-  - `documents.ts` — Storage upload + server-side text extraction (PDF via
-    pdf-parse v2, DOCX via mammoth, plain text).
-  - Solicitation page wiring: upload RFP/proposal docs, per-offeror **Run
-    evaluation** (synchronous, `maxDuration=300`), results view (score /
-    determination + confidence + rationale per criterion per persona).
+- **Solicitations**: list, create, detail with full CRUD on criteria & offerors.
+- **Personas** (`/app/personas`): 5 built-ins auto-seeded; full CRUD + active toggle.
+- **Evaluation pipeline** (`utils/dara/`): prompt builder, providers
+  (Anthropic/OpenAI/Google + platform/BYOK resolution), evaluator, document
+  upload + extraction (unpdf/mammoth), per-offeror **Run evaluation**
+  (synchronous, `maxDuration=300`), results view.
+- **Settings** (`/app/settings`, company admin): AI config + encrypted BYOK keys
+  + company user management.
+- **Admin** (`/app/admin`, platform admin): manage all accounts (plan, status,
+  trial end, AI config) and all users.
+- **Billing** (`/app/billing`): custom plan cards → Checkout (coupons enabled),
+  Customer Portal; webhook → `Company` sync.
+- **UI redesign (in progress)**: foundation + shell (IBM Plex, accent, sidebar,
+  full-screen app), **sign-in** (two-panel brand layout), **dashboard** (stat
+  cards + recent activity + plan panel). `dara-logo.png` in sidebar/sign-in +
+  favicon; company name under the DARA badge; `starter`→"Base" label.
 
 ---
 
-## 3. Known gaps / not yet verified
+## 4. Known gaps / action items
 
-1. **Supabase Auth URL config (dashboard — your action).** Site URL + redirect
-   allow-list must be set so confirmation/magic-link emails stop pointing to
-   `localhost:3000`. Set Site URL = `https://dara.crucibleinsight.com` and add
-   redirect URLs `https://dara.crucibleinsight.com/**` and
-   `http://localhost:3000/**`. (Requires dashboard or a Supabase management token.)
-2. **Live AI run not yet executed.** Build is green and the platform key is set,
-   but no real Anthropic round-trip has been run end-to-end.
-3. **BYOK keys not wired.** Only platform mode works (company default). The WP
-   key-encryption (`Crypto`) was not ported, so bring-your-own-key needs that.
-4. **Synchronous evaluation.** Large solicitations (many personas × criteria) can
-   approach the 300s function limit. The `JobQueue` table exists but is unused.
-5. **All active personas run all criteria.** The WP plugin's per-criterion persona
-   assignment was not ported.
-6. **Not ported from WP:** Compliance Matrix, Reports/export, audit log, settings UI.
-7. **No OCR.** Scanned/image-only PDFs won't yield text; administrative (font /
-   margin) checks are limited by text extraction (same limitation as WP).
-8. **Stripe webhooks** won't verify until `STRIPE_WEBHOOK_SECRET` is set (currently
-   empty). Only relevant if billing is used.
+1. **Supabase Auth URL config (your action, dashboard).** Set Site URL =
+   `https://dara.crucibleinsight.com` and add redirect URLs
+   `https://dara.crucibleinsight.com/**`, `http://localhost:3000/**`. Until then,
+   confirmation/magic-link emails point at `localhost`.
+2. **Stripe webhook endpoint** — confirm the URL has **no trailing dot** and add
+   `customer.subscription.updated` to the subscribed events (created/deleted are
+   there; updated is needed for plan changes/renewals). Activate the **Customer
+   Portal** (Stripe → Settings → Billing) so "Manage billing" works.
+3. **Live AI evaluation** verified to connect (manual `SELECT 1` + sync), but a
+   full multi-criteria AI run hasn't been exercised end-to-end in the browser.
+4. **Synchronous evaluation** can approach the 300s function limit on large
+   solicitations; `JobQueue` table exists but is unused (future: cron worker).
+5. **Per-criterion persona assignment**, **Compliance Matrix**, **Reports/export**
+   from the WP plugin are not ported yet.
+6. No OCR for scanned/image-only PDFs.
+7. `dara-logo.png` (~630 KB) is heavy for an icon; an optimized version would help.
 
 ---
 
-## 4. Next steps (suggested order)
+## 5. Next steps (suggested order)
 
-1. Set the Supabase Auth Site URL + redirect URLs (unblocks new signups).
-2. Smoke-test one real evaluation end-to-end (upload a proposal, Run evaluation).
-3. Build a **Settings** page (`/app/settings`) for company AI config:
-   provider/model selection and BYOK key entry (port the `Crypto` encryption).
-4. Move evaluations to the **JobQueue + Vercel Cron** model for robustness at scale
-   (the original WP design; avoids function timeouts). `CRON_SECRET` is already set.
-5. Per-criterion persona assignment.
-6. Results aggregation / scoring rollup, plus Reports + Compliance Matrix (port the
-   remaining WP modules) and export.
-7. (Optional) OCR for scanned PDFs.
+1. **Finish the UI redesign** (task in progress):
+   - Solicitations **list** + **detail** (tabs: Overview / Documents / Criteria /
+     Offerors / Matrix) to match the prototype.
+   - Personas, Settings, Billing, Admin → align cards/tables/badges/mono labels.
+   - Optional: rebuild the OAuth button block (Google/Microsoft) to match.
+2. **Reporting (phase 2)** — port WP **Reports** + **Compliance Matrix**:
+   - Scoring rollup per offeror (weighted by criterion `weight`, aggregated
+     across personas), comparison/compliance matrix, PDF/CSV export.
+3. **Evaluation robustness** — move runs to the `JobQueue` + a Vercel Cron worker
+   (`CRON_SECRET` already set) to avoid function timeouts at scale; add
+   per-criterion persona assignment.
+4. **Billing polish** — map raw `starter` → "Base" on the billing page; handle
+   `customer.subscription.paused`.
+5. **Housekeeping** — optimized logo asset; smoke-test a real evaluation run.
 
 ---
 
-## 5. Key env vars (set on Vercel, all environments)
+## 6. Key paths
 
-`DATABASE_URL`, `DIRECT_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-`NEXT_PUBLIC_SITE_URL`, `PLATFORM_ANTHROPIC_KEY`.
-(`STRIPE_WEBHOOK_SECRET` is still empty.)
+- Engine: `utils/dara/{prompt,providers,evaluator,documents,personas,billing,crypto,admin,provision}.ts`
+- App shell: `app/app/layout.tsx`, `components/layout/{Sidebar,ChromeGate}.tsx`
+- Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin}/…`
+- Webhook: `app/api/webhooks/route.ts`
+- Design tokens: `tailwind.config.js`, `styles/main.css`, fonts in `app/layout.tsx`
