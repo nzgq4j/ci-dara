@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
+import { isPlatformAdmin } from '@/utils/dara/admin';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 
@@ -21,7 +22,7 @@ export default async function AppLayout({
 
   return (
     <div className="flex h-screen bg-[#070c16] text-slate-200">
-      <Sidebar />
+      <Sidebar isAdmin={isPlatformAdmin(user.email)} />
       <div className="flex flex-col flex-1 overflow-hidden">
         <Header
         user={{

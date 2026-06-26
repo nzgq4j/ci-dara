@@ -7,6 +7,7 @@ import {
   FileText,
   Users,
   Settings,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -16,15 +17,18 @@ interface NavItem {
   icon: LucideIcon;
 }
 
-const navItems: NavItem[] = [
+const baseNavItems: NavItem[] = [
   { href: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/app/solicitations', label: 'Solicitations', icon: FileText },
   { href: '/app/personas', label: 'Personas', icon: Users },
   { href: '/app/settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
+  const navItems = isAdmin
+    ? [...baseNavItems, { href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
+    : baseNavItems;
 
   return (
     <aside className="flex h-full w-64 flex-col border-r border-[#1a2f4a] bg-[#0d1527]">

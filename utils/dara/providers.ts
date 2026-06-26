@@ -1,5 +1,6 @@
 // AI providers — ported from the DARA WordPress plugin Providers/*.
 // Each returns the completion text plus token usage.
+import { decryptSecret } from '@/utils/dara/crypto';
 
 export interface AIResult {
   text: string;
@@ -39,12 +40,13 @@ export function resolveCompanyAI(company: CompanyAI): ResolvedAI {
           ? process.env.PLATFORM_OPENAI_KEY ?? ''
           : process.env.PLATFORM_GOOGLE_KEY ?? '';
   } else {
-    apiKey =
-      (provider === 'anthropic'
+    const enc =
+      provider === 'anthropic'
         ? company.anthropicKeyEnc
         : provider === 'openai'
           ? company.openaiKeyEnc
-          : company.googleKeyEnc) ?? '';
+          : company.googleKeyEnc;
+    apiKey = decryptSecret(enc);
   }
 
   return { provider, model: company.activeModel, apiKey };
