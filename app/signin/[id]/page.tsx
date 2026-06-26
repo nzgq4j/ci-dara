@@ -75,9 +75,8 @@ export default async function SignIn({
           style={{ background: 'radial-gradient(ellipse at 30% 50%,rgba(59,110,240,.12) 0%,transparent 70%)' }}
         />
         <div className="relative z-10 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#1d4ed8] text-base font-bold text-white">
-            D
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/dara-logo.png" alt="DARA" className="h-10 w-10 object-contain" />
           <div>
             <div className="text-base font-bold tracking-tight text-[#e8eef7]">DARA</div>
             <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#3b6ef0]">
@@ -112,9 +111,8 @@ export default async function SignIn({
         <div className="fade w-full max-w-[400px]">
           {/* Mobile logo */}
           <div className="mb-8 flex items-center gap-2.5 md:hidden">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#1d4ed8] text-base font-bold text-white">
-              D
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/dara-logo.png" alt="DARA" className="h-9 w-9 object-contain" />
             <div className="text-base font-bold tracking-tight text-[#e8eef7]">DARA</div>
           </div>
 

@@ -32,6 +32,13 @@ function titleCase(s: string) {
     .join(' ');
 }
 
+const PLAN_LABELS: Record<string, string> = {
+  trial: 'Trial',
+  starter: 'Base',
+  pro: 'Pro',
+  enterprise: 'Enterprise'
+};
+
 export default function Sidebar({
   isAdmin = false,
   company,
@@ -70,7 +77,7 @@ export default function Sidebar({
   ];
 
   const initials = (user.name || user.email || '?').slice(0, 2).toUpperCase();
-  const companyInitial = (company.name || 'C').slice(0, 1).toUpperCase();
+  const planLabel = PLAN_LABELS[company.plan] ?? company.plan;
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -82,33 +89,26 @@ export default function Sidebar({
 
   return (
     <aside className="flex h-full w-[220px] flex-shrink-0 flex-col overflow-hidden border-r border-[#1a2f4a] bg-[#09101e]">
-      {/* Logo */}
-      <div className="flex items-center gap-2.5 border-b border-[#1a2f4a] px-4 py-[14px]">
-        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[#1d4ed8] text-sm font-bold text-white">
-          D
-        </div>
-        <div>
-          <div className="text-sm font-bold leading-none tracking-tight text-[#e8eef7]">
+      {/* Logo + company */}
+      <div className="flex items-center gap-2.5 border-b border-[#1a2f4a] px-4 py-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/dara-logo.png"
+          alt="DARA"
+          className="h-8 w-8 flex-shrink-0 object-contain"
+        />
+        <div className="min-w-0">
+          <div className="text-sm font-bold leading-tight tracking-tight text-[#e8eef7]">
             DARA
           </div>
-          <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#3b6ef0]">
-            Crucible Insight
-          </div>
+          <div className="truncate text-[11px] text-[#7d97b3]">{company.name}</div>
         </div>
       </div>
 
-      {/* Company + plan */}
-      <div className="flex items-center gap-2 border-b border-[#1a2f4a] px-3.5 py-2.5">
-        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[#1d4ed8] text-[11px] font-bold text-white">
-          {companyInitial}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-[#cbd5e1]">
-            {company.name}
-          </div>
-          <div className="font-mono text-[10px] uppercase text-[#3b6ef0]">
-            {company.plan} plan
-          </div>
+      {/* Plan */}
+      <div className="border-b border-[#1a2f4a] px-4 py-2">
+        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#3b6ef0]">
+          {planLabel} plan
         </div>
       </div>
 

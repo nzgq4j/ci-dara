@@ -29,6 +29,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(getURL()),
   title: title,
   description: description,
+  icons: {
+    icon: '/dara-logo.png',
+    shortcut: '/dara-logo.png',
+    apple: '/dara-logo.png'
+  },
   openGraph: {
     title: title,
     description: description
