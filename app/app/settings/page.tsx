@@ -7,10 +7,10 @@ import { prisma } from '@/utils/prisma';
 import { encryptSecret, secretHint } from '@/utils/dara/crypto';
 
 const fieldClasses =
-  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#378ADD] focus:outline-none focus:ring-1 focus:ring-[#378ADD]';
+  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#3b6ef0] focus:outline-none focus:ring-1 focus:ring-[#3b6ef0]';
 const labelClasses = 'text-xs font-medium uppercase tracking-wide text-[#7d97b3]';
 const primaryBtn =
-  'inline-flex items-center gap-2 rounded-md bg-[#378ADD] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]';
+  'inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
 const ghostBtn =
   'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
 

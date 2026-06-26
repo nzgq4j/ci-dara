@@ -13,7 +13,7 @@ import {
 } from '@/utils/dara/billing';
 
 const primaryBtn =
-  'inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#378ADD] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]';
+  'inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
 const ghostBtn =
   'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
 
@@ -108,13 +108,13 @@ export default async function BillingPage({
             <div
               key={plan}
               className={`flex flex-col rounded-lg border bg-[#0d1527] p-5 ${
-                isCurrent ? 'border-[#378ADD]' : 'border-[#1a2f4a]'
+                isCurrent ? 'border-[#3b6ef0]' : 'border-[#1a2f4a]'
               }`}
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-white">{info.name}</h3>
                 {isCurrent && (
-                  <span className="rounded-full bg-[#378ADD]/20 px-2 py-0.5 text-xs font-medium text-[#7db8e0]">
+                  <span className="rounded-full bg-[#3b6ef0]/20 px-2 py-0.5 text-xs font-medium text-[#6f9bf5]">
                     Current
                   </span>
                 )}

@@ -18,7 +18,22 @@ module.exports = {
     },
     extend: {
       fontFamily: {
-        sans: ['var(--font-sans)', ...fontFamily.sans]
+        sans: ['var(--font-sans)', ...fontFamily.sans],
+        mono: ['var(--font-mono)', ...fontFamily.mono]
+      },
+      colors: {
+        dara: {
+          bg: '#070c16',
+          panel: '#09101e',
+          card: '#0d1527',
+          input: '#0f1c2e',
+          border: '#1a2f4a',
+          accent: '#3b6ef0',
+          faint: '#3d5270',
+          muted: '#7d97b3',
+          text: '#e8eef7',
+          heading: '#f0f4ff'
+        }
       },
       keyframes: {
         'accordion-down': {

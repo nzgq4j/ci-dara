@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useState } from 'react';
 import {
   LayoutDashboard,
   FileText,
@@ -9,58 +10,156 @@ import {
   Settings,
   ShieldCheck,
   CreditCard,
-  type LucideIcon,
+  LogOut,
+  type LucideIcon
 } from 'lucide-react';
+import { createClient } from '@/utils/supabase/client';
 
 interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
 }
+interface Section {
+  label: string;
+  items: NavItem[];
+}
 
-const baseNavItems: NavItem[] = [
-  { href: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/app/solicitations', label: 'Solicitations', icon: FileText },
-  { href: '/app/personas', label: 'Personas', icon: Users },
-  { href: '/app/billing', label: 'Billing', icon: CreditCard },
-  { href: '/app/settings', label: 'Settings', icon: Settings },
-];
+function titleCase(s: string) {
+  return s
+    .split('_')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
 
-export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
-  const pathname = usePathname();
-  const navItems = isAdmin
-    ? [...baseNavItems, { href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
-    : baseNavItems;
+export default function Sidebar({
+  isAdmin = false,
+  company,
+  user
+}: {
+  isAdmin?: boolean;
+  company: { name: string; plan: string };
+  user: { name: string; email: string; role: string };
+}) {
+  const pathname = usePathname() || '';
+  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
+
+  const sections: Section[] = [
+    {
+      label: 'Workspace',
+      items: [
+        { href: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { href: '/app/solicitations', label: 'Solicitations', icon: FileText }
+      ]
+    },
+    {
+      label: 'Analysis',
+      items: [{ href: '/app/personas', label: 'Personas', icon: Users }]
+    },
+    {
+      label: 'Account',
+      items: [
+        { href: '/app/billing', label: 'Billing', icon: CreditCard },
+        { href: '/app/settings', label: 'Settings', icon: Settings },
+        ...(isAdmin
+          ? [{ href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
+          : [])
+      ]
+    }
+  ];
+
+  const initials = (user.name || user.email || '?').slice(0, 2).toUpperCase();
+  const companyInitial = (company.name || 'C').slice(0, 1).toUpperCase();
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push('/signin');
+    router.refresh();
+  };
 
   return (
-    <aside className="flex h-full w-64 flex-col border-r border-[#1a2f4a] bg-[#0d1527]">
-      <div className="border-b border-[#1a2f4a] px-6 py-5">
-        <div className="text-xl font-semibold tracking-wide text-white">
-          DARA
+    <aside className="flex h-full w-[220px] flex-shrink-0 flex-col overflow-hidden border-r border-[#1a2f4a] bg-[#09101e]">
+      {/* Logo */}
+      <div className="flex items-center gap-2.5 border-b border-[#1a2f4a] px-4 py-[14px]">
+        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[#1d4ed8] text-sm font-bold text-white">
+          D
         </div>
-        <div className="text-xs text-[#7d97b3]">by Crucible Insight</div>
+        <div>
+          <div className="text-sm font-bold leading-none tracking-tight text-[#e8eef7]">
+            DARA
+          </div>
+          <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#3b6ef0]">
+            Crucible Insight
+          </div>
+        </div>
       </div>
 
-      <nav className="flex-1 space-y-1 p-3">
-        {navItems.map(({ href, label, icon: Icon }) => {
-          const isActive = pathname === href || pathname.startsWith(`${href}/`);
+      {/* Company + plan */}
+      <div className="flex items-center gap-2 border-b border-[#1a2f4a] px-3.5 py-2.5">
+        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[#1d4ed8] text-[11px] font-bold text-white">
+          {companyInitial}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold text-[#cbd5e1]">
+            {company.name}
+          </div>
+          <div className="font-mono text-[10px] uppercase text-[#3b6ef0]">
+            {company.plan} plan
+          </div>
+        </div>
+      </div>
 
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-[#1a2f4a] text-white'
-                  : 'text-[#7d97b3] hover:bg-[#1a2f4a]/50 hover:text-white'
-              }`}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
-            </Link>
-          );
-        })}
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto p-2">
+        {sections.map((section) => (
+          <div key={section.label}>
+            <div className="px-2 pb-1.5 pt-3 font-mono text-[9px] uppercase tracking-[0.1em] text-[#3d5270]">
+              {section.label}
+            </div>
+            {section.items.map(({ href, label, icon: Icon }) => {
+              const active = pathname === href || pathname.startsWith(`${href}/`);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors ${
+                    active
+                      ? 'bg-[#3b6ef0]/15 text-[#e8eef7]'
+                      : 'text-[#7d97b3] hover:bg-white/5 hover:text-[#e8eef7]'
+                  }`}
+                >
+                  <Icon className="h-4 w-4 flex-shrink-0" />
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
+
+      {/* User */}
+      <div className="flex items-center gap-2.5 border-t border-[#1a2f4a] px-3.5 py-3">
+        <div className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#1d4ed8] to-[#7c3aed] text-xs font-bold text-white">
+          {initials}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold text-[#cbd5e1]">
+            {user.name || user.email}
+          </div>
+          <div className="text-[10px] text-[#3d5270]">{titleCase(user.role)}</div>
+        </div>
+        <button
+          onClick={handleSignOut}
+          disabled={signingOut}
+          title="Sign out"
+          className="text-[#3d5270] transition-colors hover:text-[#e8eef7] disabled:opacity-50"
+        >
+          <LogOut className="h-4 w-4" />
+        </button>
+      </div>
     </aside>
   );
 }

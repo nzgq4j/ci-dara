@@ -40,7 +40,7 @@ async function createSolicitation(formData: FormData) {
 }
 
 const fieldClasses =
-  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#378ADD] focus:outline-none focus:ring-1 focus:ring-[#378ADD]';
+  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#3b6ef0] focus:outline-none focus:ring-1 focus:ring-[#3b6ef0]';
 
 export default function NewSolicitationPage() {
   return (
@@ -67,7 +67,7 @@ export default function NewSolicitationPage() {
       >
         <div className="space-y-1.5">
           <label htmlFor="title" className="text-sm font-medium text-white">
-            Title <span className="text-[#378ADD]">*</span>
+            Title <span className="text-[#3b6ef0]">*</span>
           </label>
           <input
             id="title"
@@ -130,7 +130,7 @@ export default function NewSolicitationPage() {
           </Link>
           <button
             type="submit"
-            className="rounded-md bg-[#378ADD] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]"
+            className="rounded-md bg-[#3b6ef0] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]"
           >
             Create Solicitation
           </button>

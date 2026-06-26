@@ -21,10 +21,10 @@ import { runEvaluation } from '@/utils/dara/evaluator';
 export const maxDuration = 300;
 
 const fieldClasses =
-  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#378ADD] focus:outline-none focus:ring-1 focus:ring-[#378ADD]';
+  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#3b6ef0] focus:outline-none focus:ring-1 focus:ring-[#3b6ef0]';
 const labelClasses = 'text-xs font-medium uppercase tracking-wide text-[#7d97b3]';
 const primaryBtn =
-  'inline-flex items-center gap-2 rounded-md bg-[#378ADD] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]';
+  'inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
 const ghostBtn =
   'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
 const dangerBtn =
@@ -34,14 +34,14 @@ const CRITERION_TYPES = ['scored_factor', 'pass_fail', 'requirement', 'subfactor
 
 const statusStyles: Record<string, string> = {
   pending: 'bg-[#1a2f4a] text-[#7d97b3]',
-  running: 'bg-[#378ADD]/20 text-[#7db8e0]',
+  running: 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
   complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
   failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
 };
 
 const extractStyles: Record<string, string> = {
   pending: 'text-[#7d97b3]',
-  processing: 'text-[#7db8e0]',
+  processing: 'text-[#6f9bf5]',
   complete: 'text-[#7de0a0]',
   failed: 'text-[#e07d7d]'
 };
@@ -381,7 +381,7 @@ export default async function SolicitationDetailPage({
           <input type="hidden" name="solId" value={sid} />
           <div className="space-y-1.5">
             <label htmlFor="title" className={labelClasses}>
-              Title <span className="text-[#378ADD]">*</span>
+              Title <span className="text-[#3b6ef0]">*</span>
             </label>
             <input id="title" name="title" type="text" required defaultValue={solicitation.title} className={fieldClasses} />
           </div>
@@ -493,7 +493,7 @@ export default async function SolicitationDetailPage({
             <input type="hidden" name="solId" value={sid} />
             <div className="grid gap-3 sm:grid-cols-12">
               <div className="space-y-1.5 sm:col-span-6">
-                <label className={labelClasses}>Name <span className="text-[#378ADD]">*</span></label>
+                <label className={labelClasses}>Name <span className="text-[#3b6ef0]">*</span></label>
                 <input name="name" type="text" required placeholder="e.g. Technical Approach" className={fieldClasses} />
               </div>
               <div className="space-y-1.5 sm:col-span-3">
@@ -609,7 +609,7 @@ export default async function SolicitationDetailPage({
             <input type="hidden" name="solId" value={sid} />
             <div className="grid gap-3 sm:grid-cols-12">
               <div className="space-y-1.5 sm:col-span-5">
-                <label className={labelClasses}>Offeror name <span className="text-[#378ADD]">*</span></label>
+                <label className={labelClasses}>Offeror name <span className="text-[#3b6ef0]">*</span></label>
                 <input name="offerorName" type="text" required placeholder="e.g. Acme Corp" className={fieldClasses} />
               </div>
               <div className="space-y-1.5 sm:col-span-7">
@@ -657,7 +657,7 @@ export default async function SolicitationDetailPage({
                     <div key={res.id.toString()} className="rounded-md border border-[#1a2f4a] bg-[#070c16] p-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-white">{res.criterion.name}</span>
-                        <span className="text-sm text-[#7db8e0]">
+                        <span className="text-sm text-[#6f9bf5]">
                           {res.aiScore != null
                             ? `${Number(res.aiScore)}/100`
                             : res.aiDetermination ?? '—'}

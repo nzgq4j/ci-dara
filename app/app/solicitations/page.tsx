@@ -37,7 +37,7 @@ export default async function SolicitationsPage() {
         </div>
         <Link
           href="/app/solicitations/new"
-          className="inline-flex items-center gap-2 rounded-md bg-[#378ADD] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]"
+          className="inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]"
         >
           <Plus className="h-4 w-4" />
           New Solicitation
@@ -52,7 +52,7 @@ export default async function SolicitationsPage() {
           </p>
           <Link
             href="/app/solicitations/new"
-            className="mt-4 inline-flex items-center gap-2 rounded-md bg-[#378ADD] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]"
+            className="mt-4 inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]"
           >
             <Plus className="h-4 w-4" />
             New Solicitation
@@ -80,7 +80,7 @@ export default async function SolicitationsPage() {
                   <td className="px-5 py-3">
                     <Link
                       href={`/app/solicitations/${sol.id}`}
-                      className="font-medium text-white hover:text-[#378ADD]"
+                      className="font-medium text-white hover:text-[#3b6ef0]"
                     >
                       {sol.title}
                     </Link>

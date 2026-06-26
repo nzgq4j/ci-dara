@@ -50,7 +50,7 @@ export default async function DashboardPage() {
         </div>
         <Link
           href="/app/solicitations/new"
-          className="inline-flex items-center gap-2 rounded-md bg-[#378ADD] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f78c2]"
+          className="inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]"
         >
           <Plus className="h-4 w-4" />
           New Solicitation

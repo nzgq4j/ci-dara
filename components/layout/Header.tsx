@@ -32,7 +32,7 @@ export default function Header({ user }: { user: HeaderUser }) {
           {user.company.name}
         </span>
         {user.company.plan === 'trial' && (
-          <span className="rounded-full border border-[#378ADD]/40 bg-[#378ADD]/10 px-2 py-0.5 text-xs font-medium text-[#378ADD]">
+          <span className="rounded-full border border-[#3b6ef0]/40 bg-[#3b6ef0]/10 px-2 py-0.5 text-xs font-medium text-[#3b6ef0]">
             Trial
           </span>
         )}
@@ -43,7 +43,7 @@ export default function Header({ user }: { user: HeaderUser }) {
         <button
           onClick={handleSignOut}
           disabled={signingOut}
-          className="flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-1.5 text-sm text-[#7d97b3] transition-colors hover:border-[#378ADD] hover:text-white disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-1.5 text-sm text-[#7d97b3] transition-colors hover:border-[#3b6ef0] hover:text-white disabled:opacity-50"
         >
           <LogOut className="h-4 w-4" />
           {signingOut ? 'Signing out…' : 'Sign out'}
