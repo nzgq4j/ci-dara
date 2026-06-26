@@ -1,17 +1,20 @@
 'use client';
 
-import Button from '@/components/ui/Button';
 import Link from 'next/link';
 import { signInWithPassword } from '@/utils/auth-helpers/server';
 import { handleRequest } from '@/utils/auth-helpers/client';
 import { useRouter } from 'next/navigation';
 import React, { useState } from 'react';
 
-// Define prop type with allowEmail boolean
 interface PasswordSignInProps {
   allowEmail: boolean;
   redirectMethod: string;
 }
+
+const inputCls =
+  'w-full rounded-lg border border-[#1a2f4a] bg-[#0f1c2e] px-3.5 py-2.5 text-[#e8eef7] outline-none transition-colors focus:border-[#3b6ef0]';
+const labelCls =
+  'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.04em] text-[#7d97b3]';
 
 export default function PasswordSignIn({
   allowEmail,
@@ -21,68 +24,77 @@ export default function PasswordSignIn({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    setIsSubmitting(true); // Disable the button while the request is being handled
+    setIsSubmitting(true);
     await handleRequest(e, signInWithPassword, router);
     setIsSubmitting(false);
   };
 
   return (
-    <div className="my-8">
-      <form
-        noValidate={true}
-        className="mb-4"
-        onSubmit={(e) => handleSubmit(e)}
-      >
-        <div className="grid gap-2">
-          <div className="grid gap-1">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              placeholder="name@example.com"
-              type="email"
-              name="email"
-              autoCapitalize="none"
-              autoComplete="email"
-              autoCorrect="off"
-              className="w-full p-3 rounded-md bg-zinc-800"
-            />
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              placeholder="Password"
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              className="w-full p-3 rounded-md bg-zinc-800"
-            />
-          </div>
-          <Button
-            variant="slim"
-            type="submit"
-            className="mt-1"
-            loading={isSubmitting}
-          >
-            Sign in
-          </Button>
+    <div>
+      <form noValidate onSubmit={(e) => handleSubmit(e)} className="space-y-3.5">
+        <div>
+          <label htmlFor="email" className={labelCls}>
+            Email
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@agency.gov"
+            autoCapitalize="none"
+            autoComplete="email"
+            autoCorrect="off"
+            className={inputCls}
+          />
         </div>
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <label htmlFor="password" className={labelCls + ' mb-0'}>
+              Password
+            </label>
+            <Link
+              href="/signin/forgot_password"
+              className="text-[12px] text-[#3b6ef0]"
+            >
+              Forgot password?
+            </Link>
+          </div>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            placeholder="••••••••••••"
+            autoComplete="current-password"
+            className={inputCls}
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded-lg bg-[#3b6ef0] py-3 text-[14px] font-bold tracking-tight text-white transition-colors hover:bg-[#2f5fd6] disabled:opacity-60"
+        >
+          {isSubmitting ? 'Signing in…' : 'Sign In'}
+        </button>
       </form>
-      <p>
-        <Link href="/signin/forgot_password" className="font-light text-sm">
-          Forgot your password?
-        </Link>
-      </p>
-      {allowEmail && (
-        <p>
-          <Link href="/signin/email_signin" className="font-light text-sm">
-            Sign in via magic link
+
+      <div className="mt-6 space-y-2 text-center text-[12px] text-[#7d97b3]">
+        {allowEmail && (
+          <div>
+            <Link href="/signin/email_signin" className="text-[#3b6ef0]">
+              Sign in via magic link
+            </Link>
+          </div>
+        )}
+        <div>
+          Don&apos;t have an account?{' '}
+          <Link
+            href="/signin/signup"
+            className="font-semibold text-[#3b6ef0]"
+          >
+            Request access →
           </Link>
-        </p>
-      )}
-      <p>
-        <Link href="/signin/signup" className="font-light text-sm">
-          Don't have an account? Sign up
-        </Link>
-      </p>
+        </div>
+      </div>
     </div>
   );
 }
