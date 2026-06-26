@@ -1,0 +1,295 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Plan {
+  trial
+  starter
+  pro
+  enterprise
+}
+
+enum PlanStatus {
+  active
+  past_due
+  canceled
+  trialing
+}
+
+enum AIKeyMode {
+  platform
+  byok
+}
+
+enum AIProvider {
+  anthropic
+  openai
+  google
+}
+
+enum UserRole {
+  company_admin
+  dept_admin
+  manager
+  reviewer
+}
+
+enum ExtractionStatus {
+  pending
+  processing
+  complete
+  failed
+}
+
+enum EvaluationStatus {
+  pending
+  running
+  complete
+  failed
+}
+
+enum JobType {
+  evaluate
+  extract
+  generate_matrix
+}
+
+enum JobStatus {
+  pending
+  running
+  done
+  failed
+}
+
+model Company {
+  id               BigInt     @id @default(autoincrement())
+  name             String     @db.VarChar(255)
+  slug             String     @unique @db.VarChar(100)
+  plan             Plan       @default(trial)
+  planStatus       PlanStatus @default(trialing) @map("plan_status")
+  trialEndsAt      DateTime?  @map("trial_ends_at")
+  stripeCustomerId String?    @map("stripe_customer_id") @db.VarChar(100)
+  stripeSubId      String?    @unique @map("stripe_sub_id") @db.VarChar(100)
+  aiKeyMode        AIKeyMode  @default(platform) @map("ai_key_mode")
+  activeProvider   AIProvider @default(anthropic) @map("active_provider")
+  activeModel      String     @default("claude-sonnet-4-6") @map("active_model") @db.VarChar(100)
+  anthropicKeyEnc  String?    @map("anthropic_key_enc")
+  openaiKeyEnc     String?    @map("openai_key_enc")
+  googleKeyEnc     String?    @map("google_key_enc")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  users         DaraUser[]
+  solicitations Solicitation[]
+  personas      Persona[]
+  evaluations   Evaluation[]
+  results       Result[]
+  jobQueue      JobQueue[]
+
+  @@index([plan, planStatus])
+  @@map("dara_companies")
+}
+
+model DaraUser {
+  id          String    @id @db.Uuid
+  companyId   BigInt    @map("company_id")
+  email       String    @unique @db.VarChar(255)
+  name        String    @default("") @db.VarChar(255)
+  role        UserRole  @default(company_admin)
+  isActive    Boolean   @default(true) @map("is_active")
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@map("dara_users")
+}
+
+model Solicitation {
+  id          BigInt   @id @default(autoincrement())
+  companyId   BigInt   @map("company_id")
+  title       String   @db.VarChar(500)
+  solNumber   String   @default("") @map("sol_number") @db.VarChar(100)
+  agency      String   @default("") @db.VarChar(255)
+  notes       String?
+  createdBy   String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  solDocs     SolDocument[]
+  criteria    Criterion[]
+  responses   Response[]
+  evaluations Evaluation[]
+
+  @@index([companyId])
+  @@map("dara_solicitations")
+}
+
+model SolDocument {
+  id               BigInt           @id @default(autoincrement())
+  companyId        BigInt           @map("company_id")
+  solicitationId   BigInt           @map("solicitation_id")
+  originalFilename String           @map("original_filename") @db.VarChar(500)
+  storedFilename   String           @map("stored_filename") @db.VarChar(500)
+  fileSize         Int              @default(0) @map("file_size")
+  extractionStatus ExtractionStatus @default(pending) @map("extraction_status")
+  extractedText    String?          @map("extracted_text")
+  uploadedBy       String?          @map("uploaded_by") @db.Uuid
+  uploadedAt       DateTime         @default(now()) @map("uploaded_at")
+
+  solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+
+  @@index([solicitationId])
+  @@index([companyId])
+  @@map("dara_sol_documents")
+}
+
+model Criterion {
+  id             BigInt  @id @default(autoincrement())
+  companyId      BigInt  @map("company_id")
+  solicitationId BigInt  @map("solicitation_id")
+  name           String  @db.VarChar(300)
+  description    String?
+  criterionType  String  @default("scored_factor") @map("criterion_type") @db.VarChar(50)
+  farReference   String  @default("") @map("far_reference") @db.VarChar(100)
+  weight         Int     @default(0)
+  sortOrder      Int     @default(0) @map("sort_order")
+
+  solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  results      Result[]
+
+  @@index([solicitationId])
+  @@index([companyId])
+  @@map("dara_criteria")
+}
+
+model Persona {
+  id           BigInt   @id @default(autoincrement())
+  companyId    BigInt   @map("company_id")
+  displayName  String   @map("display_name") @db.VarChar(200)
+  systemPrompt String   @map("system_prompt")
+  isActive     Boolean  @default(true) @map("is_active")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  results Result[]
+
+  @@index([companyId, isActive])
+  @@map("dara_personas")
+}
+
+model Response {
+  id             BigInt   @id @default(autoincrement())
+  companyId      BigInt   @map("company_id")
+  solicitationId BigInt   @map("solicitation_id")
+  offerorName    String   @map("offeror_name") @db.VarChar(300)
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  solicitation Solicitation   @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  files        ResponseFile[]
+  evaluations  Evaluation[]
+
+  @@index([solicitationId])
+  @@index([companyId])
+  @@map("dara_responses")
+}
+
+model ResponseFile {
+  id               BigInt           @id @default(autoincrement())
+  companyId        BigInt           @map("company_id")
+  responseId       BigInt           @map("response_id")
+  originalFilename String           @map("original_filename") @db.VarChar(500)
+  storedFilename   String           @map("stored_filename") @db.VarChar(500)
+  fileSize         Int              @default(0) @map("file_size")
+  extractionStatus ExtractionStatus @default(pending) @map("extraction_status")
+  extractedText    String?          @map("extracted_text")
+  uploadedAt       DateTime         @default(now()) @map("uploaded_at")
+
+  response Response @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@index([responseId])
+  @@index([companyId])
+  @@map("dara_response_files")
+}
+
+model Evaluation {
+  id             BigInt           @id @default(autoincrement())
+  companyId      BigInt           @map("company_id")
+  solicitationId BigInt           @map("solicitation_id")
+  responseId     BigInt           @map("response_id")
+  personaId      BigInt           @map("persona_id")
+  status         EvaluationStatus @default(pending)
+  errorMessage   String?          @map("error_message") @db.VarChar(500)
+  completedAt    DateTime?        @map("completed_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  response     Response     @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  results      Result[]
+
+  @@index([companyId])
+  @@index([solicitationId])
+  @@index([status])
+  @@map("dara_evaluations")
+}
+
+model Result {
+  id              BigInt   @id @default(autoincrement())
+  evaluationId    BigInt   @map("evaluation_id")
+  companyId       BigInt   @map("company_id")
+  criterionId     BigInt   @map("criterion_id")
+  personaId       BigInt   @map("persona_id")
+  aiDetermination String?  @map("ai_determination") @db.VarChar(50)
+  aiScore         Decimal? @map("ai_score") @db.Decimal(5, 2)
+  aiRationale     String?  @map("ai_rationale")
+  aiConfidence    Decimal? @map("ai_confidence") @db.Decimal(5, 4)
+  aiStrengths     Json?    @map("ai_strengths")
+  aiWeaknesses    Json?    @map("ai_weaknesses")
+  modelId         String?  @map("model_id") @db.VarChar(100)
+  tokenIn         Int      @default(0) @map("token_in")
+  tokenOut        Int      @default(0) @map("token_out")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  criterion  Criterion  @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  persona    Persona    @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, criterionId, personaId])
+  @@index([companyId])
+  @@index([evaluationId])
+  @@map("dara_results")
+}
+
+model JobQueue {
+  id          BigInt    @id @default(autoincrement())
+  companyId   BigInt    @map("company_id")
+  jobType     JobType   @map("job_type")
+  payload     Json
+  status      JobStatus @default(pending)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  error       String?
+  availableAt DateTime  @default(now()) @map("available_at")
+  startedAt   DateTime? @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([companyId])
+  @@map("dara_job_queue")
+}
