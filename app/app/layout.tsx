@@ -23,7 +23,15 @@ export default async function AppLayout({
     <div className="flex h-screen bg-[#070c16] text-slate-200">
       <Sidebar />
       <div className="flex flex-col flex-1 overflow-hidden">
-        <Header user={daraUser} />
+        <Header
+        user={{
+          email: daraUser.email,
+          company: {
+            name: daraUser.company.name,
+            plan: daraUser.company.plan
+          }
+        }}
+      />
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
     </div>
