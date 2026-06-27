@@ -106,7 +106,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
   { family: 'Audit & Accountability', code: 'AU', status: 'Not implemented', note: 'No database audit logging; most mutations record no actor.' },
   { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; dual lockfiles, no migration history, no CI security gates.' },
-  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; a database credential is committed; MFA posture Unverified.' },
+  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; committed DB credential moved to environment variables (rotation + history purge still pending); MFA posture Unverified.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
   { family: 'Maintenance', code: 'MA', status: 'Undetermined', note: 'No maintenance procedure evidenced in the repository.' },
   { family: 'Media Protection', code: 'MP', status: 'Partial', note: 'BYOK keys encrypted (AES-256-GCM); CUI extracted text stored in plaintext; best-effort deletion.' },
@@ -125,13 +125,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-001',
     title: 'Live database credential committed to version control',
     severity: 'Critical',
-    status: 'Open',
-    component: 'prisma.config.ts (tracked)',
-    evidence: 'prisma.config.ts:9 — datasource URL with embedded password; present in git history and on the remote.',
+    status: 'In progress',
+    component: 'prisma.config.ts',
+    evidence: 'The datasource URL is now loaded from environment variables (DIRECT_URL); the hardcoded password was removed from source. The credential still exists in prior git history and on the remote.',
     impact:
-      'Anyone with repository or history access obtains full, RLS-bypassing database access to all tenant CUI, key material, and billing data.',
+      'Anyone with history access can still recover the prior credential until it is rotated; until then it grants full, RLS-bypassing database access.',
     remediation:
-      'Remove the literal (load from env), rotate the database password, purge it from git history, and confirm GitHub repository visibility.',
+      'Code remediated — credential removed from source and loaded from env. Remaining: rotate the database password, purge it from git history, and confirm repository visibility.',
     mapping: 'NIST IA-5, AC-3, SC-28 · OWASP A05/A07 · CMMC L2',
     window: 'Immediate (0–7 days)'
   },
