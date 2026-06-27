@@ -60,9 +60,11 @@ export default async function SecurityPage() {
 
   const canSeeDetail = isPlatformAdmin(user.email);
 
+  const openFindings = FINDINGS.filter((f) => f.status !== 'Remediated');
+  const remediatedCount = FINDINGS.length - openFindings.length;
   const counts = SEVERITY_ORDER.map((sev) => ({
     sev,
-    n: FINDINGS.filter((f) => f.severity === sev).length
+    n: openFindings.filter((f) => f.severity === sev).length
   })).filter((c) => c.n > 0);
 
   return (
@@ -97,7 +99,7 @@ export default async function SecurityPage() {
         </dl>
       </section>
 
-      {/* Severity summary */}
+      {/* Severity summary (open findings) */}
       <div className="mb-8 grid grid-cols-2 gap-3.5 sm:grid-cols-4 lg:grid-cols-5">
         {counts.map(({ sev, n }) => (
           <div
@@ -106,13 +108,22 @@ export default async function SecurityPage() {
             style={{ borderTop: `3px solid ${severityAccent[sev]}` }}
           >
             <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
-              {sev}
+              {sev} open
             </div>
             <div className="text-3xl font-bold leading-none" style={{ color: severityAccent[sev] }}>
               {n}
             </div>
           </div>
         ))}
+        <div
+          className="rounded-[10px] border border-[#1a2f4a] bg-[#0d1527] p-4"
+          style={{ borderTop: '3px solid #7de0a0' }}
+        >
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+            Remediated
+          </div>
+          <div className="text-3xl font-bold leading-none text-[#7de0a0]">{remediatedCount}</div>
+        </div>
       </div>
 
       {/* Standards & frameworks */}

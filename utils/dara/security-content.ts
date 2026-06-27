@@ -102,7 +102,7 @@ export const FRAMEWORKS: Framework[] = [
 ];
 
 export const CONTROL_POSTURE: ControlPosture[] = [
-  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Consistent app-layer tenant scoping by companyId; no database RLS; platform-admin via email allow-list.' },
+  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Consistent app-layer tenant scoping by companyId; RLS now enabled on all tenant tables and anon/authenticated REST access revoked; per-tenant policies + least-privilege role still pending; platform-admin via email allow-list.' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
   { family: 'Audit & Accountability', code: 'AU', status: 'Not implemented', note: 'No database audit logging; most mutations record no actor.' },
   { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; dual lockfiles, no migration history, no CI security gates.' },
@@ -151,11 +151,11 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-003',
     title: 'No Row-Level Security on application (tenant) tables',
     severity: 'High',
-    status: 'Open',
+    status: 'In progress',
     component: 'Postgres schema (dara_* tables)',
-    evidence: 'RLS policies exist only for legacy template tables; none for any dara_* table. Schema applied via prisma db push.',
-    impact: 'Tenant isolation depends solely on application code; a single omitted filter exposes cross-tenant CUI with no database backstop.',
-    remediation: 'Enable deny-by-default RLS on all dara_* tables keyed on company_id, set per request, paired with a least-privilege role.',
+    evidence: 'RLS is now ENABLED on all 11 dara_* tables as a deny-by-default backstop (verified 11/11). Per-tenant policies keyed on company_id are still pending and depend on the least-privilege role work (DARA-004).',
+    impact: 'Untrusted roles are now denied at the database; full per-tenant DB enforcement arrives with DARA-004. App-layer companyId scoping remains the active per-tenant control until then.',
+    remediation: 'Done: RLS enabled. Remaining: add per-tenant policies (company_id GUC set per request) once the app runs under a non-BYPASSRLS role.',
     mapping: 'NIST AC-3, AC-4, SC-2 · OWASP API1 (BOLA)',
     window: 'Short-term (8–30 days)'
   },
@@ -173,15 +173,15 @@ export const FINDINGS: Finding[] = [
   },
   {
     id: 'DARA-005',
-    title: 'Potential anon-key REST exposure of tenant tables (verify live)',
-    severity: 'High',
-    status: 'Open',
+    title: 'Anon-key REST exposure of tenant tables (confirmed, then closed)',
+    severity: 'Critical',
+    status: 'Remediated',
     component: 'Supabase PostgREST · public anon key',
-    evidence: 'The browser anon key reaches the same database; if default grants on the public schema remain and RLS is absent, dara_* tables may be readable via REST. Unverified from repo.',
-    impact: 'Possible full cross-tenant CUI disclosure bypassing all application checks.',
-    remediation: 'REVOKE anon/authenticated privileges on dara_* (or enable RLS) and verify with a live anon-key request against /rest/v1/dara_*.',
-    mapping: 'NIST AC-3, AC-4 · OWASP A01',
-    window: 'Immediate (0–7 days) — verify'
+    evidence: 'Confirmed live: the public anon key had full CRUD on all dara_* tables via PostgREST (HTTP 200 with rows). Remediated by revoking all anon/authenticated privileges and enabling RLS; re-probe now returns HTTP 401 (42501 permission denied). Future grants blocked via default privileges.',
+    impact: 'Resolved. The public anon key can no longer read or modify tenant data via the REST API.',
+    remediation: 'Completed: privileges revoked, RLS enabled, default privileges locked (see prisma/security/2026-06-27_lock_dara_tables.sql).',
+    mapping: 'NIST AC-3, AC-4 · OWASP A01 (BOLA)',
+    window: 'Closed'
   },
   {
     id: 'DARA-006',
