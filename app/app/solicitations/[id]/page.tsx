@@ -8,43 +8,34 @@ import {
   Save,
   Upload,
   Play,
-  FileText
+  FileText,
+  Inbox
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { prisma } from '@/utils/prisma';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation } from '@/utils/dara/evaluator';
+import Tabs, { type TabDef } from '@/components/dara/Tabs';
+import {
+  card,
+  cardDashed,
+  fieldClasses,
+  labelClasses,
+  btnPrimary,
+  btnGhost,
+  btnDanger,
+  fileInputClasses,
+  badgeBase,
+  statusBadge,
+  sectionTitle
+} from '@/components/dara/theme';
 
 // Evaluations call the AI provider once per criterion per active persona, which
 // can take a while; give the synchronous run room before the function times out.
 export const maxDuration = 300;
 
-const fieldClasses =
-  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#3b6ef0] focus:outline-none focus:ring-1 focus:ring-[#3b6ef0]';
-const labelClasses = 'text-xs font-medium uppercase tracking-wide text-[#7d97b3]';
-const primaryBtn =
-  'inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
-const ghostBtn =
-  'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
-const dangerBtn =
-  'inline-flex items-center gap-2 rounded-md border border-[#5a1f1f] px-3 py-2 text-sm text-[#e07d7d] transition-colors hover:bg-[#5a1f1f]/30';
-
 const CRITERION_TYPES = ['scored_factor', 'pass_fail', 'requirement', 'subfactor', 'administrative'];
-
-const statusStyles: Record<string, string> = {
-  pending: 'bg-[#1a2f4a] text-[#7d97b3]',
-  running: 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
-  complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
-  failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
-};
-
-const extractStyles: Record<string, string> = {
-  pending: 'text-[#7d97b3]',
-  processing: 'text-[#6f9bf5]',
-  complete: 'text-[#7de0a0]',
-  failed: 'text-[#e07d7d]'
-};
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -314,6 +305,14 @@ async function runEvaluations(formData: FormData) {
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`${badgeBase} ${statusBadge[status] ?? statusBadge.pending}`}>
+      {status}
+    </span>
+  );
+}
+
 export default async function SolicitationDetailPage({
   params
 }: {
@@ -357,26 +356,27 @@ export default async function SolicitationDetailPage({
   const sid = solicitation.id.toString();
   const canEvaluate = activeCount > 0 && solicitation.criteria.length > 0;
 
-  return (
-    <div className="mx-auto max-w-4xl space-y-8">
-      <div>
-        <Link
-          href="/app/solicitations"
-          className="inline-flex items-center gap-2 text-sm text-[#7d97b3] transition-colors hover:text-white"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Solicitations
-        </Link>
-        <h1 className="mt-3 text-2xl font-semibold text-white">{solicitation.title}</h1>
-        <p className="text-sm text-[#7d97b3]">
-          {solicitation.solNumber || 'No solicitation number'}
-          {solicitation.agency ? ` · ${solicitation.agency}` : ''}
-        </p>
-      </div>
+  // ---- Build the score matrix (offerors × criteria) from evaluation results ----
+  // For each offeror/criterion pair, average the numeric AI scores across every
+  // persona that scored it; fall back to the first determination otherwise.
+  const cellMap = new Map<string, { scores: number[]; determinations: string[] }>();
+  for (const ev of solicitation.evaluations) {
+    for (const res of ev.results) {
+      const key = `${ev.responseId.toString()}:${res.criterionId.toString()}`;
+      const cell = cellMap.get(key) ?? { scores: [], determinations: [] };
+      if (res.aiScore != null) cell.scores.push(Number(res.aiScore));
+      else if (res.aiDetermination) cell.determinations.push(res.aiDetermination);
+      cellMap.set(key, cell);
+    }
+  }
+  const hasResults = cellMap.size > 0;
 
-      {/* Edit details */}
-      <section className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">Details</h2>
+  // ===================== Tab panels =====================
+
+  const overviewPanel = (
+    <div className="space-y-6">
+      <section className={`${card} p-6`}>
+        <h2 className={`mb-4 ${sectionTitle}`}>Details</h2>
         <form action={updateSolicitation} className="space-y-4">
           <input type="hidden" name="solId" value={sid} />
           <div className="space-y-1.5">
@@ -400,276 +400,339 @@ export default async function SolicitationDetailPage({
             <textarea id="notes" name="notes" rows={3} defaultValue={solicitation.notes ?? ''} className={fieldClasses} />
           </div>
           <div className="flex justify-end">
-            <button type="submit" className={primaryBtn}><Save className="h-4 w-4" />Save changes</button>
+            <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save changes</button>
           </div>
         </form>
       </section>
 
-      {/* Solicitation documents */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">
-          Solicitation Documents{' '}
-          <span className="text-sm font-normal text-[#7d97b3]">({solicitation.solDocs.length})</span>
-        </h2>
-        <div className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-4">
-          {solicitation.solDocs.length > 0 && (
-            <ul className="mb-4 space-y-2">
-              {solicitation.solDocs.map((d) => (
-                <li key={d.id.toString()} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="flex items-center gap-2 text-white">
-                    <FileText className="h-4 w-4 text-[#7d97b3]" />
-                    {d.originalFilename}
-                    <span className="text-xs text-[#7d97b3]">{fmtSize(d.fileSize)}</span>
-                    <span className={`text-xs ${extractStyles[d.extractionStatus] ?? ''}`}>· {d.extractionStatus}</span>
-                  </span>
-                  <form action={deleteSolDoc}>
-                    <input type="hidden" name="solId" value={sid} />
-                    <input type="hidden" name="docId" value={d.id.toString()} />
-                    <button type="submit" className="text-[#e07d7d] hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
-                  </form>
-                </li>
-              ))}
-            </ul>
-          )}
-          <form action={uploadSolDoc} className="flex items-center gap-3">
-            <input type="hidden" name="solId" value={sid} />
-            <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className="block w-full text-sm text-[#7d97b3] file:mr-3 file:rounded-md file:border-0 file:bg-[#1a2f4a] file:px-3 file:py-2 file:text-sm file:text-white hover:file:bg-[#22405f]" />
-            <button type="submit" className={primaryBtn}><Upload className="h-4 w-4" />Upload</button>
-          </form>
-        </div>
+      <section className="rounded-[10px] border border-[#5a1f1f]/50 bg-[#0d1527] p-6">
+        <h2 className={sectionTitle}>Danger zone</h2>
+        <p className="mt-1 text-[13px] text-[#7d97b3]">
+          Deleting this solicitation also removes its criteria, offerors,
+          documents, and evaluations. This cannot be undone.
+        </p>
+        <form action={deleteSolicitation} className="mt-4">
+          <input type="hidden" name="solId" value={sid} />
+          <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete solicitation</button>
+        </form>
       </section>
+    </div>
+  );
 
-      {/* Criteria */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">
-          Criteria <span className="text-sm font-normal text-[#7d97b3]">({solicitation.criteria.length})</span>
-        </h2>
-        {solicitation.criteria.map((c) => (
-          <div key={c.id.toString()} className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-4">
-            <form action={updateCriterion} className="space-y-3">
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="criterionId" value={c.id.toString()} />
-              <input type="hidden" name="sortOrder" value={c.sortOrder} />
-              <div className="grid gap-3 sm:grid-cols-12">
-                <div className="space-y-1.5 sm:col-span-6">
-                  <label className={labelClasses}>Name</label>
-                  <input name="name" type="text" defaultValue={c.name} className={fieldClasses} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-3">
-                  <label className={labelClasses}>Type</label>
-                  <select name="criterionType" defaultValue={c.criterionType} className={fieldClasses}>
-                    {CRITERION_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
-                  </select>
-                </div>
-                <div className="space-y-1.5 sm:col-span-3">
-                  <label className={labelClasses}>Weight</label>
-                  <input name="weight" type="number" defaultValue={c.weight} className={fieldClasses} />
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-12">
-                <div className="space-y-1.5 sm:col-span-9">
-                  <label className={labelClasses}>Description</label>
-                  <input name="description" type="text" defaultValue={c.description ?? ''} className={fieldClasses} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-3">
-                  <label className={labelClasses}>FAR Ref.</label>
-                  <input name="farReference" type="text" defaultValue={c.farReference} className={fieldClasses} />
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <button type="submit" className={ghostBtn}><Save className="h-4 w-4" />Save</button>
-              </div>
-            </form>
-            <form action={deleteCriterion} className="mt-2 flex justify-end border-t border-[#1a2f4a] pt-2">
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="criterionId" value={c.id.toString()} />
-              <button type="submit" className={dangerBtn}><Trash2 className="h-4 w-4" />Delete criterion</button>
-            </form>
-          </div>
-        ))}
-        <div className="rounded-lg border border-dashed border-[#1a2f4a] bg-[#0d1527] p-4">
-          <h3 className="mb-3 text-sm font-medium text-white">Add criterion</h3>
-          <form action={addCriterion} className="space-y-3">
+  const documentsPanel = (
+    <div className={`${card} p-5`}>
+      {solicitation.solDocs.length > 0 ? (
+        <ul className="mb-4 space-y-2">
+          {solicitation.solDocs.map((d) => (
+            <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-[#1a2f4a] bg-[#070c16] px-3 py-2.5">
+              <span className="flex min-w-0 items-center gap-2.5">
+                <FileText className="h-4 w-4 flex-shrink-0 text-[#3d5270]" />
+                <span className="truncate text-[13px] text-[#cbd5e1]">{d.originalFilename}</span>
+                <span className="flex-shrink-0 text-[11px] text-[#3d5270]">{fmtSize(d.fileSize)}</span>
+                <StatusBadge status={d.extractionStatus} />
+              </span>
+              <form action={deleteSolDoc}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="docId" value={d.id.toString()} />
+                <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mb-4 text-[13px] text-[#3d5270]">No solicitation documents uploaded yet.</p>
+      )}
+      <form action={uploadSolDoc} className="flex items-center gap-3">
+        <input type="hidden" name="solId" value={sid} />
+        <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
+        <button type="submit" className={btnPrimary}><Upload className="h-4 w-4" />Upload</button>
+      </form>
+    </div>
+  );
+
+  const criteriaPanel = (
+    <div className="space-y-4">
+      {solicitation.criteria.map((c) => (
+        <div key={c.id.toString()} className={`${card} p-4`}>
+          <form action={updateCriterion} className="space-y-3">
             <input type="hidden" name="solId" value={sid} />
+            <input type="hidden" name="criterionId" value={c.id.toString()} />
+            <input type="hidden" name="sortOrder" value={c.sortOrder} />
             <div className="grid gap-3 sm:grid-cols-12">
               <div className="space-y-1.5 sm:col-span-6">
-                <label className={labelClasses}>Name <span className="text-[#3b6ef0]">*</span></label>
-                <input name="name" type="text" required placeholder="e.g. Technical Approach" className={fieldClasses} />
+                <label className={labelClasses}>Name</label>
+                <input name="name" type="text" defaultValue={c.name} className={fieldClasses} />
               </div>
               <div className="space-y-1.5 sm:col-span-3">
                 <label className={labelClasses}>Type</label>
-                <select name="criterionType" defaultValue="scored_factor" className={fieldClasses}>
+                <select name="criterionType" defaultValue={c.criterionType} className={fieldClasses}>
                   {CRITERION_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
                 </select>
               </div>
               <div className="space-y-1.5 sm:col-span-3">
                 <label className={labelClasses}>Weight</label>
-                <input name="weight" type="number" defaultValue={0} className={fieldClasses} />
+                <input name="weight" type="number" defaultValue={c.weight} className={fieldClasses} />
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-12">
               <div className="space-y-1.5 sm:col-span-9">
                 <label className={labelClasses}>Description</label>
-                <input name="description" type="text" className={fieldClasses} />
+                <input name="description" type="text" defaultValue={c.description ?? ''} className={fieldClasses} />
               </div>
               <div className="space-y-1.5 sm:col-span-3">
                 <label className={labelClasses}>FAR Ref.</label>
-                <input name="farReference" type="text" className={fieldClasses} />
+                <input name="farReference" type="text" defaultValue={c.farReference} className={fieldClasses} />
               </div>
             </div>
-            <input type="hidden" name="sortOrder" value={solicitation.criteria.length} />
             <div className="flex justify-end">
-              <button type="submit" className={primaryBtn}><Plus className="h-4 w-4" />Add criterion</button>
+              <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
             </div>
           </form>
+          <form action={deleteCriterion} className="mt-2 flex justify-end border-t border-[#1a2f4a] pt-2">
+            <input type="hidden" name="solId" value={sid} />
+            <input type="hidden" name="criterionId" value={c.id.toString()} />
+            <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete criterion</button>
+          </form>
         </div>
-      </section>
-
-      {/* Offerors */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">
-          Offerors <span className="text-sm font-normal text-[#7d97b3]">({solicitation.responses.length})</span>
-        </h2>
-        {!canEvaluate && (
-          <p className="rounded-md border border-[#5a4a1f]/50 bg-[#0d1527] px-4 py-2 text-xs text-[#e0c97d]">
-            To run evaluations you need at least one criterion and one active persona
-            ({solicitation.criteria.length} criteria, {activeCount} active personas).
-          </p>
-        )}
-        {solicitation.responses.map((r) => (
-          <div key={r.id.toString()} className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-4">
-            <form action={updateResponse} className="space-y-3">
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="responseId" value={r.id.toString()} />
-              <div className="grid gap-3 sm:grid-cols-12">
-                <div className="space-y-1.5 sm:col-span-5">
-                  <label className={labelClasses}>Offeror name</label>
-                  <input name="offerorName" type="text" defaultValue={r.offerorName} className={fieldClasses} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-7">
-                  <label className={labelClasses}>Notes</label>
-                  <input name="notes" type="text" defaultValue={r.notes ?? ''} className={fieldClasses} />
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <button type="submit" className={ghostBtn}><Save className="h-4 w-4" />Save</button>
-              </div>
-            </form>
-
-            {/* Proposal files */}
-            <div className="mt-3 border-t border-[#1a2f4a] pt-3">
-              <p className={labelClasses}>Proposal documents</p>
-              {r.files.length > 0 && (
-                <ul className="mt-2 space-y-1.5">
-                  {r.files.map((f) => (
-                    <li key={f.id.toString()} className="flex items-center justify-between gap-3 text-sm">
-                      <span className="flex items-center gap-2 text-white">
-                        <FileText className="h-4 w-4 text-[#7d97b3]" />
-                        {f.originalFilename}
-                        <span className="text-xs text-[#7d97b3]">{fmtSize(f.fileSize)}</span>
-                        <span className={`text-xs ${extractStyles[f.extractionStatus] ?? ''}`}>· {f.extractionStatus}</span>
-                      </span>
-                      <form action={deleteResponseFile}>
-                        <input type="hidden" name="solId" value={sid} />
-                        <input type="hidden" name="fileId" value={f.id.toString()} />
-                        <button type="submit" className="text-[#e07d7d] hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
-                      </form>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <form action={uploadResponseFile} className="mt-2 flex items-center gap-3">
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="responseId" value={r.id.toString()} />
-                <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className="block w-full text-sm text-[#7d97b3] file:mr-3 file:rounded-md file:border-0 file:bg-[#1a2f4a] file:px-3 file:py-2 file:text-sm file:text-white hover:file:bg-[#22405f]" />
-                <button type="submit" className={ghostBtn}><Upload className="h-4 w-4" />Upload</button>
-              </form>
+      ))}
+      <div className={`${cardDashed} p-4`}>
+        <h3 className={`mb-3 ${sectionTitle}`}>Add criterion</h3>
+        <form action={addCriterion} className="space-y-3">
+          <input type="hidden" name="solId" value={sid} />
+          <div className="grid gap-3 sm:grid-cols-12">
+            <div className="space-y-1.5 sm:col-span-6">
+              <label className={labelClasses}>Name <span className="text-[#3b6ef0]">*</span></label>
+              <input name="name" type="text" required placeholder="e.g. Technical Approach" className={fieldClasses} />
             </div>
-
-            <div className="mt-3 flex items-center justify-between border-t border-[#1a2f4a] pt-3">
-              <form action={runEvaluations}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="responseId" value={r.id.toString()} />
-                <button type="submit" disabled={!canEvaluate || r.files.length === 0} className={`${primaryBtn} disabled:cursor-not-allowed disabled:opacity-40`}>
-                  <Play className="h-4 w-4" />
-                  Run evaluation{activeCount > 0 ? ` (${activeCount} personas)` : ''}
-                </button>
-              </form>
-              <form action={deleteResponse}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="responseId" value={r.id.toString()} />
-                <button type="submit" className={dangerBtn}><Trash2 className="h-4 w-4" />Delete offeror</button>
-              </form>
+            <div className="space-y-1.5 sm:col-span-3">
+              <label className={labelClasses}>Type</label>
+              <select name="criterionType" defaultValue="scored_factor" className={fieldClasses}>
+                {CRITERION_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+              </select>
+            </div>
+            <div className="space-y-1.5 sm:col-span-3">
+              <label className={labelClasses}>Weight</label>
+              <input name="weight" type="number" defaultValue={0} className={fieldClasses} />
             </div>
           </div>
-        ))}
-        <div className="rounded-lg border border-dashed border-[#1a2f4a] bg-[#0d1527] p-4">
-          <h3 className="mb-3 text-sm font-medium text-white">Add offeror</h3>
-          <form action={addResponse} className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-12">
+            <div className="space-y-1.5 sm:col-span-9">
+              <label className={labelClasses}>Description</label>
+              <input name="description" type="text" className={fieldClasses} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-3">
+              <label className={labelClasses}>FAR Ref.</label>
+              <input name="farReference" type="text" className={fieldClasses} />
+            </div>
+          </div>
+          <input type="hidden" name="sortOrder" value={solicitation.criteria.length} />
+          <div className="flex justify-end">
+            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add criterion</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  const offerorsPanel = (
+    <div className="space-y-4">
+      {!canEvaluate && (
+        <p className="rounded-lg border border-[#5a4a1f]/50 bg-[#0d1527] px-4 py-2.5 text-[12px] text-[#e0c97d]">
+          To run evaluations you need at least one criterion and one active persona
+          ({solicitation.criteria.length} criteria, {activeCount} active personas).
+        </p>
+      )}
+      {solicitation.responses.map((r) => (
+        <div key={r.id.toString()} className={`${card} p-4`}>
+          <form action={updateResponse} className="space-y-3">
             <input type="hidden" name="solId" value={sid} />
+            <input type="hidden" name="responseId" value={r.id.toString()} />
             <div className="grid gap-3 sm:grid-cols-12">
               <div className="space-y-1.5 sm:col-span-5">
-                <label className={labelClasses}>Offeror name <span className="text-[#3b6ef0]">*</span></label>
-                <input name="offerorName" type="text" required placeholder="e.g. Acme Corp" className={fieldClasses} />
+                <label className={labelClasses}>Offeror name</label>
+                <input name="offerorName" type="text" defaultValue={r.offerorName} className={fieldClasses} />
               </div>
               <div className="space-y-1.5 sm:col-span-7">
                 <label className={labelClasses}>Notes</label>
-                <input name="notes" type="text" className={fieldClasses} />
+                <input name="notes" type="text" defaultValue={r.notes ?? ''} className={fieldClasses} />
               </div>
             </div>
             <div className="flex justify-end">
-              <button type="submit" className={primaryBtn}><Plus className="h-4 w-4" />Add offeror</button>
+              <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
             </div>
           </form>
-        </div>
-      </section>
 
-      {/* Evaluations & results */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">
-          Evaluations <span className="text-sm font-normal text-[#7d97b3]">({solicitation.evaluations.length})</span>
-        </h2>
-        {solicitation.evaluations.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-[#1a2f4a] bg-[#0d1527] px-4 py-6 text-center text-sm text-[#7d97b3]">
-            No evaluations yet. Upload proposal documents for an offeror, ensure
-            criteria and active personas exist, then click “Run evaluation”.
+          {/* Proposal files */}
+          <div className="mt-3 border-t border-[#1a2f4a] pt-3">
+            <p className={labelClasses}>Proposal documents</p>
+            {r.files.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {r.files.map((f) => (
+                  <li key={f.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-[#1a2f4a] bg-[#070c16] px-3 py-2">
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <FileText className="h-4 w-4 flex-shrink-0 text-[#3d5270]" />
+                      <span className="truncate text-[13px] text-[#cbd5e1]">{f.originalFilename}</span>
+                      <span className="flex-shrink-0 text-[11px] text-[#3d5270]">{fmtSize(f.fileSize)}</span>
+                      <StatusBadge status={f.extractionStatus} />
+                    </span>
+                    <form action={deleteResponseFile}>
+                      <input type="hidden" name="solId" value={sid} />
+                      <input type="hidden" name="fileId" value={f.id.toString()} />
+                      <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form action={uploadResponseFile} className="mt-2 flex items-center gap-3">
+              <input type="hidden" name="solId" value={sid} />
+              <input type="hidden" name="responseId" value={r.id.toString()} />
+              <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
+              <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />Upload</button>
+            </form>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between border-t border-[#1a2f4a] pt-3">
+            <form action={runEvaluations}>
+              <input type="hidden" name="solId" value={sid} />
+              <input type="hidden" name="responseId" value={r.id.toString()} />
+              <button type="submit" disabled={!canEvaluate || r.files.length === 0} className={btnPrimary}>
+                <Play className="h-4 w-4" />
+                Run evaluation{activeCount > 0 ? ` (${activeCount} personas)` : ''}
+              </button>
+            </form>
+            <form action={deleteResponse}>
+              <input type="hidden" name="solId" value={sid} />
+              <input type="hidden" name="responseId" value={r.id.toString()} />
+              <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete offeror</button>
+            </form>
+          </div>
+        </div>
+      ))}
+      <div className={`${cardDashed} p-4`}>
+        <h3 className={`mb-3 ${sectionTitle}`}>Add offeror</h3>
+        <form action={addResponse} className="space-y-3">
+          <input type="hidden" name="solId" value={sid} />
+          <div className="grid gap-3 sm:grid-cols-12">
+            <div className="space-y-1.5 sm:col-span-5">
+              <label className={labelClasses}>Offeror name <span className="text-[#3b6ef0]">*</span></label>
+              <input name="offerorName" type="text" required placeholder="e.g. Acme Corp" className={fieldClasses} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-7">
+              <label className={labelClasses}>Notes</label>
+              <input name="notes" type="text" className={fieldClasses} />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add offeror</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  const matrixPanel = (
+    <div className="space-y-6">
+      {/* Score matrix */}
+      {hasResults && solicitation.criteria.length > 0 && solicitation.responses.length > 0 ? (
+        <div className={`${card} overflow-x-auto`}>
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="bg-[#09101e]">
+                <th className="sticky left-0 z-10 bg-[#09101e] px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                  Offeror
+                </th>
+                {solicitation.criteria.map((c) => (
+                  <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                    {c.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {solicitation.responses.map((r) => (
+                <tr key={r.id.toString()} className="border-t border-[#1a2f4a]">
+                  <td className="sticky left-0 z-10 bg-[#0d1527] px-[18px] py-3 text-[13px] font-semibold text-[#cbd5e1]">
+                    {r.offerorName}
+                  </td>
+                  {solicitation.criteria.map((c) => {
+                    const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
+                    let label = '—';
+                    let color = 'text-[#3d5270]';
+                    if (cell && cell.scores.length > 0) {
+                      const avg = Math.round(
+                        cell.scores.reduce((a, b) => a + b, 0) / cell.scores.length
+                      );
+                      label = `${avg}`;
+                      color =
+                        avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-[#6f9bf5]' : 'text-[#e0a07d]';
+                    } else if (cell && cell.determinations.length > 0) {
+                      label = cell.determinations[0];
+                      color = 'text-[#94a3b8]';
+                    }
+                    return (
+                      <td key={c.id.toString()} className={`px-3.5 py-3 text-center text-[13px] font-semibold ${color}`}>
+                        {label}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-12 text-center`}>
+          <Inbox className="h-9 w-9 text-[#3d5270]" />
+          <p className="mt-3 text-[13px] text-[#7d97b3]">
+            No evaluation results yet. Add criteria and offerors, upload proposal
+            documents, then run an evaluation from the Offerors tab.
           </p>
-        ) : (
-          solicitation.evaluations.map((e) => (
-            <div key={e.id.toString()} className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-4">
+        </div>
+      )}
+
+      {/* Detailed evaluation results */}
+      {solicitation.evaluations.length > 0 && (
+        <div className="space-y-4">
+          <h2 className={sectionTitle}>
+            Detailed results{' '}
+            <span className="font-mono text-[11px] font-normal text-[#3d5270]">
+              ({solicitation.evaluations.length})
+            </span>
+          </h2>
+          {solicitation.evaluations.map((e) => (
+            <div key={e.id.toString()} className={`${card} p-4`}>
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-sm text-white">
-                  <span className="font-medium">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
+                <div className="text-[13px]">
+                  <span className="font-semibold text-[#e8eef7]">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
                   <span className="text-[#7d97b3]"> · {e.response?.offerorName ?? '—'}</span>
                 </div>
-                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[e.status] ?? statusStyles.pending}`}>
-                  {e.status}
-                </span>
+                <StatusBadge status={e.status} />
               </div>
               {e.errorMessage && (
-                <p className="mb-3 rounded-md border border-[#5a1f1f]/50 bg-[#5a1f1f]/10 px-3 py-2 text-xs text-[#e07d7d]">
+                <p className="mb-3 rounded-lg border border-[#5a1f1f]/50 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e07d7d]">
                   {e.errorMessage}
                 </p>
               )}
               {e.results.length > 0 && (
                 <div className="space-y-2">
                   {e.results.map((res) => (
-                    <div key={res.id.toString()} className="rounded-md border border-[#1a2f4a] bg-[#070c16] p-3">
+                    <div key={res.id.toString()} className="rounded-lg border border-[#1a2f4a] bg-[#070c16] p-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-white">{res.criterion.name}</span>
-                        <span className="text-sm text-[#6f9bf5]">
+                        <span className="text-[13px] font-semibold text-[#e8eef7]">{res.criterion.name}</span>
+                        <span className="text-[13px] text-[#6f9bf5]">
                           {res.aiScore != null
                             ? `${Number(res.aiScore)}/100`
                             : res.aiDetermination ?? '—'}
                           {res.aiConfidence != null && (
-                            <span className="ml-2 text-xs text-[#7d97b3]">
+                            <span className="ml-2 text-[11px] text-[#3d5270]">
                               {Math.round(Number(res.aiConfidence) * 100)}% conf.
                             </span>
                           )}
                         </span>
                       </div>
                       {res.aiRationale && (
-                        <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-[#9fb3cc]">
+                        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[#9fb3cc]">
                           {res.aiRationale}
                         </p>
                       )}
@@ -678,22 +741,38 @@ export default async function SolicitationDetailPage({
                 </div>
               )}
             </div>
-          ))
-        )}
-      </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
-      {/* Danger zone */}
-      <section className="rounded-lg border border-[#5a1f1f]/50 bg-[#0d1527] p-6">
-        <h2 className="text-lg font-semibold text-white">Danger zone</h2>
-        <p className="mt-1 text-sm text-[#7d97b3]">
-          Deleting this solicitation also removes its criteria, offerors,
-          documents, and evaluations. This cannot be undone.
-        </p>
-        <form action={deleteSolicitation} className="mt-4">
-          <input type="hidden" name="solId" value={sid} />
-          <button type="submit" className={dangerBtn}><Trash2 className="h-4 w-4" />Delete solicitation</button>
-        </form>
-      </section>
+  const tabs: TabDef[] = [
+    { id: 'overview', label: 'Overview', content: overviewPanel },
+    { id: 'documents', label: 'Documents', count: solicitation.solDocs.length, content: documentsPanel },
+    { id: 'criteria', label: 'Criteria', count: solicitation.criteria.length, content: criteriaPanel },
+    { id: 'offerors', label: 'Offerors', count: solicitation.responses.length, content: offerorsPanel },
+    { id: 'matrix', label: 'Matrix', count: solicitation.evaluations.length, content: matrixPanel }
+  ];
+
+  return (
+    <div className="mx-auto max-w-5xl fade">
+      <Link
+        href="/app/solicitations"
+        className="mb-4 inline-flex items-center gap-2 text-[13px] text-[#7d97b3] transition-colors hover:text-[#e8eef7]"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to Solicitations
+      </Link>
+      <div className="mb-6">
+        <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[#3d5270]">
+          {solicitation.solNumber || 'No reference number'}
+          {solicitation.agency ? ` · ${solicitation.agency}` : ''}
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-[#f0f4ff]">{solicitation.title}</h1>
+      </div>
+
+      <Tabs tabs={tabs} />
     </div>
   );
 }

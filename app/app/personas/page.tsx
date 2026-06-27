@@ -8,16 +8,18 @@ import {
   seedBuiltinPersonas,
   PERSONA_TEMPLATE_VARS
 } from '@/utils/dara/personas';
-
-const fieldClasses =
-  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#3b6ef0] focus:outline-none focus:ring-1 focus:ring-[#3b6ef0]';
-const labelClasses = 'text-xs font-medium uppercase tracking-wide text-[#7d97b3]';
-const primaryBtn =
-  'inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
-const ghostBtn =
-  'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
-const dangerBtn =
-  'inline-flex items-center gap-2 rounded-md border border-[#5a1f1f] px-3 py-2 text-sm text-[#e07d7d] transition-colors hover:bg-[#5a1f1f]/30';
+import PageHeader from '@/components/dara/PageHeader';
+import {
+  card,
+  cardDashed,
+  fieldClasses,
+  labelClasses,
+  checkboxClasses,
+  btnPrimary,
+  btnGhost,
+  btnDanger,
+  sectionTitle
+} from '@/components/dara/theme';
 
 async function authedUser() {
   const supabase = createClient();
@@ -109,139 +111,139 @@ export default async function PersonasPage() {
     where: { companyId: daraUser.companyId },
     orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
   });
+  const activeCount = personas.filter((p) => p.isActive).length;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Evaluator Personas</h1>
-          <p className="text-sm text-[#7d97b3]">
-            AI evaluator profiles. Each active persona scores every criterion
-            when an evaluation runs.
-          </p>
-        </div>
-        <form action={restoreDefaults}>
-          <button type="submit" className={ghostBtn}>
-            <RotateCcw className="h-4 w-4" />
-            Restore defaults
-          </button>
-        </form>
-      </div>
+    <div className="mx-auto max-w-4xl fade">
+      <PageHeader
+        eyebrow="Analysis"
+        title="Evaluator Personas"
+        subtitle={`AI evaluator profiles — ${activeCount} of ${personas.length} active. Each active persona scores every criterion when an evaluation runs.`}
+        action={
+          <form action={restoreDefaults}>
+            <button type="submit" className={btnGhost}>
+              <RotateCcw className="h-4 w-4" />
+              Restore defaults
+            </button>
+          </form>
+        }
+      />
 
-      <div className="rounded-md border border-[#1a2f4a] bg-[#0d1527] px-4 py-3 text-xs text-[#7d97b3]">
-        Available template variables:{' '}
+      <div className={`${card} mb-6 px-4 py-3 text-[12px] text-[#7d97b3]`}>
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+          Template variables
+        </span>{' '}
         {PERSONA_TEMPLATE_VARS.map((v) => (
           <code
             key={v}
-            className="mx-0.5 rounded bg-[#070c16] px-1.5 py-0.5 text-[#6f9bf5]"
+            className="mx-0.5 rounded bg-[#070c16] px-1.5 py-0.5 font-mono text-[11px] text-[#6f9bf5]"
           >
             {v}
           </code>
         ))}
       </div>
 
-      {personas.map((p) => (
-        <div
-          key={p.id.toString()}
-          className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-5"
-        >
-          <form action={updatePersona} className="space-y-4">
-            <input type="hidden" name="personaId" value={p.id.toString()} />
-            <input type="hidden" name="sortOrder" value={p.sortOrder} />
-            <div className="flex items-center gap-4">
+      <div className="space-y-4">
+        {personas.map((p) => (
+          <div key={p.id.toString()} className={`${card} p-5`}>
+            <form action={updatePersona} className="space-y-4">
+              <input type="hidden" name="personaId" value={p.id.toString()} />
+              <input type="hidden" name="sortOrder" value={p.sortOrder} />
+              <div className="flex items-end gap-4">
+                <div className="flex-1 space-y-1.5">
+                  <label className={labelClasses}>Display name</label>
+                  <input
+                    name="displayName"
+                    type="text"
+                    defaultValue={p.displayName}
+                    className={fieldClasses}
+                  />
+                </div>
+                <label className="flex h-9 items-center gap-2 text-[13px] text-[#7d97b3]">
+                  <input
+                    type="checkbox"
+                    name="isActive"
+                    defaultChecked={p.isActive}
+                    className={checkboxClasses}
+                  />
+                  Active
+                </label>
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClasses}>System prompt template</label>
+                <textarea
+                  name="systemPrompt"
+                  rows={4}
+                  defaultValue={p.systemPrompt}
+                  className={`${fieldClasses} font-mono text-[12px] leading-relaxed`}
+                />
+              </div>
+              <div className="flex justify-end">
+                <button type="submit" className={btnGhost}>
+                  <Save className="h-4 w-4" />
+                  Save
+                </button>
+              </div>
+            </form>
+            <form
+              action={deletePersona}
+              className="mt-2 flex justify-end border-t border-[#1a2f4a] pt-2"
+            >
+              <input type="hidden" name="personaId" value={p.id.toString()} />
+              <button type="submit" className={btnDanger}>
+                <Trash2 className="h-4 w-4" />
+                Delete persona
+              </button>
+            </form>
+          </div>
+        ))}
+
+        <div className={`${cardDashed} p-5`}>
+          <h2 className={`mb-3 ${sectionTitle}`}>Add persona</h2>
+          <form action={addPersona} className="space-y-4">
+            <div className="flex items-end gap-4">
               <div className="flex-1 space-y-1.5">
-                <label className={labelClasses}>Display name</label>
+                <label className={labelClasses}>
+                  Display name <span className="text-[#3b6ef0]">*</span>
+                </label>
                 <input
                   name="displayName"
                   type="text"
-                  defaultValue={p.displayName}
+                  required
+                  placeholder="e.g. Cost / Price Analyst"
                   className={fieldClasses}
                 />
               </div>
-              <label className="mt-5 flex items-center gap-2 text-sm text-[#7d97b3]">
+              <label className="flex h-9 items-center gap-2 text-[13px] text-[#7d97b3]">
                 <input
                   type="checkbox"
                   name="isActive"
-                  defaultChecked={p.isActive}
-                  className="h-4 w-4 rounded border-[#1a2f4a] bg-[#070c16]"
+                  defaultChecked
+                  className={checkboxClasses}
                 />
                 Active
               </label>
             </div>
             <div className="space-y-1.5">
-              <label className={labelClasses}>System prompt template</label>
+              <label className={labelClasses}>
+                System prompt template <span className="text-[#3b6ef0]">*</span>
+              </label>
               <textarea
                 name="systemPrompt"
                 rows={4}
-                defaultValue={p.systemPrompt}
-                className={fieldClasses}
+                required
+                placeholder="You are a ... Criterion: {{CRITERION_NAME}} — {{CRITERION_DESCRIPTION}}. Solicitation: {{SOLICITATION_TITLE}} ({{REFERENCE_NUMBER}}). FAR: {{FAR_REFERENCE}}."
+                className={`${fieldClasses} font-mono text-[12px] leading-relaxed`}
               />
             </div>
             <div className="flex justify-end">
-              <button type="submit" className={ghostBtn}>
-                <Save className="h-4 w-4" />
-                Save
+              <button type="submit" className={btnPrimary}>
+                <Plus className="h-4 w-4" />
+                Add persona
               </button>
             </div>
           </form>
-          <form
-            action={deletePersona}
-            className="mt-2 flex justify-end border-t border-[#1a2f4a] pt-2"
-          >
-            <input type="hidden" name="personaId" value={p.id.toString()} />
-            <button type="submit" className={dangerBtn}>
-              <Trash2 className="h-4 w-4" />
-              Delete persona
-            </button>
-          </form>
         </div>
-      ))}
-
-      <div className="rounded-lg border border-dashed border-[#1a2f4a] bg-[#0d1527] p-5">
-        <h2 className="mb-3 text-sm font-medium text-white">Add persona</h2>
-        <form action={addPersona} className="space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="flex-1 space-y-1.5">
-              <label className={labelClasses}>
-                Display name <span className="text-[#3b6ef0]">*</span>
-              </label>
-              <input
-                name="displayName"
-                type="text"
-                required
-                placeholder="e.g. Cost / Price Analyst"
-                className={fieldClasses}
-              />
-            </div>
-            <label className="mt-5 flex items-center gap-2 text-sm text-[#7d97b3]">
-              <input
-                type="checkbox"
-                name="isActive"
-                defaultChecked
-                className="h-4 w-4 rounded border-[#1a2f4a] bg-[#070c16]"
-              />
-              Active
-            </label>
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelClasses}>
-              System prompt template <span className="text-[#3b6ef0]">*</span>
-            </label>
-            <textarea
-              name="systemPrompt"
-              rows={4}
-              required
-              placeholder="You are a ... Criterion: {{CRITERION_NAME}} — {{CRITERION_DESCRIPTION}}. Solicitation: {{SOLICITATION_TITLE}} ({{REFERENCE_NUMBER}}). FAR: {{FAR_REFERENCE}}."
-              className={fieldClasses}
-            />
-          </div>
-          <div className="flex justify-end">
-            <button type="submit" className={primaryBtn}>
-              <Plus className="h-4 w-4" />
-              Add persona
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );

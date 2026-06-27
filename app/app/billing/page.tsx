@@ -11,11 +11,15 @@ import {
   getOrCreateCustomer,
   type PaidPlan
 } from '@/utils/dara/billing';
+import PageHeader from '@/components/dara/PageHeader';
+import { card, btnPrimary, btnGhost } from '@/components/dara/theme';
 
-const primaryBtn =
-  'inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
-const ghostBtn =
-  'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
+const PLAN_LABELS: Record<string, string> = {
+  trial: 'Trial',
+  starter: 'Base',
+  pro: 'Pro',
+  enterprise: 'Enterprise'
+};
 
 async function requireCompanyAdmin() {
   const supabase = createClient();
@@ -72,30 +76,34 @@ export default async function BillingPage({
   if (!company) redirect('/app/dashboard');
 
   const currentPlan = company.plan;
+  const currentLabel = PLAN_LABELS[currentPlan] ?? currentPlan;
   const plans = Object.entries(PLAN_CATALOG) as [PaidPlan, (typeof PLAN_CATALOG)[PaidPlan]][];
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Billing</h1>
-          <p className="text-sm text-[#7d97b3]">
-            Current plan: <span className="text-white">{company.plan}</span> ({company.planStatus})
-          </p>
-        </div>
-        {company.stripeCustomerId && (
-          <form action={manageBilling}>
-            <button type="submit" className={ghostBtn}>
-              <CreditCard className="h-4 w-4" />
-              Manage billing
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
-          </form>
-        )}
-      </div>
+    <div className="mx-auto max-w-4xl fade">
+      <PageHeader
+        eyebrow="Account"
+        title="Billing"
+        subtitle={
+          <>
+            Current plan: <span className="text-[#e8eef7]">{currentLabel}</span> ({company.planStatus})
+          </>
+        }
+        action={
+          company.stripeCustomerId ? (
+            <form action={manageBilling}>
+              <button type="submit" className={btnGhost}>
+                <CreditCard className="h-4 w-4" />
+                Manage billing
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          ) : undefined
+        }
+      />
 
       {searchParams?.success && (
-        <div className="rounded-md border border-[#1f5a31]/50 bg-[#1f5a31]/10 px-4 py-3 text-sm text-[#7de0a0]">
+        <div className="mb-6 rounded-lg border border-[#1f5a31]/50 bg-[#1f5a31]/10 px-4 py-3 text-[13px] text-[#7de0a0]">
           Subscription updated. If your plan doesn&apos;t reflect the change yet,
           it will once Stripe confirms the payment (via webhook).
         </div>
@@ -107,32 +115,36 @@ export default async function BillingPage({
           return (
             <div
               key={plan}
-              className={`flex flex-col rounded-lg border bg-[#0d1527] p-5 ${
-                isCurrent ? 'border-[#3b6ef0]' : 'border-[#1a2f4a]'
+              className={`flex flex-col rounded-[10px] border bg-[#0d1527] p-5 ${
+                isCurrent ? 'border-[#3b6ef0] ring-1 ring-[#3b6ef0]/40' : 'border-[#1a2f4a]'
               }`}
             >
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-white">{info.name}</h3>
+                <h3 className="text-base font-bold text-[#f0f4ff]">{info.name}</h3>
                 {isCurrent && (
-                  <span className="rounded-full bg-[#3b6ef0]/20 px-2 py-0.5 text-xs font-medium text-[#6f9bf5]">
+                  <span className="rounded bg-[#3b6ef0]/20 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#6f9bf5]">
                     Current
                   </span>
                 )}
               </div>
-              <div className="mt-2 text-2xl font-bold text-white">
+              <div className="mt-3 text-3xl font-bold leading-none text-[#f0f4ff]">
                 ${info.amount}
-                <span className="text-sm font-normal text-[#7d97b3]">/mo</span>
+                <span className="text-[13px] font-normal text-[#7d97b3]">/mo</span>
               </div>
-              <p className="mt-1 text-sm text-[#7d97b3]">{info.blurb}</p>
-              <div className="mt-4 flex-1" />
+              <p className="mt-2 text-[13px] text-[#7d97b3]">{info.blurb}</p>
+              <div className="mt-5 flex-1" />
               {isCurrent ? (
-                <button type="button" disabled className="w-full cursor-default rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3]">
+                <button
+                  type="button"
+                  disabled
+                  className="w-full cursor-default rounded-lg border border-[#1a2f4a] px-3 py-2 text-[13px] font-medium text-[#7d97b3]"
+                >
                   Active plan
                 </button>
               ) : (
                 <form action={createCheckout}>
                   <input type="hidden" name="plan" value={plan} />
-                  <button type="submit" className={primaryBtn}>
+                  <button type="submit" className={`${btnPrimary} w-full`}>
                     <Check className="h-4 w-4" />
                     Choose {info.name}
                   </button>
@@ -143,10 +155,10 @@ export default async function BillingPage({
         })}
       </div>
 
-      <p className="text-xs text-[#7d97b3]">
+      <p className="mt-6 text-[12px] text-[#3d5270]">
         Have a coupon? You can enter a promotion code on the Stripe checkout page.
-        Subscriptions are billed monthly; manage or cancel anytime via “Manage
-        billing”.
+        Subscriptions are billed monthly; manage or cancel anytime via &ldquo;Manage
+        billing&rdquo;.
       </p>
     </div>
   );

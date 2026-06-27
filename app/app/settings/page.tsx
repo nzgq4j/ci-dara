@@ -1,18 +1,20 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { Save, KeyRound, Users } from 'lucide-react';
+import { Save, KeyRound, Users, Cpu } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { prisma } from '@/utils/prisma';
 import { encryptSecret, secretHint } from '@/utils/dara/crypto';
-
-const fieldClasses =
-  'w-full rounded-md border border-[#1a2f4a] bg-[#070c16] px-3 py-2 text-sm text-white placeholder:text-[#7d97b3] focus:border-[#3b6ef0] focus:outline-none focus:ring-1 focus:ring-[#3b6ef0]';
-const labelClasses = 'text-xs font-medium uppercase tracking-wide text-[#7d97b3]';
-const primaryBtn =
-  'inline-flex items-center gap-2 rounded-md bg-[#3b6ef0] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2f5fd6]';
-const ghostBtn =
-  'inline-flex items-center gap-2 rounded-md border border-[#1a2f4a] px-3 py-2 text-sm text-[#7d97b3] transition-colors hover:text-white';
+import PageHeader from '@/components/dara/PageHeader';
+import {
+  card,
+  fieldClasses,
+  labelClasses,
+  checkboxClasses,
+  btnPrimary,
+  btnGhost,
+  sectionTitle
+} from '@/components/dara/theme';
 
 const PROVIDERS = ['anthropic', 'openai', 'google'];
 const KEY_MODES = ['platform', 'byok'];
@@ -105,107 +107,110 @@ export default async function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold text-white">Settings</h1>
-        <p className="text-sm text-[#7d97b3]">
-          {company.name} · plan {company.plan} ({company.planStatus})
-        </p>
-      </div>
+    <div className="mx-auto max-w-3xl fade">
+      <PageHeader
+        eyebrow="Account"
+        title="Settings"
+        subtitle={`${company.name} · ${company.plan} (${company.planStatus})`}
+      />
 
-      {/* AI configuration */}
-      <section className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">AI Configuration</h2>
-        <form action={updateAIConfig} className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <label className={labelClasses}>Key mode</label>
-              <select name="aiKeyMode" defaultValue={company.aiKeyMode} className={fieldClasses}>
-                {KEY_MODES.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
+      <div className="space-y-6">
+        {/* AI configuration */}
+        <section className={`${card} p-6`}>
+          <h2 className={`mb-4 flex items-center gap-2 ${sectionTitle}`}>
+            <Cpu className="h-4 w-4 text-[#3d5270]" />AI Configuration
+          </h2>
+          <form action={updateAIConfig} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <label className={labelClasses}>Key mode</label>
+                <select name="aiKeyMode" defaultValue={company.aiKeyMode} className={fieldClasses}>
+                  {KEY_MODES.map((m) => (<option key={m} value={m}>{m}</option>))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClasses}>Provider</label>
+                <select name="activeProvider" defaultValue={company.activeProvider} className={fieldClasses}>
+                  {PROVIDERS.map((p) => (<option key={p} value={p}>{p}</option>))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClasses}>Model</label>
+                <input name="activeModel" type="text" defaultValue={company.activeModel} className={fieldClasses} />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className={labelClasses}>Provider</label>
-              <select name="activeProvider" defaultValue={company.activeProvider} className={fieldClasses}>
-                {PROVIDERS.map((p) => (<option key={p} value={p}>{p}</option>))}
-              </select>
+            <p className="text-[12px] text-[#7d97b3]">
+              <strong className="text-[#cbd5e1]">platform</strong> uses Crucible Insight&apos;s managed key;{' '}
+              <strong className="text-[#cbd5e1]">byok</strong> uses the keys you enter below.
+            </p>
+            <div className="flex justify-end">
+              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save AI config</button>
             </div>
-            <div className="space-y-1.5">
-              <label className={labelClasses}>Model</label>
-              <input name="activeModel" type="text" defaultValue={company.activeModel} className={fieldClasses} />
-            </div>
-          </div>
-          <p className="text-xs text-[#7d97b3]">
-            <strong>platform</strong> uses Crucible Insight&apos;s managed key;{' '}
-            <strong>byok</strong> uses the keys you enter below.
+          </form>
+        </section>
+
+        {/* API keys */}
+        <section className={`${card} p-6`}>
+          <h2 className={`mb-1 flex items-center gap-2 ${sectionTitle}`}>
+            <KeyRound className="h-4 w-4 text-[#3d5270]" />API Keys (BYOK)
+          </h2>
+          <p className="mb-4 text-[12px] text-[#7d97b3]">
+            Stored encrypted (AES-256-GCM). Leave a field blank to keep the current
+            key; tick &ldquo;clear&rdquo; to remove it.
           </p>
-          <div className="flex justify-end">
-            <button type="submit" className={primaryBtn}><Save className="h-4 w-4" />Save AI config</button>
-          </div>
-        </form>
-      </section>
-
-      {/* API keys */}
-      <section className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-6">
-        <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold text-white">
-          <KeyRound className="h-5 w-5 text-[#7d97b3]" />API Keys (BYOK)
-        </h2>
-        <p className="mb-4 text-xs text-[#7d97b3]">
-          Stored encrypted (AES-256-GCM). Leave a field blank to keep the current
-          key; tick “clear” to remove it.
-        </p>
-        <form action={updateApiKeys} className="space-y-4">
-          {(['anthropic', 'openai', 'google'] as const).map((p) => (
-            <div key={p} className="space-y-1.5">
-              <label className={labelClasses}>
-                {p} key{' '}
-                {keyHints[p] ? (
-                  <span className="ml-1 text-[#7de0a0]">set ({keyHints[p]})</span>
-                ) : (
-                  <span className="ml-1 text-[#7d97b3]">not set</span>
-                )}
-              </label>
-              <div className="flex items-center gap-3">
-                <input name={p} type="password" autoComplete="off" placeholder="Enter new key…" className={fieldClasses} />
-                <label className="flex shrink-0 items-center gap-1.5 text-xs text-[#7d97b3]">
-                  <input type="checkbox" name={`${p}_clear`} className="h-4 w-4 rounded border-[#1a2f4a] bg-[#070c16]" />
-                  clear
+          <form action={updateApiKeys} className="space-y-4">
+            {(['anthropic', 'openai', 'google'] as const).map((p) => (
+              <div key={p} className="space-y-1.5">
+                <label className={labelClasses}>
+                  {p} key{' '}
+                  {keyHints[p] ? (
+                    <span className="ml-1 normal-case text-[#7de0a0]">set ({keyHints[p]})</span>
+                  ) : (
+                    <span className="ml-1 normal-case text-[#3d5270]">not set</span>
+                  )}
                 </label>
+                <div className="flex items-center gap-3">
+                  <input name={p} type="password" autoComplete="off" placeholder="Enter new key…" className={fieldClasses} />
+                  <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-[#7d97b3]">
+                    <input type="checkbox" name={`${p}_clear`} className={checkboxClasses} />
+                    clear
+                  </label>
+                </div>
               </div>
+            ))}
+            <div className="flex justify-end">
+              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save keys</button>
             </div>
-          ))}
-          <div className="flex justify-end">
-            <button type="submit" className={primaryBtn}><Save className="h-4 w-4" />Save keys</button>
-          </div>
-        </form>
-      </section>
+          </form>
+        </section>
 
-      {/* Users */}
-      <section className="rounded-lg border border-[#1a2f4a] bg-[#0d1527] p-6">
-        <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-white">
-          <Users className="h-5 w-5 text-[#7d97b3]" />Users{' '}
-          <span className="text-sm font-normal text-[#7d97b3]">({users.length})</span>
-        </h2>
-        <div className="space-y-3">
-          {users.map((u) => (
-            <form key={u.id} action={updateUser} className="flex items-center gap-3 rounded-md border border-[#1a2f4a] bg-[#070c16] p-3">
-              <input type="hidden" name="userId" value={u.id} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-white">{u.name || u.email}</div>
-                <div className="truncate text-xs text-[#7d97b3]">{u.email}</div>
-              </div>
-              <select name="role" defaultValue={u.role} className={`${fieldClasses} w-40`}>
-                {ROLES.map((r) => (<option key={r} value={r}>{r}</option>))}
-              </select>
-              <label className="flex shrink-0 items-center gap-1.5 text-xs text-[#7d97b3]">
-                <input type="checkbox" name="isActive" defaultChecked={u.isActive} className="h-4 w-4 rounded border-[#1a2f4a] bg-[#070c16]" />
-                active
-              </label>
-              <button type="submit" className={ghostBtn}><Save className="h-4 w-4" />Save</button>
-            </form>
-          ))}
-        </div>
-      </section>
+        {/* Users */}
+        <section className={`${card} p-6`}>
+          <h2 className={`mb-4 flex items-center gap-2 ${sectionTitle}`}>
+            <Users className="h-4 w-4 text-[#3d5270]" />Users{' '}
+            <span className="font-mono text-[11px] font-normal text-[#3d5270]">({users.length})</span>
+          </h2>
+          <div className="space-y-3">
+            {users.map((u) => (
+              <form key={u.id} action={updateUser} className="flex items-center gap-3 rounded-lg border border-[#1a2f4a] bg-[#070c16] p-3">
+                <input type="hidden" name="userId" value={u.id} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] text-[#e8eef7]">{u.name || u.email}</div>
+                  <div className="truncate text-[11px] text-[#3d5270]">{u.email}</div>
+                </div>
+                <select name="role" defaultValue={u.role} className={`${fieldClasses} w-40`}>
+                  {ROLES.map((r) => (<option key={r} value={r}>{r}</option>))}
+                </select>
+                <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-[#7d97b3]">
+                  <input type="checkbox" name="isActive" defaultChecked={u.isActive} className={checkboxClasses} />
+                  active
+                </label>
+                <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
+              </form>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

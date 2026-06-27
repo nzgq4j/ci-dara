@@ -65,10 +65,20 @@ UID redesign were added. The app builds green and is deployed to production.
   trial end, AI config) and all users.
 - **Billing** (`/app/billing`): custom plan cards → Checkout (coupons enabled),
   Customer Portal; webhook → `Company` sync.
-- **UI redesign (in progress)**: foundation + shell (IBM Plex, accent, sidebar,
+- **UI redesign (complete)**: foundation + shell (IBM Plex, accent, sidebar,
   full-screen app), **sign-in** (two-panel brand layout), **dashboard** (stat
   cards + recent activity + plan panel). `dara-logo.png` in sidebar/sign-in +
   favicon; company name under the DARA badge; `starter`→"Base" label.
+  - Shared design primitives in `components/dara/` (`theme.ts` class vocabulary,
+    `PageHeader.tsx`, `Tabs.tsx`) so every page draws from one token set.
+  - **Solicitations list + new** aligned to the dashboard table/header style.
+  - **Solicitation detail** rebuilt as tabs — Overview / Documents / Criteria /
+    Offerors / **Matrix** (offeror × criterion score grid derived from
+    evaluation results, plus detailed per-persona rationale cards). All server
+    actions preserved; the `Tabs` shell keeps inactive panels mounted so form
+    state survives tab switches.
+  - **Personas, Settings, Billing, Admin** aligned to the shared cards, tables,
+    status badges, and mono labels.
 
 ---
 
@@ -95,11 +105,11 @@ UID redesign were added. The app builds green and is deployed to production.
 
 ## 5. Next steps (suggested order)
 
-1. **Finish the UI redesign** (task in progress):
-   - Solicitations **list** + **detail** (tabs: Overview / Documents / Criteria /
-     Offerors / Matrix) to match the prototype.
-   - Personas, Settings, Billing, Admin → align cards/tables/badges/mono labels.
-   - Optional: rebuild the OAuth button block (Google/Microsoft) to match.
+1. ~~**Finish the UI redesign**~~ — **done** (see §3). The Matrix tab renders a
+   read-only score grid + rationale cards from existing evaluation data; a full
+   weighted **Compliance Matrix** with export is still phase 2 (below).
+   - Optional polish remaining: rebuild the OAuth button block (Google/Microsoft)
+     to match; optimized logo asset.
 2. **Reporting (phase 2)** — port WP **Reports** + **Compliance Matrix**:
    - Scoring rollup per offeror (weighted by criterion `weight`, aggregated
      across personas), comparison/compliance matrix, PDF/CSV export.
