@@ -115,7 +115,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Risk Assessment', code: 'RA', status: 'Partial', note: 'This assessment performed; no continuous vulnerability scanning.' },
   { family: 'Security Assessment & Monitoring', code: 'CA', status: 'Partial', note: 'Point-in-time review; no continuous monitoring program.' },
   { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP now set; DB TLS not explicitly enforced; CUI egress to LLM APIs still to address.' },
-  { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Outdated Next.js; LLM input not delimited; React output escaping is sound.' },
+  { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Next.js patched to 14.2.35; LLM input now fenced; React output escaping sound; remaining dev-only transitive advisories + no automated dependency scanning.' },
   { family: 'Planning', code: 'PL', status: 'Not implemented', note: 'No System Security Plan (SSP) evidenced.' },
   { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Lockfiles present; no SBOM, dependency scanning, or provenance controls.' }
 ];
@@ -187,11 +187,11 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-006',
     title: 'Outdated framework and dependencies with known CVEs',
     severity: 'High',
-    status: 'Open',
-    component: 'package.json · Next.js 14.2.3 + ~40 advisories',
-    evidence: 'Next.js 14.2.3 predates the CVE-2025-29927 middleware auth-bypass fix; dependency audit reports 1 critical / many high. Per-page re-auth mitigates the middleware bypass for data access.',
-    impact: 'Known-vulnerable components in production; elevated exploitation risk over time.',
-    remediation: 'Upgrade Next.js to a patched release, run a dependency upgrade pass, and add automated dependency scanning.',
+    status: 'In progress',
+    component: 'package.json · Next.js (now 14.2.35)',
+    evidence: 'Next.js upgraded 14.2.3 -> 14.2.35, clearing CVE-2025-29927 (middleware auth-bypass) and the other 14.2.x advisories (cache poisoning, image-optimization, SSRF-via-redirect). Remaining audit advisories are dev-only transitive deps (supabase CLI: tar/minimatch/glob) not shipped to production.',
+    impact: 'Production framework is patched. Residual risk is limited to local/dev tooling.',
+    remediation: 'Done: Next.js patched. Remaining: bump dev tooling (supabase CLI) and add automated dependency scanning (see DARA-015).',
     mapping: 'NIST SI-2, RA-5 · OWASP A06',
     window: 'Short-term (8–30 days)'
   },
