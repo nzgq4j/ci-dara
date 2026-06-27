@@ -106,7 +106,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
   { family: 'Audit & Accountability', code: 'AU', status: 'Not implemented', note: 'No database audit logging; most mutations record no actor.' },
   { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; dual lockfiles, no migration history, no CI security gates.' },
-  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; committed DB credential moved to environment variables (rotation + history purge still pending); MFA posture Unverified.' },
+  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; committed DB credential remediated (moved to env, rotated, purged from history); MFA posture Unverified.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
   { family: 'Maintenance', code: 'MA', status: 'Undetermined', note: 'No maintenance procedure evidenced in the repository.' },
   { family: 'Media Protection', code: 'MP', status: 'Partial', note: 'BYOK keys encrypted (AES-256-GCM); CUI extracted text stored in plaintext; best-effort deletion.' },
@@ -125,15 +125,15 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-001',
     title: 'Live database credential committed to version control',
     severity: 'Critical',
-    status: 'In progress',
+    status: 'Remediated',
     component: 'prisma.config.ts',
-    evidence: 'The datasource URL is now loaded from environment variables (DIRECT_URL); the hardcoded password was removed from source. The credential still exists in prior git history and on the remote.',
+    evidence: 'Datasource URL now loaded from environment variables (DIRECT_URL); the hardcoded password was removed from source, the database password was rotated, and the credential was purged from git history (history rewrite + force-push). Repository is private.',
     impact:
-      'Anyone with history access can still recover the prior credential until it is rotated; until then it grants full, RLS-bypassing database access.',
+      'Resolved. The previously committed credential is rotated (now invalid) and no longer present in the working tree or git history.',
     remediation:
-      'Code remediated — credential removed from source and loaded from env. Remaining: rotate the database password, purge it from git history, and confirm repository visibility.',
+      'Completed: credential removed from source and loaded from env, database password rotated, and prior values scrubbed from git history. Residual: GitHub may retain unreachable objects by exact SHA until its own GC — harmless given rotation.',
     mapping: 'NIST IA-5, AC-3, SC-28 · OWASP A05/A07 · CMMC L2',
-    window: 'Immediate (0–7 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-002',
