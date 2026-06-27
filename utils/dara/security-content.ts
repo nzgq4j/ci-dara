@@ -114,7 +114,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Physical Protection', code: 'PE', status: 'Not applicable', note: 'Inherited from cloud providers (Vercel / Supabase / AWS).' },
   { family: 'Risk Assessment', code: 'RA', status: 'Partial', note: 'This assessment performed; no continuous vulnerability scanning.' },
   { family: 'Security Assessment & Monitoring', code: 'CA', status: 'Partial', note: 'Point-in-time review; no continuous monitoring program.' },
-  { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; DB TLS not explicitly enforced; no security headers/CSP; CUI egress to LLM APIs.' },
+  { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP now set; DB TLS not explicitly enforced; CUI egress to LLM APIs still to address.' },
   { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Outdated Next.js; LLM input not delimited; React output escaping is sound.' },
   { family: 'Planning', code: 'PL', status: 'Not implemented', note: 'No System Security Plan (SSP) evidenced.' },
   { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Lockfiles present; no SBOM, dependency scanning, or provenance controls.' }
@@ -247,25 +247,25 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-011',
     title: 'No security response headers (CSP, HSTS, X-Frame-Options)',
     severity: 'Moderate',
-    status: 'Open',
-    component: 'next.config.js · middleware.ts',
-    evidence: 'No headers() block or middleware sets CSP, HSTS, frame-ancestors, nosniff, or Referrer-Policy.',
-    impact: 'No clickjacking protection, no CSP to blunt future XSS, no transport hardening.',
-    remediation: 'Add a strict header set (CSP, HSTS, X-Frame-Options/frame-ancestors, X-Content-Type-Options, Referrer-Policy, Permissions-Policy).',
+    status: 'Remediated',
+    component: 'next.config.js',
+    evidence: 'Added a global security header set via next.config.js headers(): Content-Security-Policy (default-src self; object-src/frame-ancestors none; scoped connect-src for Supabase/Stripe), Strict-Transport-Security, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy, Permissions-Policy.',
+    impact: 'Resolved. Clickjacking blocked, transport hardened, and a CSP now constrains script/connect origins. A nonce-based CSP (removing script-src unsafe-inline) is a future hardening step.',
+    remediation: 'Completed via next.config.js. Future: migrate to nonce-based CSP to drop unsafe-inline on scripts.',
     mapping: 'NIST SC-7, SC-8 · OWASP A05',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-012',
     title: 'No server-side file type/size validation on uploads',
     severity: 'Moderate',
-    status: 'Open',
+    status: 'Remediated',
     component: 'utils/dara/documents.ts',
-    evidence: 'Arbitrary buffers stored; client-supplied MIME trusted; extension-only switch; no explicit size limit. Filenames are sanitized (no traversal).',
-    impact: 'Storage abuse and unexpected content into the CUI store; parser DoS on crafted archives.',
-    remediation: 'Enforce server-side extension + magic-byte allow-list, an explicit max size, and server-derived content type.',
+    evidence: 'uploadAndExtract now enforces a server-side allow-list (PDF/DOCX/TXT/MD), a 20 MB max size, and magic-byte checks (PDF %PDF-, DOCX PK\\x03\\x04). Storage content type is derived server-side from the extension, not the client File.type.',
+    impact: 'Resolved. Spoofed-type and oversized uploads are rejected before storage; filenames remain sanitized (no traversal).',
+    remediation: 'Completed in utils/dara/documents.ts.',
     mapping: 'NIST SI-10 · OWASP A04/A05',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-013',

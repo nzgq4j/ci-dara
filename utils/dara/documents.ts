@@ -6,6 +6,46 @@ import { createClient } from '@supabase/supabase-js';
 
 export const DOCS_BUCKET = 'dara-documents';
 
+// Server-side upload constraints (defense-in-depth; the UI `accept` attribute is
+// not trustworthy). Content type is derived from the extension here, not taken
+// from the client-supplied File.type.
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
+const ALLOWED_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  txt: 'text/plain',
+  md: 'text/markdown'
+};
+
+function fileExt(name: string): string {
+  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : '';
+}
+
+/** Validate an upload by extension, size, and magic bytes. Throws on violation. */
+function assertValidUpload(buffer: Buffer, ext: string): void {
+  if (!ALLOWED_TYPES[ext]) {
+    throw new Error(`Unsupported file type: .${ext || '?'} (allowed: PDF, DOCX, TXT, MD)`);
+  }
+  if (buffer.length === 0) throw new Error('Empty file.');
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `File too large (${Math.round(buffer.length / 1048576)} MB; max 20 MB).`
+    );
+  }
+  // Magic-byte sanity for binary formats (guards against type spoofing).
+  if (ext === 'pdf' && buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+    throw new Error('File does not appear to be a valid PDF.');
+  }
+  if (
+    ext === 'docx' &&
+    !(buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04)
+  ) {
+    // DOCX is a ZIP container and must start with "PK\x03\x04".
+    throw new Error('File does not appear to be a valid DOCX.');
+  }
+}
+
 function storage() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -61,6 +101,9 @@ export async function uploadAndExtract(
   stamp: number
 ): Promise<StoredDoc> {
   const buffer = Buffer.from(await file.arrayBuffer());
+  const ext = fileExt(file.name);
+  assertValidUpload(buffer, ext);
+
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const storedFilename = `${prefix}/${companyId.toString()}/${stamp}-${safeName}`;
 
@@ -68,7 +111,7 @@ export async function uploadAndExtract(
   const { error } = await sb.storage
     .from(DOCS_BUCKET)
     .upload(storedFilename, buffer, {
-      contentType: file.type || 'application/octet-stream',
+      contentType: ALLOWED_TYPES[ext], // server-derived, not client-supplied
       upsert: false
     });
   if (error) throw new Error(`Upload failed: ${error.message}`);
