@@ -9,6 +9,7 @@ import {
   Users,
   Settings,
   ShieldCheck,
+  ShieldAlert,
   CreditCard,
   LogOut,
   type LucideIcon
@@ -71,7 +72,8 @@ export default function Sidebar({
         { href: '/app/settings', label: 'Settings', icon: Settings },
         ...(isAdmin
           ? [{ href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
-          : [])
+          : []),
+        { href: '/app/security', label: 'Security', icon: ShieldAlert }
       ]
     }
   ];
