@@ -3,6 +3,18 @@ import { updateSession } from '@/utils/supabase/middleware';
 import { createClient } from '@/utils/supabase/server';
 
 export async function middleware(request: NextRequest) {
+  // Forward a stray OAuth/magic-link `code` that landed on the root (Supabase's
+  // Site-URL fallback when redirect_to isn't allow-listed) to the callback handler
+  // so the session exchange still runs.
+  if (
+    request.nextUrl.pathname === '/' &&
+    request.nextUrl.searchParams.has('code')
+  ) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/auth/callback';
+    return NextResponse.redirect(url);
+  }
+
   const response = await updateSession(request);
 
   if (request.nextUrl.pathname.startsWith('/app')) {
