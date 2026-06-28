@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { Save, Building2, Users } from 'lucide-react';
 import { prismaAdmin } from '@/utils/prisma';
 import { requirePlatformAdmin } from '@/utils/dara/admin';
+import { recordAudit } from '@/utils/dara/audit';
 import { secretHint } from '@/utils/dara/crypto';
 import PageHeader from '@/components/dara/PageHeader';
 import {
@@ -26,7 +27,7 @@ function pick(list: string[], val: string, fallback: string) {
 
 async function updateCompany(formData: FormData) {
   'use server';
-  await requirePlatformAdmin();
+  const adminEmail = await requirePlatformAdmin();
   const id = BigInt(String(formData.get('companyId')));
   const trialRaw = String(formData.get('trialEndsAt') ?? '').trim();
   await prismaAdmin.company.update({
@@ -40,21 +41,36 @@ async function updateCompany(formData: FormData) {
       activeModel: String(formData.get('activeModel') ?? '').trim() || 'claude-sonnet-4-6'
     }
   });
+  await recordAudit({
+    action: 'admin.company.update',
+    companyId: id,
+    actorEmail: adminEmail,
+    entityType: 'company',
+    entityId: id,
+    metadata: { plan: formData.get('plan'), planStatus: formData.get('planStatus') }
+  });
   revalidatePath('/app/admin');
 }
 
 async function updateAnyUser(formData: FormData) {
   'use server';
-  await requirePlatformAdmin();
+  const adminEmail = await requirePlatformAdmin();
   const userId = String(formData.get('userId') ?? '');
   const target = await prismaAdmin.daraUser.findUnique({ where: { id: userId } });
   if (!target) return;
+  const newRole = pick(ROLES, String(formData.get('role') ?? ''), target.role);
+  const isActive = formData.get('isActive') === 'on';
   await prismaAdmin.daraUser.update({
     where: { id: userId },
-    data: {
-      role: pick(ROLES, String(formData.get('role') ?? ''), target.role) as any,
-      isActive: formData.get('isActive') === 'on'
-    }
+    data: { role: newRole as any, isActive }
+  });
+  await recordAudit({
+    action: 'admin.member.update',
+    companyId: target.companyId,
+    actorEmail: adminEmail,
+    entityType: 'user',
+    entityId: userId,
+    metadata: { role: newRole, isActive, fromRole: target.role }
   });
   revalidatePath('/app/admin');
 }

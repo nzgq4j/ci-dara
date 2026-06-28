@@ -1,4 +1,5 @@
 import { prismaAdmin } from '@/utils/prisma';
+import { recordAudit } from '@/utils/dara/audit';
 
 // Cross-tenant bootstrap: provisioning runs BEFORE a tenant context exists (the
 // company is being created here), and getDaraUser is the per-request *source* of
@@ -48,6 +49,16 @@ export async function provisionNewUser(
       },
       include: { company: true },
     });
+  });
+
+  await recordAudit({
+    action: 'user.provision',
+    companyId: user.companyId,
+    actorId: user.id,
+    actorEmail: user.email,
+    entityType: 'company',
+    entityId: user.companyId,
+    metadata: { newCompany: true, slug }
   });
 
   return user;

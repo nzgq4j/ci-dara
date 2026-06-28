@@ -14,6 +14,7 @@ import {
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
+import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation } from '@/utils/dara/evaluator';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
@@ -90,6 +91,14 @@ async function deleteSolicitation(formData: FormData) {
   const id = BigInt(String(formData.get('solId')));
   await requireOwnedSolicitation(id, daraUser.companyId);
   await withTenant(daraUser.companyId, (tx) => tx.solicitation.delete({ where: { id } }));
+  await recordAudit({
+    action: 'solicitation.delete',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: id
+  });
   redirect('/app/solicitations');
 }
 
@@ -166,7 +175,7 @@ async function addResponse(formData: FormData) {
   await requireOwnedSolicitation(solId, daraUser.companyId);
   const offerorName = String(formData.get('offerorName') ?? '').trim();
   if (!offerorName) return;
-  await withTenant(daraUser.companyId, (tx) =>
+  const created = await withTenant(daraUser.companyId, (tx) =>
     tx.response.create({
       data: {
         companyId: daraUser.companyId,
@@ -176,6 +185,15 @@ async function addResponse(formData: FormData) {
       }
     })
   );
+  await recordAudit({
+    action: 'response.create',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'response',
+    entityId: created.id,
+    metadata: { solicitationId: solId.toString(), offerorName }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -215,6 +233,15 @@ async function deleteResponse(formData: FormData) {
   // Storage I/O outside any transaction.
   await removeStored(owned.files.map((f) => f.storedFilename));
   await withTenant(daraUser.companyId, (tx) => tx.response.delete({ where: { id } }));
+  await recordAudit({
+    action: 'response.delete',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'response',
+    entityId: id,
+    metadata: { offerorName: owned.offerorName, files: owned.files.length }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -228,7 +255,7 @@ async function uploadSolDoc(formData: FormData) {
   if (!(file instanceof File) || file.size === 0) return;
   // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'sol', Date.now());
-  await withTenant(daraUser.companyId, (tx) =>
+  const created = await withTenant(daraUser.companyId, (tx) =>
     tx.solDocument.create({
       data: {
         companyId: daraUser.companyId,
@@ -242,6 +269,15 @@ async function uploadSolDoc(formData: FormData) {
       }
     })
   );
+  await recordAudit({
+    action: 'document.upload',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'sol_document',
+    entityId: created.id,
+    metadata: { solicitationId: solId.toString(), filename: doc.originalFilename }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -256,6 +292,15 @@ async function deleteSolDoc(formData: FormData) {
   if (!owned) return;
   await removeStored([owned.storedFilename]);
   await withTenant(daraUser.companyId, (tx) => tx.solDocument.delete({ where: { id } }));
+  await recordAudit({
+    action: 'document.delete',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'sol_document',
+    entityId: id,
+    metadata: { filename: owned.originalFilename }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -274,7 +319,7 @@ async function uploadResponseFile(formData: FormData) {
   if (!(file instanceof File) || file.size === 0) return;
   // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'response', Date.now());
-  await withTenant(daraUser.companyId, (tx) =>
+  const created = await withTenant(daraUser.companyId, (tx) =>
     tx.responseFile.create({
       data: {
         companyId: daraUser.companyId,
@@ -287,6 +332,15 @@ async function uploadResponseFile(formData: FormData) {
       }
     })
   );
+  await recordAudit({
+    action: 'responsefile.upload',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'response_file',
+    entityId: created.id,
+    metadata: { responseId: responseId.toString(), filename: doc.originalFilename }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -301,6 +355,15 @@ async function deleteResponseFile(formData: FormData) {
   if (!owned) return;
   await removeStored([owned.storedFilename]);
   await withTenant(daraUser.companyId, (tx) => tx.responseFile.delete({ where: { id } }));
+  await recordAudit({
+    action: 'responsefile.delete',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'response_file',
+    entityId: id,
+    metadata: { filename: owned.originalFilename }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -345,6 +408,15 @@ async function runEvaluations(formData: FormData) {
     // withTenant bursts around the slow LLM calls (do not nest transactions).
     await runEvaluation(evaluation.id, daraUser.companyId);
   }
+  await recordAudit({
+    action: 'evaluation.run',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'response',
+    entityId: responseId,
+    metadata: { solicitationId: solId.toString(), personas: activePersonas.length }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 

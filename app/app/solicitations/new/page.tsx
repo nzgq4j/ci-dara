@@ -4,6 +4,7 @@ import { ArrowLeft, Plus } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
+import { recordAudit } from '@/utils/dara/audit';
 import {
   card,
   fieldClasses,
@@ -44,6 +45,16 @@ async function createSolicitation(formData: FormData) {
       }
     })
   );
+
+  await recordAudit({
+    action: 'solicitation.create',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: solicitation.id,
+    metadata: { title }
+  });
 
   redirect(`/app/solicitations/${solicitation.id}`);
 }

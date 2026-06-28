@@ -104,7 +104,7 @@ export const FRAMEWORKS: Framework[] = [
 export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS policies enforced on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; app-layer companyId scoping retained as defense-in-depth. Remaining: platform-admin via email allow-list (DARA-010).' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
-  { family: 'Audit & Accountability', code: 'AU', status: 'Not implemented', note: 'No database audit logging; most mutations record no actor.' },
+  { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (auth/provisioning, authz + BYOK-key changes, CUI document/evaluation handling, billing). Remaining: fine-grained CRUD + sign-in events, retention policy, and log review/alerting.' },
   { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; dual lockfiles, no migration history, no CI security gates.' },
   { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; committed DB credential remediated (moved to env, rotated, purged from history); MFA posture Unverified.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
@@ -271,13 +271,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-013',
     title: 'No database-layer audit logging',
     severity: 'Moderate',
-    status: 'Open',
-    component: 'Database schema',
-    evidence: 'No audit/event table or DML triggers; most mutations record no actor or timestamp of change.',
-    impact: 'No accountability or forensic trail for CUI access and changes — a direct CMMC/AU gap.',
-    remediation: 'Add an append-only audit trail (actor, company_id, action, target, time) via triggers or pgaudit.',
+    status: 'Remediated',
+    component: 'dara_audit_log · utils/dara/audit.ts',
+    evidence: 'Append-only audit trail (dara_audit_log: actor, company, action, target, metadata, time) written via the privileged client; grants are SELECT/INSERT-only (no UPDATE/DELETE) and RLS denies the app role. Instrumented across the security-relevant events: user provisioning, AI-config + BYOK-key changes, member/role changes, platform-admin company/user changes, subscription sync, document & response-file upload/delete, evaluation runs, and solicitation/offeror create/delete.',
+    impact: 'Resolved for the security-relevant surface. Forensic trail now exists for CUI handling and privileged changes.',
+    remediation: 'Completed: app-layer audit trail (prisma/security/2026-06-28_dara013_audit_log.sql). Future: extend to fine-grained criteria/persona/field edits and sign-in events; add a retention/export policy and an in-app viewer.',
     mapping: 'NIST AU-2, AU-3, AU-12',
-    window: 'Mid-term (31–90 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-014',

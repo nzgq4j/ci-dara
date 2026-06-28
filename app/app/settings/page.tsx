@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { encryptSecret, secretHint } from '@/utils/dara/crypto';
+import { recordAudit } from '@/utils/dara/audit';
 import PageHeader from '@/components/dara/PageHeader';
 import {
   card,
@@ -48,6 +49,15 @@ async function updateAIConfig(formData: FormData) {
       }
     })
   );
+  await recordAudit({
+    action: 'aiconfig.update',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'company',
+    entityId: daraUser.companyId,
+    metadata: { aiKeyMode, activeProvider, activeModel }
+  });
   revalidatePath('/app/settings');
 }
 
@@ -71,6 +81,16 @@ async function updateApiKeys(formData: FormData) {
     await withTenant(daraUser.companyId, (tx) =>
       tx.company.update({ where: { id: daraUser.companyId }, data })
     );
+    await recordAudit({
+      action: 'apikeys.update',
+      companyId: daraUser.companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email,
+      entityType: 'company',
+      entityId: daraUser.companyId,
+      // Field NAMES only — never the secret values.
+      metadata: { changed: Object.keys(data) }
+    });
   }
   revalidatePath('/app/settings');
 }
@@ -85,12 +105,20 @@ async function updateUser(formData: FormData) {
     });
     if (!target) return;
     const role = String(formData.get('role') ?? target.role);
+    const newRole = ROLES.includes(role) ? role : target.role;
+    const isActive = formData.get('isActive') === 'on';
     await tx.daraUser.update({
       where: { id: userId },
-      data: {
-        role: ROLES.includes(role) ? (role as any) : target.role,
-        isActive: formData.get('isActive') === 'on'
-      }
+      data: { role: newRole as any, isActive }
+    });
+    await recordAudit({
+      action: 'member.update',
+      companyId: daraUser.companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email,
+      entityType: 'user',
+      entityId: userId,
+      metadata: { role: newRole, isActive, fromRole: target.role }
     });
   });
   revalidatePath('/app/settings');

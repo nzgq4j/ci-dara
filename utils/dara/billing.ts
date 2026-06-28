@@ -1,6 +1,7 @@
 import type Stripe from 'stripe';
 import { stripe } from '@/utils/stripe/config';
 import { withTenant, prismaAdmin } from '@/utils/prisma';
+import { recordAudit } from '@/utils/dara/audit';
 
 // Plan catalog — maps the Company.plan enum to live Stripe prices.
 export const PLAN_CATALOG = {
@@ -102,5 +103,14 @@ export async function syncSubscriptionToCompany(subscription: Stripe.Subscriptio
       plan: isActive && plan ? plan : 'trial',
       planStatus: status
     }
+  });
+
+  await recordAudit({
+    action: 'subscription.sync',
+    companyId: company.id,
+    actorEmail: 'stripe-webhook',
+    entityType: 'company',
+    entityId: company.id,
+    metadata: { plan: isActive && plan ? plan : 'trial', planStatus: status }
   });
 }
