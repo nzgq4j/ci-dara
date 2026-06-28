@@ -161,16 +161,18 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     `DARA_POSTGRES_*` / `DARA_SUPABASE_*` vars that the code does not read. Either
     remove them or wire the app to the integration's pooled URL (more robust for
     future rotations).
-11. **Open security findings** (full detail + status on `/app/security`). Highest
-    remaining: DARA-007 (CUI→LLM boundary/retention), DARA-002 (secrets handling),
-    DARA-010 (admin model). (DARA-003, DARA-004, DARA-009, DARA-013, and the
-    DARA-014/016/018/019 quick wins remediated 2026-06-28; DARA-015 CI gates in
-    progress.)
-12. **Evaluation ignores the persona active toggle (functional bug, not security).**
-    A production run scored against personas that were toggled off; "Run evaluation"
-    should use only `isActive: true` personas (and/or the matrix shows stale results
-    from prior runs). Investigate `runEvaluations` in `app/app/solicitations/[id]/page.tsx`
-    and the matrix/results rendering. Logged 2026-06-28.
+11. **Open security findings** (full detail + status on `/app/security`). Remaining:
+    DARA-002 (secrets handling), DARA-017 (migration history). DARA-007 (CUI→LLM)
+    is **Risk accepted** with controls; DARA-015 (CI gates) **in progress**
+    (branch protection + SBOM left). Everything else remediated as of 2026-06-28
+    (incl. DARA-010 admin model).
+12. **Persona active toggle — FIXED (2026-06-28).** Root cause: the toggle only
+    persisted when you clicked each persona's *Save*, so an unsaved "off" persona
+    still ran. Added a dedicated auto-persisting toggle (`toggleActive`) on
+    `/app/personas`; `updatePersona` no longer controls active state. `runEvaluations`
+    already filtered `isActive: true`. (Note: the Matrix still shows *historical*
+    results from prior runs by design — turning a persona off excludes it from
+    future runs, not past ones.)
 
 ---
 

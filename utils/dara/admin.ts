@@ -1,16 +1,22 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 
-// Platform (super) admins are identified by an email allow-list. Configure via
-// PLATFORM_ADMIN_EMAILS (comma-separated); falls back to the built-in list.
-const DEFAULT_ADMINS = ['islanista@gmail.com', 'david@crucibleinsight.com'];
-
+// DARA-010: platform (super) admins are configured ONLY via the
+// PLATFORM_ADMIN_EMAILS env var (comma-separated). No source-embedded fallback —
+// if the var is unset there are zero platform admins (fail-closed), and a warning
+// is logged. Admin actions are audited (DARA-013) and email verification is
+// enforced by Supabase sign-in.
 export function platformAdminEmails(): string[] {
-  const fromEnv = (process.env.PLATFORM_ADMIN_EMAILS ?? '')
+  const list = (process.env.PLATFORM_ADMIN_EMAILS ?? '')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
-  return fromEnv.length ? fromEnv : DEFAULT_ADMINS;
+  if (list.length === 0) {
+    console.warn(
+      '[admin] PLATFORM_ADMIN_EMAILS is unset — no platform admins are configured.'
+    );
+  }
+  return list;
 }
 
 export function isPlatformAdmin(email: string | null | undefined): boolean {

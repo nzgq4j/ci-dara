@@ -235,13 +235,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-010',
     title: 'Platform-admin authorization via hardcoded email allow-list',
     severity: 'Moderate',
-    status: 'Open',
-    component: 'utils/dara/admin.ts:6',
-    evidence: 'Cross-tenant super-admin gated by email membership with a hardcoded fallback list (including a personal address).',
-    impact: 'God-mode authority hinges on an email string and a source-embedded default.',
-    remediation: 'Drive platform-admin from a server-side role/claim, remove the hardcoded fallback, require verified email, and audit admin actions.',
+    status: 'Remediated',
+    component: 'utils/dara/admin.ts',
+    evidence: 'Source-embedded fallback admin list (incl. a personal address) removed. Platform admins are now configured only via the PLATFORM_ADMIN_EMAILS env var, fail-closed (zero admins + a warning if unset). Admin actions are audited (DARA-013, admin.* events); email verification is enforced by Supabase sign-in.',
+    impact: 'Resolved. No admin identity is embedded in source; the allow-list is server-side config, fail-closed, and every admin action is attributable.',
+    remediation: 'Completed: env-only allow-list + audit. Future hardening: a per-user is_platform_admin DB flag for finer, UI-managed control.',
     mapping: 'NIST AC-2, AC-6 · OWASP API5 (BFLA)',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-011',

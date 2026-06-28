@@ -8,6 +8,7 @@ import {
   seedBuiltinPersonas,
   PERSONA_TEMPLATE_VARS
 } from '@/utils/dara/personas';
+import { recordAudit } from '@/utils/dara/audit';
 import PageHeader from '@/components/dara/PageHeader';
 import {
   card,
@@ -73,11 +74,41 @@ async function updatePersona(formData: FormData) {
       data: {
         displayName: displayName || owned.displayName,
         systemPrompt: systemPrompt || owned.systemPrompt,
-        isActive: formData.get('isActive') === 'on',
+        // Active state is owned by the dedicated toggle (toggleActive), not this
+        // form — preserve it so saving name/prompt never flips active by accident.
         sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
       }
     });
   });
+  revalidatePath('/app/personas');
+}
+
+// Persist the active toggle immediately (its own action), so turning a persona
+// off reliably excludes it from future evaluations without needing a separate Save.
+async function toggleActive(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('personaId')));
+  const next = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.persona.findFirst({
+      where: { id, companyId: daraUser.companyId }
+    });
+    if (!owned) return null;
+    const isActive = !owned.isActive;
+    await tx.persona.update({ where: { id }, data: { isActive } });
+    return { isActive, displayName: owned.displayName };
+  });
+  if (next) {
+    await recordAudit({
+      action: 'persona.toggle',
+      companyId: daraUser.companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email,
+      entityType: 'persona',
+      entityId: id,
+      metadata: { isActive: next.isActive, name: next.displayName }
+    });
+  }
   revalidatePath('/app/personas');
 }
 
@@ -155,28 +186,42 @@ export default async function PersonasPage() {
       <div className="space-y-4">
         {personas.map((p) => (
           <div key={p.id.toString()} className={`${card} p-5`}>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                {p.isActive
+                  ? 'Active — scores every evaluation'
+                  : 'Inactive — skipped in evaluations'}
+              </span>
+              <form action={toggleActive}>
+                <input type="hidden" name="personaId" value={p.id.toString()} />
+                <button
+                  type="submit"
+                  aria-pressed={p.isActive}
+                  title={p.isActive ? 'Turn off (exclude from evaluations)' : 'Turn on'}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] font-semibold transition-colors ${
+                    p.isActive
+                      ? 'border-[#10b981]/40 bg-[#10b981]/10 text-[#7de0a0]'
+                      : 'border-line text-t5 hover:text-t3'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${p.isActive ? 'bg-[#10b981]' : 'bg-[#3d5270]'}`}
+                  />
+                  {p.isActive ? 'ACTIVE' : 'INACTIVE'}
+                </button>
+              </form>
+            </div>
             <form action={updatePersona} className="space-y-4">
               <input type="hidden" name="personaId" value={p.id.toString()} />
               <input type="hidden" name="sortOrder" value={p.sortOrder} />
-              <div className="flex items-end gap-4">
-                <div className="flex-1 space-y-1.5">
-                  <label className={labelClasses}>Display name</label>
-                  <input
-                    name="displayName"
-                    type="text"
-                    defaultValue={p.displayName}
-                    className={fieldClasses}
-                  />
-                </div>
-                <label className="flex h-9 items-center gap-2 text-[13px] text-t4">
-                  <input
-                    type="checkbox"
-                    name="isActive"
-                    defaultChecked={p.isActive}
-                    className={checkboxClasses}
-                  />
-                  Active
-                </label>
+              <div className="space-y-1.5">
+                <label className={labelClasses}>Display name</label>
+                <input
+                  name="displayName"
+                  type="text"
+                  defaultValue={p.displayName}
+                  className={fieldClasses}
+                />
               </div>
               <div className="space-y-1.5">
                 <label className={labelClasses}>System prompt template</label>
