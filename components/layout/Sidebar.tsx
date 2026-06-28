@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
 import {
   LayoutDashboard,
   FileText,
@@ -14,7 +13,8 @@ import {
   LogOut,
   type LucideIcon
 } from 'lucide-react';
-import { createClient } from '@/utils/supabase/client';
+import { SignOut } from '@/utils/auth-helpers/server';
+import { handleRequest } from '@/utils/auth-helpers/client';
 import ThemeToggle from '@/components/layout/ThemeToggle';
 
 interface NavItem {
@@ -52,7 +52,6 @@ export default function Sidebar({
 }) {
   const pathname = usePathname() || '';
   const router = useRouter();
-  const [signingOut, setSigningOut] = useState(false);
 
   const sections: Section[] = [
     {
@@ -81,14 +80,6 @@ export default function Sidebar({
 
   const initials = (user.name || user.email || '?').slice(0, 2).toUpperCase();
   const planLabel = PLAN_LABELS[company.plan] ?? company.plan;
-
-  const handleSignOut = async () => {
-    setSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push('/signin');
-    router.refresh();
-  };
 
   return (
     <aside className="flex h-full w-[220px] flex-shrink-0 flex-col overflow-hidden border-r border-line bg-surf3">
@@ -155,14 +146,16 @@ export default function Sidebar({
           <div className="text-[10px] text-t5">{titleCase(user.role)}</div>
         </div>
         <ThemeToggle />
-        <button
-          onClick={handleSignOut}
-          disabled={signingOut}
-          title="Sign out"
-          className="text-t5 transition-colors hover:text-t1 disabled:opacity-50"
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
+        <form onSubmit={(e) => handleRequest(e, SignOut, router)}>
+          <input type="hidden" name="pathName" value={pathname} />
+          <button
+            type="submit"
+            title="Sign out"
+            className="text-t5 transition-colors hover:text-t1"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </form>
       </div>
     </aside>
   );
