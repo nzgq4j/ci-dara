@@ -3,20 +3,9 @@
 @tailwind utilities;
 
 /* DARA theme tokens (RGB channels; consumed via tailwind colors + var()).
-   Dark is the default; [data-theme="light"] is applied by next-themes. */
-[data-theme='dark'] {
-  color-scheme: dark;
-  --c-bg: 7 12 22;
-  --c-surf: 13 21 39;
-  --c-surf2: 15 28 46;
-  --c-surf3: 9 16 30;
-  --c-border: 26 47 74;
-  --c-t1: 240 244 255;
-  --c-t2: 203 213 225;
-  --c-t3: 148 163 184;
-  --c-t4: 125 151 179;
-  --c-t5: 61 82 112;
-}
+   Light is the default (:root). The [data-theme='dark'] block MUST come after it
+   so that, at equal specificity, dark wins when next-themes sets data-theme=dark
+   (otherwise :root — which always matches <html> — would override dark). */
 :root,
 [data-theme='light'] {
   color-scheme: light;
@@ -30,6 +19,19 @@
   --c-t3: 71 85 105;
   --c-t4: 100 116 139;
   --c-t5: 148 163 184;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+  --c-bg: 7 12 22;
+  --c-surf: 13 21 39;
+  --c-surf2: 15 28 46;
+  --c-surf3: 9 16 30;
+  --c-border: 26 47 74;
+  --c-t1: 240 244 255;
+  --c-t2: 203 213 225;
+  --c-t3: 148 163 184;
+  --c-t4: 125 151 179;
+  --c-t5: 61 82 112;
 }
 
 *,
