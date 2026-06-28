@@ -88,6 +88,18 @@ body {
   animation: daraFadeUp 0.25s ease both;
 }
 
+/* Login brand panel — theme-aware gradient (soft blue in light, navy in dark) so
+   the token-based text stays readable in both themes. */
+.login-brand {
+  background: linear-gradient(160deg, #eef3ff 0%, #dbe7ff 50%, #c4d7f7 100%);
+}
+[data-theme='dark'] .login-brand {
+  background: linear-gradient(160deg, #040913 0%, #091525 50%, #0b1f3a 100%);
+}
+.login-brand-glow {
+  background: radial-gradient(ellipse at 30% 50%, rgba(59, 110, 240, 0.12) 0%, transparent 70%);
+}
+
 body {
   position: relative;
   min-height: 100%;

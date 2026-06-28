@@ -66,14 +66,8 @@ export default async function SignIn({
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Left brand panel */}
-      <div
-        className="relative hidden w-[460px] flex-shrink-0 flex-col overflow-hidden p-12 md:flex"
-        style={{ background: 'linear-gradient(160deg,#040913 0%,#091525 50%,#0b1f3a 100%)' }}
-      >
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{ background: 'radial-gradient(ellipse at 30% 50%,rgba(59,110,240,.12) 0%,transparent 70%)' }}
-        />
+      <div className="login-brand relative hidden w-[460px] flex-shrink-0 flex-col overflow-hidden p-12 md:flex">
+        <div className="login-brand-glow pointer-events-none absolute inset-0" />
         <div className="relative z-10 flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/dara-logo.png" alt="DARA" className="h-10 w-10 object-contain" />
