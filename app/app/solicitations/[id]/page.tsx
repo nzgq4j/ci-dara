@@ -18,6 +18,7 @@ import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation } from '@/utils/dara/evaluator';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
+import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import {
   card,
   cardDashed,
@@ -415,7 +416,13 @@ async function runEvaluations(formData: FormData) {
     actorEmail: daraUser.email,
     entityType: 'response',
     entityId: responseId,
-    metadata: { solicitationId: solId.toString(), personas: activePersonas.length }
+    // Record the CUI egress target for the data-boundary trail (DARA-007).
+    metadata: {
+      solicitationId: solId.toString(),
+      personas: activePersonas.length,
+      provider: daraUser.company.activeProvider,
+      mode: daraUser.company.aiKeyMode
+    }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -539,7 +546,12 @@ export default async function SolicitationDetailPage({
   );
 
   const documentsPanel = (
-    <div className={`${card} p-5`}>
+    <div className="space-y-4">
+      <CuiBoundaryNotice
+        provider={daraUser.company.activeProvider}
+        mode={daraUser.company.aiKeyMode}
+      />
+      <div className={`${card} p-5`}>
       {solicitation.solDocs.length > 0 ? (
         <ul className="mb-4 space-y-2">
           {solicitation.solDocs.map((d) => (
@@ -566,6 +578,7 @@ export default async function SolicitationDetailPage({
         <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
         <button type="submit" className={btnPrimary}><Upload className="h-4 w-4" />Upload</button>
       </form>
+      </div>
     </div>
   );
 
@@ -655,6 +668,10 @@ export default async function SolicitationDetailPage({
 
   const offerorsPanel = (
     <div className="space-y-4">
+      <CuiBoundaryNotice
+        provider={daraUser.company.activeProvider}
+        mode={daraUser.company.aiKeyMode}
+      />
       {!canEvaluate && (
         <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
           To run evaluations you need at least one criterion and one active persona

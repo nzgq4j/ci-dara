@@ -7,6 +7,7 @@ import { withTenant } from '@/utils/prisma';
 import { encryptSecret, secretHint } from '@/utils/dara/crypto';
 import { recordAudit } from '@/utils/dara/audit';
 import PageHeader from '@/components/dara/PageHeader';
+import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import {
   card,
   fieldClasses,
@@ -156,6 +157,9 @@ export default async function SettingsPage() {
           <h2 className={`mb-4 flex items-center gap-2 ${sectionTitle}`}>
             <Cpu className="h-4 w-4 text-t5" />AI Configuration
           </h2>
+          <div className="mb-4">
+            <CuiBoundaryNotice provider={company.activeProvider} mode={company.aiKeyMode} />
+          </div>
           <form action={updateAIConfig} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">

@@ -200,8 +200,12 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   audit, CodeQL SAST); branch protection + SBOM remain.
 - **Larger, dedicated passes:** ~~DARA-004 (least-privilege DB role + per-tenant
   RLS)~~, ~~DARA-009 (encrypt CUI at rest)~~, and ~~DARA-013 (append-only audit
-  trail)~~ **done 2026-06-28**; remaining: DARA-007 (CUI→LLM data-boundary /
-  zero-retention decision).
+  trail)~~ **done 2026-06-28**. **DARA-007 (CUI→LLM): Risk accepted** — decision to
+  keep the commercial-LLM hosting model with compensating controls: CUI boundary
+  notices at every egress/config point, BYOK offered as the option, encryption at
+  rest/in transit, per-run provider/mode audit, `DARA-007-data-boundary.md`. ZDR
+  agreements on the platform keys (Anthropic/OpenAI/Google) pursued **offline**;
+  update the notice copy + status on signing. (No FedRAMP/GovCloud migration.)
 
 ---
 

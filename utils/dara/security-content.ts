@@ -114,7 +114,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Physical Protection', code: 'PE', status: 'Not applicable', note: 'Inherited from cloud providers (Vercel / Supabase / AWS).' },
   { family: 'Risk Assessment', code: 'RA', status: 'Partial', note: 'This assessment performed; no continuous vulnerability scanning.' },
   { family: 'Security Assessment & Monitoring', code: 'CA', status: 'Partial', note: 'Point-in-time review; no continuous monitoring program.' },
-  { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP now set; DB TLS not explicitly enforced; CUI egress to LLM APIs still to address.' },
+  { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP; DB TLS enforced (DARA-014); CUI encrypted at rest (DARA-009). CUI→LLM egress: commercial endpoints retained with compensating controls — boundary notices, BYOK option, per-run audit (DARA-007, risk accepted); zero-data-retention agreements on platform keys pursued offline.' },
   { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Next.js patched to 14.2.35; LLM input now fenced; React output escaping sound; remaining dev-only transitive advisories + no automated dependency scanning.' },
   { family: 'Planning', code: 'PL', status: 'Not implemented', note: 'No System Security Plan (SSP) evidenced.' },
   { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Lockfiles present; no SBOM, dependency scanning, or provenance controls.' }
@@ -199,13 +199,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-007',
     title: 'CUI transmitted to commercial LLM APIs',
     severity: 'High',
-    status: 'Open',
+    status: 'Risk accepted',
     component: 'utils/dara/providers.ts',
-    evidence: 'Extracted proposal/solicitation text is sent to Anthropic/OpenAI/Google; platform-key mode sends under the vendor account. Retention terms Unverified.',
-    impact: 'CUI may leave the protected boundary into third-party services without a verified covered agreement or zero-retention configuration.',
-    remediation: 'Establish data-handling terms / zero-retention, prefer BYOK or gov-authorized endpoints for CUI, and surface a boundary notice.',
+    evidence: 'Decision: retain the commercial-LLM hosting model; accept the residual risk with compensating controls. Controls in place: explicit CUI data-boundary notice at every egress/config point (Documents + Offerors tabs, AI settings); BYOK offered as the option for customers to use their own provider terms; CUI encrypted at rest (DARA-009) and in transit (TLS, DARA-014); each evaluation run audits the provider/mode the CUI was sent to (DARA-013); data flow documented (prisma/security/DARA-007-data-boundary.md).',
+    impact: 'Residual risk surfaced and accepted. Commercial endpoints remain non-FedRAMP; recommended posture for live CUI is BYOK and/or zero-data-retention agreements on the platform keys.',
+    remediation: 'Compensating controls shipped. Pending (offline contract action): execute zero-data-retention (ZDR) agreements on the platform keys (Anthropic ZDR + DPA; OpenAI ZDR on approval; Google paid/Vertex ZDR). On signing, update the boundary notice to state platform-mode ZDR.',
     mapping: 'NIST SC-7, AC-4 · OWASP LLM06',
-    window: 'Short-term (8–30 days)'
+    window: 'Accepted (revisit on ZDR signing)'
   },
   {
     id: 'DARA-008',
