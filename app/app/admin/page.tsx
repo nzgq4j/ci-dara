@@ -85,17 +85,17 @@ export default async function AdminPage() {
         {/* Companies */}
         <section className="space-y-4">
           <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
-            <Building2 className="h-4 w-4 text-[#3d5270]" />Accounts
+            <Building2 className="h-4 w-4 text-t5" />Accounts
           </h2>
           {companies.map((c) => (
             <form key={c.id.toString()} action={updateCompany} className={`${card} p-4`}>
               <input type="hidden" name="companyId" value={c.id.toString()} />
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <span className="text-[13px] font-semibold text-[#e8eef7]">{c.name}</span>
-                  <span className="ml-2 font-mono text-[11px] text-[#3d5270]">/{c.slug}</span>
+                  <span className="text-[13px] font-semibold text-t1">{c.name}</span>
+                  <span className="ml-2 font-mono text-[11px] text-t5">/{c.slug}</span>
                 </div>
-                <div className="font-mono text-[11px] text-[#3d5270]">
+                <div className="font-mono text-[11px] text-t5">
                   {c._count.users} users · {c._count.solicitations} solicitations · {c._count.evaluations} evals
                 </div>
               </div>
@@ -141,7 +141,7 @@ export default async function AdminPage() {
                 </div>
                 <div className="space-y-1.5">
                   <label className={labelClasses}>Keys</label>
-                  <div className="px-1 py-2 font-mono text-[11px] text-[#7d97b3]">
+                  <div className="px-1 py-2 font-mono text-[11px] text-t4">
                     {[
                       ['A', secretHint(c.anthropicKeyEnc)],
                       ['O', secretHint(c.openaiKeyEnc)],
@@ -162,21 +162,21 @@ export default async function AdminPage() {
         {/* Users */}
         <section className="space-y-4">
           <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
-            <Users className="h-4 w-4 text-[#3d5270]" />All Users{' '}
-            <span className="font-mono text-[11px] font-normal text-[#3d5270]">({users.length})</span>
+            <Users className="h-4 w-4 text-t5" />All Users{' '}
+            <span className="font-mono text-[11px] font-normal text-t5">({users.length})</span>
           </h2>
           <div className="space-y-2">
             {users.map((u) => (
               <form key={u.id} action={updateAnyUser} className={`${card} flex items-center gap-3 p-3`}>
                 <input type="hidden" name="userId" value={u.id} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] text-[#e8eef7]">{u.email}</div>
-                  <div className="truncate text-[11px] text-[#3d5270]">{u.company.name}</div>
+                  <div className="truncate text-[13px] text-t1">{u.email}</div>
+                  <div className="truncate text-[11px] text-t5">{u.company.name}</div>
                 </div>
                 <select name="role" defaultValue={u.role} className={`${fieldClasses} w-40`}>
                   {ROLES.map((r) => (<option key={r} value={r}>{r}</option>))}
                 </select>
-                <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-[#7d97b3]">
+                <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-t4">
                   <input type="checkbox" name="isActive" defaultChecked={u.isActive} className={checkboxClasses} />
                   active
                 </label>

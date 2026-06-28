@@ -78,7 +78,7 @@ export default async function SignIn({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/dara-logo.png" alt="DARA" className="h-10 w-10 object-contain" />
           <div>
-            <div className="text-base font-bold tracking-tight text-[#e8eef7]">DARA</div>
+            <div className="text-base font-bold tracking-tight text-t1">DARA</div>
             <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#3b6ef0]">
               Crucible Insight
             </div>
@@ -86,7 +86,7 @@ export default async function SignIn({
         </div>
 
         <div className="relative z-10 mt-auto">
-          <div className="mb-4 text-[28px] font-bold leading-tight tracking-tight text-[#e8eef7]">
+          <div className="mb-4 text-[28px] font-bold leading-tight tracking-tight text-t1">
             AI-powered proposal screening for acquisition professionals.
           </div>
           <div className="flex flex-col gap-3">
@@ -95,31 +95,31 @@ export default async function SignIn({
                 <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-[#3b6ef0]/40 bg-[#3b6ef0]/20 text-[11px] text-[#3b6ef0]">
                   ✓
                 </div>
-                <span className="text-[13px] text-[#7d97b3]">{f}</span>
+                <span className="text-[13px] text-t4">{f}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="relative z-10 mt-10 text-[11px] text-[#3d5270]">
+        <div className="relative z-10 mt-10 text-[11px] text-t5">
           © 2026 Crucible Insight LLC · All rights reserved
         </div>
       </div>
 
       {/* Right form panel */}
-      <div className="flex flex-1 items-center justify-center overflow-y-auto bg-[#09101e] p-8">
+      <div className="flex flex-1 items-center justify-center overflow-y-auto bg-surf3 p-8">
         <div className="fade w-full max-w-[400px]">
           {/* Mobile logo */}
           <div className="mb-8 flex items-center gap-2.5 md:hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/dara-logo.png" alt="DARA" className="h-9 w-9 object-contain" />
-            <div className="text-base font-bold tracking-tight text-[#e8eef7]">DARA</div>
+            <div className="text-base font-bold tracking-tight text-t1">DARA</div>
           </div>
 
-          <div className="mb-1.5 text-[22px] font-bold tracking-tight text-[#e8eef7]">
+          <div className="mb-1.5 text-[22px] font-bold tracking-tight text-t1">
             {copy.title}
           </div>
-          <div className="mb-7 text-[13px] text-[#7d97b3]">{copy.subtitle}</div>
+          <div className="mb-7 text-[13px] text-t4">{copy.subtitle}</div>
 
           {viewProp !== 'update_password' && viewProp !== 'signup' && allowOauth && (
             <div className="mb-2">

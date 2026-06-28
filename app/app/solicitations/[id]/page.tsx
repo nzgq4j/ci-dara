@@ -452,9 +452,9 @@ export default async function SolicitationDetailPage({
         </form>
       </section>
 
-      <section className="rounded-[10px] border border-[#5a1f1f]/50 bg-[#0d1527] p-6">
+      <section className="rounded-[10px] border border-[#5a1f1f]/50 bg-surf p-6">
         <h2 className={sectionTitle}>Danger zone</h2>
-        <p className="mt-1 text-[13px] text-[#7d97b3]">
+        <p className="mt-1 text-[13px] text-t4">
           Deleting this solicitation also removes its criteria, offerors,
           documents, and evaluations. This cannot be undone.
         </p>
@@ -471,11 +471,11 @@ export default async function SolicitationDetailPage({
       {solicitation.solDocs.length > 0 ? (
         <ul className="mb-4 space-y-2">
           {solicitation.solDocs.map((d) => (
-            <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-[#1a2f4a] bg-[#070c16] px-3 py-2.5">
+            <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2.5">
               <span className="flex min-w-0 items-center gap-2.5">
-                <FileText className="h-4 w-4 flex-shrink-0 text-[#3d5270]" />
-                <span className="truncate text-[13px] text-[#cbd5e1]">{d.originalFilename}</span>
-                <span className="flex-shrink-0 text-[11px] text-[#3d5270]">{fmtSize(d.fileSize)}</span>
+                <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
+                <span className="truncate text-[13px] text-t2">{d.originalFilename}</span>
+                <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(d.fileSize)}</span>
                 <StatusBadge status={d.extractionStatus} />
               </span>
               <form action={deleteSolDoc}>
@@ -487,7 +487,7 @@ export default async function SolicitationDetailPage({
           ))}
         </ul>
       ) : (
-        <p className="mb-4 text-[13px] text-[#3d5270]">No solicitation documents uploaded yet.</p>
+        <p className="mb-4 text-[13px] text-t5">No solicitation documents uploaded yet.</p>
       )}
       <form action={uploadSolDoc} className="flex items-center gap-3">
         <input type="hidden" name="solId" value={sid} />
@@ -535,7 +535,7 @@ export default async function SolicitationDetailPage({
               <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
             </div>
           </form>
-          <form action={deleteCriterion} className="mt-2 flex justify-end border-t border-[#1a2f4a] pt-2">
+          <form action={deleteCriterion} className="mt-2 flex justify-end border-t border-line pt-2">
             <input type="hidden" name="solId" value={sid} />
             <input type="hidden" name="criterionId" value={c.id.toString()} />
             <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete criterion</button>
@@ -584,7 +584,7 @@ export default async function SolicitationDetailPage({
   const offerorsPanel = (
     <div className="space-y-4">
       {!canEvaluate && (
-        <p className="rounded-lg border border-[#5a4a1f]/50 bg-[#0d1527] px-4 py-2.5 text-[12px] text-[#e0c97d]">
+        <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
           To run evaluations you need at least one criterion and one active persona
           ({solicitation.criteria.length} criteria, {activeCount} active personas).
         </p>
@@ -610,16 +610,16 @@ export default async function SolicitationDetailPage({
           </form>
 
           {/* Proposal files */}
-          <div className="mt-3 border-t border-[#1a2f4a] pt-3">
+          <div className="mt-3 border-t border-line pt-3">
             <p className={labelClasses}>Proposal documents</p>
             {r.files.length > 0 && (
               <ul className="mt-2 space-y-1.5">
                 {r.files.map((f) => (
-                  <li key={f.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-[#1a2f4a] bg-[#070c16] px-3 py-2">
+                  <li key={f.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2">
                     <span className="flex min-w-0 items-center gap-2.5">
-                      <FileText className="h-4 w-4 flex-shrink-0 text-[#3d5270]" />
-                      <span className="truncate text-[13px] text-[#cbd5e1]">{f.originalFilename}</span>
-                      <span className="flex-shrink-0 text-[11px] text-[#3d5270]">{fmtSize(f.fileSize)}</span>
+                      <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
+                      <span className="truncate text-[13px] text-t2">{f.originalFilename}</span>
+                      <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(f.fileSize)}</span>
                       <StatusBadge status={f.extractionStatus} />
                     </span>
                     <form action={deleteResponseFile}>
@@ -639,7 +639,7 @@ export default async function SolicitationDetailPage({
             </form>
           </div>
 
-          <div className="mt-3 flex items-center justify-between border-t border-[#1a2f4a] pt-3">
+          <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
             <form action={runEvaluations}>
               <input type="hidden" name="solId" value={sid} />
               <input type="hidden" name="responseId" value={r.id.toString()} />
@@ -685,12 +685,12 @@ export default async function SolicitationDetailPage({
         <div className={`${card} overflow-x-auto`}>
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="bg-[#09101e]">
-                <th className="sticky left-0 z-10 bg-[#09101e] px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+              <tr className="bg-surf3">
+                <th className="sticky left-0 z-10 bg-surf3 px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Offeror
                 </th>
                 {solicitation.criteria.map((c) => (
-                  <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                  <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     {c.name}
                   </th>
                 ))}
@@ -698,14 +698,14 @@ export default async function SolicitationDetailPage({
             </thead>
             <tbody>
               {solicitation.responses.map((r) => (
-                <tr key={r.id.toString()} className="border-t border-[#1a2f4a]">
-                  <td className="sticky left-0 z-10 bg-[#0d1527] px-[18px] py-3 text-[13px] font-semibold text-[#cbd5e1]">
+                <tr key={r.id.toString()} className="border-t border-line">
+                  <td className="sticky left-0 z-10 bg-surf px-[18px] py-3 text-[13px] font-semibold text-t2">
                     {r.offerorName}
                   </td>
                   {solicitation.criteria.map((c) => {
                     const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
                     let label = '—';
-                    let color = 'text-[#3d5270]';
+                    let color = 'text-t5';
                     if (cell && cell.scores.length > 0) {
                       const avg = Math.round(
                         cell.scores.reduce((a, b) => a + b, 0) / cell.scores.length
@@ -715,7 +715,7 @@ export default async function SolicitationDetailPage({
                         avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-[#6f9bf5]' : 'text-[#e0a07d]';
                     } else if (cell && cell.determinations.length > 0) {
                       label = cell.determinations[0];
-                      color = 'text-[#94a3b8]';
+                      color = 'text-t3';
                     }
                     return (
                       <td key={c.id.toString()} className={`px-3.5 py-3 text-center text-[13px] font-semibold ${color}`}>
@@ -730,8 +730,8 @@ export default async function SolicitationDetailPage({
         </div>
       ) : (
         <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-12 text-center`}>
-          <Inbox className="h-9 w-9 text-[#3d5270]" />
-          <p className="mt-3 text-[13px] text-[#7d97b3]">
+          <Inbox className="h-9 w-9 text-t5" />
+          <p className="mt-3 text-[13px] text-t4">
             No evaluation results yet. Add criteria and offerors, upload proposal
             documents, then run an evaluation from the Offerors tab.
           </p>
@@ -743,7 +743,7 @@ export default async function SolicitationDetailPage({
         <div className="space-y-4">
           <h2 className={sectionTitle}>
             Detailed results{' '}
-            <span className="font-mono text-[11px] font-normal text-[#3d5270]">
+            <span className="font-mono text-[11px] font-normal text-t5">
               ({solicitation.evaluations.length})
             </span>
           </h2>
@@ -751,8 +751,8 @@ export default async function SolicitationDetailPage({
             <div key={e.id.toString()} className={`${card} p-4`}>
               <div className="mb-3 flex items-center justify-between">
                 <div className="text-[13px]">
-                  <span className="font-semibold text-[#e8eef7]">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
-                  <span className="text-[#7d97b3]"> · {e.response?.offerorName ?? '—'}</span>
+                  <span className="font-semibold text-t1">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
+                  <span className="text-t4"> · {e.response?.offerorName ?? '—'}</span>
                 </div>
                 <StatusBadge status={e.status} />
               </div>
@@ -764,22 +764,22 @@ export default async function SolicitationDetailPage({
               {e.results.length > 0 && (
                 <div className="space-y-2">
                   {e.results.map((res) => (
-                    <div key={res.id.toString()} className="rounded-lg border border-[#1a2f4a] bg-[#070c16] p-3">
+                    <div key={res.id.toString()} className="rounded-lg border border-line bg-bg p-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-[13px] font-semibold text-[#e8eef7]">{res.criterion.name}</span>
+                        <span className="text-[13px] font-semibold text-t1">{res.criterion.name}</span>
                         <span className="text-[13px] text-[#6f9bf5]">
                           {res.aiScore != null
                             ? `${Number(res.aiScore)}/100`
                             : res.aiDetermination ?? '—'}
                           {res.aiConfidence != null && (
-                            <span className="ml-2 text-[11px] text-[#3d5270]">
+                            <span className="ml-2 text-[11px] text-t5">
                               {Math.round(Number(res.aiConfidence) * 100)}% conf.
                             </span>
                           )}
                         </span>
                       </div>
                       {res.aiRationale && (
-                        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[#9fb3cc]">
+                        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-t3">
                           {res.aiRationale}
                         </p>
                       )}
@@ -806,17 +806,17 @@ export default async function SolicitationDetailPage({
     <div className="mx-auto max-w-5xl fade">
       <Link
         href="/app/solicitations"
-        className="mb-4 inline-flex items-center gap-2 text-[13px] text-[#7d97b3] transition-colors hover:text-[#e8eef7]"
+        className="mb-4 inline-flex items-center gap-2 text-[13px] text-t4 transition-colors hover:text-t1"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Solicitations
       </Link>
       <div className="mb-6">
-        <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[#3d5270]">
+        <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
           {solicitation.solNumber || 'No reference number'}
           {solicitation.agency ? ` · ${solicitation.agency}` : ''}
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-[#f0f4ff]">{solicitation.title}</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
       </div>
 
       <Tabs tabs={tabs} />

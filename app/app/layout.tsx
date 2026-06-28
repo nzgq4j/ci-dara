@@ -20,7 +20,7 @@ export default async function AppLayout({
   if (!daraUser) redirect('/signin');
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#070c16] text-[#e8eef7]">
+    <div className="flex h-screen overflow-hidden bg-bg text-t1">
       <Sidebar
         isAdmin={isPlatformAdmin(user.email)}
         company={{ name: daraUser.company.name, plan: daraUser.company.plan }}

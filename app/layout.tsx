@@ -3,6 +3,7 @@ import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 import Footer from '@/components/ui/Footer';
 import Navbar from '@/components/ui/Navbar';
 import ChromeGate from '@/components/layout/ChromeGate';
+import ThemeProvider from '@/components/layout/ThemeProvider';
 import { Toaster } from '@/components/ui/Toasts/toaster';
 import { PropsWithChildren, Suspense } from 'react';
 import { getURL } from '@/utils/helpers';
@@ -42,14 +43,20 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: PropsWithChildren) {
   return (
-    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
-      <body className="bg-[#070c16]">
-        <ChromeGate navbar={<Navbar />} footer={<Footer />}>
-          {children}
-        </ChromeGate>
-        <Suspense>
-          <Toaster />
-        </Suspense>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${plexSans.variable} ${plexMono.variable}`}
+    >
+      <body className="bg-bg">
+        <ThemeProvider>
+          <ChromeGate navbar={<Navbar />} footer={<Footer />}>
+            {children}
+          </ChromeGate>
+          <Suspense>
+            <Toaster />
+          </Suspense>
+        </ThemeProvider>
       </body>
     </html>
   );

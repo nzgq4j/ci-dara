@@ -13,7 +13,7 @@ const planLabels: Record<string, string> = {
 };
 
 const evBadge: Record<string, string> = {
-  pending: 'bg-[#1a2f4a] text-[#7d97b3]',
+  pending: 'bg-line text-t4',
   running: 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
   complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
   failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
@@ -84,13 +84,13 @@ export default async function DashboardPage() {
       {/* Header */}
       <div className="mb-7 flex items-start justify-between">
         <div>
-          <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[#3d5270]">
+          <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
             {today}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#f0f4ff]">
+          <h1 className="text-2xl font-bold tracking-tight text-t1">
             {greeting}, {firstName}.
           </h1>
-          <p className="text-[13px] text-[#7d97b3]">
+          <p className="text-[13px] text-t4">
             Here&apos;s a snapshot of your evaluation activity.
           </p>
         </div>
@@ -108,16 +108,16 @@ export default async function DashboardPage() {
         {stats.map((s) => (
           <div
             key={s.label}
-            className="rounded-[10px] border border-[#1a2f4a] bg-[#0d1527] p-5"
+            className="rounded-[10px] border border-line bg-surf p-5"
             style={{ borderTop: `3px solid ${s.color}` }}
           >
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
               {s.label}
             </div>
             <div className="text-3xl font-bold leading-none" style={{ color: s.color }}>
               {s.value}
             </div>
-            <div className="mt-1 text-[11px] text-[#3d5270]">{s.sub}</div>
+            <div className="mt-1 text-[11px] text-t5">{s.sub}</div>
           </div>
         ))}
       </div>
@@ -125,15 +125,15 @@ export default async function DashboardPage() {
       {/* Two-column */}
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         {/* Recent solicitations */}
-        <div className="overflow-hidden rounded-[10px] border border-[#1a2f4a] bg-[#0d1527]">
-          <div className="flex items-center justify-between border-b border-[#1a2f4a] px-[18px] py-3.5">
-            <div className="text-[13px] font-bold text-[#e8eef7]">Recent Solicitations</div>
+        <div className="overflow-hidden rounded-[10px] border border-line bg-surf">
+          <div className="flex items-center justify-between border-b border-line px-[18px] py-3.5">
+            <div className="text-[13px] font-bold text-t1">Recent Solicitations</div>
             <Link href="/app/solicitations" className="text-[11px] text-[#3b6ef0]">
               View all →
             </Link>
           </div>
           {recentSolicitations.length === 0 ? (
-            <div className="px-[18px] py-8 text-center text-[12px] text-[#3d5270]">
+            <div className="px-[18px] py-8 text-center text-[12px] text-t5">
               No solicitations yet.{' '}
               <Link href="/app/solicitations/new" className="text-[#3b6ef0]">
                 Create one →
@@ -142,17 +142,17 @@ export default async function DashboardPage() {
           ) : (
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-[#09101e]">
-                  <th className="px-[18px] py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                <tr className="bg-surf3">
+                  <th className="px-[18px] py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
                     Title
                   </th>
-                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
                     Reference
                   </th>
-                  <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                  <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     Criteria
                   </th>
-                  <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                  <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     Offerors
                   </th>
                 </tr>
@@ -161,21 +161,21 @@ export default async function DashboardPage() {
                 {recentSolicitations.map((sol) => (
                   <tr
                     key={sol.id.toString()}
-                    className="border-t border-[#1a2f4a] transition-colors hover:bg-[#0f1c2e]"
+                    className="border-t border-line transition-colors hover:bg-surf2"
                   >
                     <td className="px-[18px] py-3">
                       <Link href={`/app/solicitations/${sol.id}`} className="block">
-                        <div className="text-[13px] font-semibold text-[#cbd5e1]">{sol.title}</div>
-                        <div className="mt-0.5 text-[11px] text-[#3d5270]">{sol.agency || '—'}</div>
+                        <div className="text-[13px] font-semibold text-t2">{sol.title}</div>
+                        <div className="mt-0.5 text-[11px] text-t5">{sol.agency || '—'}</div>
                       </Link>
                     </td>
-                    <td className="px-3.5 py-3 font-mono text-[11px] text-[#3d5270]">
+                    <td className="px-3.5 py-3 font-mono text-[11px] text-t5">
                       {sol.solNumber || '—'}
                     </td>
-                    <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-[#94a3b8]">
+                    <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                       {sol._count.criteria}
                     </td>
-                    <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-[#94a3b8]">
+                    <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                       {sol._count.responses}
                     </td>
                   </tr>
@@ -187,25 +187,25 @@ export default async function DashboardPage() {
 
         {/* Right column */}
         <div className="flex flex-col gap-3.5">
-          <div className="overflow-hidden rounded-[10px] border border-[#1a2f4a] bg-[#0d1527]">
-            <div className="flex items-center justify-between border-b border-[#1a2f4a] px-[18px] py-3.5">
-              <div className="text-[13px] font-bold text-[#e8eef7]">Recent Evaluations</div>
+          <div className="overflow-hidden rounded-[10px] border border-line bg-surf">
+            <div className="flex items-center justify-between border-b border-line px-[18px] py-3.5">
+              <div className="text-[13px] font-bold text-t1">Recent Evaluations</div>
             </div>
             {recentEvaluations.length === 0 ? (
-              <div className="px-[18px] py-6 text-center text-[12px] text-[#3d5270]">
+              <div className="px-[18px] py-6 text-center text-[12px] text-t5">
                 No evaluations yet.
               </div>
             ) : (
               recentEvaluations.map((ev) => (
                 <div
                   key={ev.id.toString()}
-                  className="flex items-center gap-2.5 border-t border-[#1a2f4a] px-[18px] py-2.5"
+                  className="flex items-center gap-2.5 border-t border-line px-[18px] py-2.5"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12px] font-semibold text-[#cbd5e1]">
+                    <div className="truncate text-[12px] font-semibold text-t2">
                       {ev.response?.offerorName ?? '—'}
                     </div>
-                    <div className="truncate text-[10px] text-[#3d5270]">
+                    <div className="truncate text-[10px] text-t5">
                       {personaMap.get(ev.personaId.toString()) ?? 'Persona'}
                     </div>
                   </div>
@@ -222,17 +222,17 @@ export default async function DashboardPage() {
           </div>
 
           {/* Plan panel */}
-          <div className="rounded-[10px] border border-[#1a2f4a] bg-[#0d1527] p-[18px]">
+          <div className="rounded-[10px] border border-line bg-surf p-[18px]">
             <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.08em] text-[#3b6ef0]">
               Plan — {planLabels[daraUser.company.plan] ?? daraUser.company.plan}
             </div>
             <div className="flex items-center justify-between text-[12px]">
-              <span className="text-[#7d97b3]">Status</span>
-              <span className="font-mono text-[#94a3b8]">{daraUser.company.planStatus}</span>
+              <span className="text-t4">Status</span>
+              <span className="font-mono text-t3">{daraUser.company.planStatus}</span>
             </div>
             <Link
               href="/app/billing"
-              className="mt-4 inline-flex w-full items-center justify-center rounded-lg border border-[#1a2f4a] py-2 text-[12px] text-[#7d97b3] transition-colors hover:text-[#e8eef7]"
+              className="mt-4 inline-flex w-full items-center justify-center rounded-lg border border-line py-2 text-[12px] text-t4 transition-colors hover:text-t1"
             >
               Manage plan →
             </Link>

@@ -126,7 +126,7 @@ export default async function SettingsPage() {
         {/* AI configuration */}
         <section className={`${card} p-6`}>
           <h2 className={`mb-4 flex items-center gap-2 ${sectionTitle}`}>
-            <Cpu className="h-4 w-4 text-[#3d5270]" />AI Configuration
+            <Cpu className="h-4 w-4 text-t5" />AI Configuration
           </h2>
           <form action={updateAIConfig} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
@@ -147,9 +147,9 @@ export default async function SettingsPage() {
                 <input name="activeModel" type="text" defaultValue={company.activeModel} className={fieldClasses} />
               </div>
             </div>
-            <p className="text-[12px] text-[#7d97b3]">
-              <strong className="text-[#cbd5e1]">platform</strong> uses Crucible Insight&apos;s managed key;{' '}
-              <strong className="text-[#cbd5e1]">byok</strong> uses the keys you enter below.
+            <p className="text-[12px] text-t4">
+              <strong className="text-t2">platform</strong> uses Crucible Insight&apos;s managed key;{' '}
+              <strong className="text-t2">byok</strong> uses the keys you enter below.
             </p>
             <div className="flex justify-end">
               <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save AI config</button>
@@ -160,9 +160,9 @@ export default async function SettingsPage() {
         {/* API keys */}
         <section className={`${card} p-6`}>
           <h2 className={`mb-1 flex items-center gap-2 ${sectionTitle}`}>
-            <KeyRound className="h-4 w-4 text-[#3d5270]" />API Keys (BYOK)
+            <KeyRound className="h-4 w-4 text-t5" />API Keys (BYOK)
           </h2>
-          <p className="mb-4 text-[12px] text-[#7d97b3]">
+          <p className="mb-4 text-[12px] text-t4">
             Stored encrypted (AES-256-GCM). Leave a field blank to keep the current
             key; tick &ldquo;clear&rdquo; to remove it.
           </p>
@@ -174,12 +174,12 @@ export default async function SettingsPage() {
                   {keyHints[p] ? (
                     <span className="ml-1 normal-case text-[#7de0a0]">set ({keyHints[p]})</span>
                   ) : (
-                    <span className="ml-1 normal-case text-[#3d5270]">not set</span>
+                    <span className="ml-1 normal-case text-t5">not set</span>
                   )}
                 </label>
                 <div className="flex items-center gap-3">
                   <input name={p} type="password" autoComplete="off" placeholder="Enter new key…" className={fieldClasses} />
-                  <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-[#7d97b3]">
+                  <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-t4">
                     <input type="checkbox" name={`${p}_clear`} className={checkboxClasses} />
                     clear
                   </label>
@@ -195,21 +195,21 @@ export default async function SettingsPage() {
         {/* Users */}
         <section className={`${card} p-6`}>
           <h2 className={`mb-4 flex items-center gap-2 ${sectionTitle}`}>
-            <Users className="h-4 w-4 text-[#3d5270]" />Users{' '}
-            <span className="font-mono text-[11px] font-normal text-[#3d5270]">({users.length})</span>
+            <Users className="h-4 w-4 text-t5" />Users{' '}
+            <span className="font-mono text-[11px] font-normal text-t5">({users.length})</span>
           </h2>
           <div className="space-y-3">
             {users.map((u) => (
-              <form key={u.id} action={updateUser} className="flex items-center gap-3 rounded-lg border border-[#1a2f4a] bg-[#070c16] p-3">
+              <form key={u.id} action={updateUser} className="flex items-center gap-3 rounded-lg border border-line bg-bg p-3">
                 <input type="hidden" name="userId" value={u.id} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] text-[#e8eef7]">{u.name || u.email}</div>
-                  <div className="truncate text-[11px] text-[#3d5270]">{u.email}</div>
+                  <div className="truncate text-[13px] text-t1">{u.name || u.email}</div>
+                  <div className="truncate text-[11px] text-t5">{u.email}</div>
                 </div>
                 <select name="role" defaultValue={u.role} className={`${fieldClasses} w-40`}>
                   {ROLES.map((r) => (<option key={r} value={r}>{r}</option>))}
                 </select>
-                <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-[#7d97b3]">
+                <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-t4">
                   <input type="checkbox" name="isActive" defaultChecked={u.isActive} className={checkboxClasses} />
                   active
                 </label>

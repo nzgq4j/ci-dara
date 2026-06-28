@@ -22,7 +22,7 @@ const severityBadge: Record<Severity, string> = {
   High: 'bg-[#5a3a1f]/40 text-[#e0a07d]',
   Moderate: 'bg-[#5a4a1f]/30 text-[#e0c97d]',
   Low: 'bg-[#1f3a5a]/40 text-[#6f9bf5]',
-  Informational: 'bg-[#1a2f4a] text-[#7d97b3]'
+  Informational: 'bg-line text-t4'
 };
 
 const severityAccent: Record<Severity, string> = {
@@ -37,15 +37,15 @@ const statusColor: Record<ControlStatus, string> = {
   Implemented: 'text-[#7de0a0]',
   Partial: 'text-[#e0c97d]',
   'Not implemented': 'text-[#e07d7d]',
-  'Not applicable': 'text-[#3d5270]',
-  Undetermined: 'text-[#7d97b3]'
+  'Not applicable': 'text-t5',
+  Undetermined: 'text-t4'
 };
 
 const findingStatusBadge: Record<FindingStatus, string> = {
   Open: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
   'In progress': 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
   Remediated: 'bg-[#1f5a31]/30 text-[#7de0a0]',
-  'Risk accepted': 'bg-[#1a2f4a] text-[#7d97b3]'
+  'Risk accepted': 'bg-line text-t4'
 };
 
 export default async function SecurityPage() {
@@ -90,10 +90,10 @@ export default async function SecurityPage() {
             ['Evidence standard', ASSESSMENT.evidenceStandard]
           ].map(([label, value]) => (
             <div key={label} className={label === 'Scope' || label === 'Method' || label === 'Evidence standard' ? 'sm:col-span-2' : ''}>
-              <dt className="mb-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+              <dt className="mb-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
                 {label}
               </dt>
-              <dd className="text-[13px] leading-relaxed text-[#cbd5e1]">{value}</dd>
+              <dd className="text-[13px] leading-relaxed text-t2">{value}</dd>
             </div>
           ))}
         </dl>
@@ -104,10 +104,10 @@ export default async function SecurityPage() {
         {counts.map(({ sev, n }) => (
           <div
             key={sev}
-            className="rounded-[10px] border border-[#1a2f4a] bg-[#0d1527] p-4"
+            className="rounded-[10px] border border-line bg-surf p-4"
             style={{ borderTop: `3px solid ${severityAccent[sev]}` }}
           >
-            <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+            <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
               {sev} open
             </div>
             <div className="text-3xl font-bold leading-none" style={{ color: severityAccent[sev] }}>
@@ -116,10 +116,10 @@ export default async function SecurityPage() {
           </div>
         ))}
         <div
-          className="rounded-[10px] border border-[#1a2f4a] bg-[#0d1527] p-4"
+          className="rounded-[10px] border border-line bg-surf p-4"
           style={{ borderTop: '3px solid #7de0a0' }}
         >
-          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
             Remediated
           </div>
           <div className="text-3xl font-bold leading-none text-[#7de0a0]">{remediatedCount}</div>
@@ -129,18 +129,18 @@ export default async function SecurityPage() {
       {/* Standards & frameworks */}
       <section className="mb-8">
         <div className="mb-4 flex items-center gap-2">
-          <FileText className="h-4 w-4 text-[#3d5270]" />
+          <FileText className="h-4 w-4 text-t5" />
           <h2 className={sectionTitle}>Standards &amp; Frameworks</h2>
         </div>
         <div className="grid gap-3.5 sm:grid-cols-2">
           {FRAMEWORKS.map((fw) => (
             <div key={fw.code} className={`${card} p-5`}>
               <div className="mb-1 flex items-start justify-between gap-3">
-                <div className="text-[14px] font-bold text-[#f0f4ff]">{fw.code}</div>
+                <div className="text-[14px] font-bold text-t1">{fw.code}</div>
                 <span className={`${badgeBase} bg-[#3b6ef0]/15 text-[#6f9bf5]`}>{fw.scope}</span>
               </div>
-              <div className="mb-2 text-[12px] font-semibold text-[#94a3b8]">{fw.name}</div>
-              <p className="text-[12px] leading-relaxed text-[#7d97b3]">{fw.summary}</p>
+              <div className="mb-2 text-[12px] font-semibold text-t3">{fw.name}</div>
+              <p className="text-[12px] leading-relaxed text-t4">{fw.summary}</p>
             </div>
           ))}
         </div>
@@ -149,29 +149,29 @@ export default async function SecurityPage() {
       {/* Control posture */}
       <section className="mb-8">
         <div className="mb-4 flex items-center gap-2">
-          <Lock className="h-4 w-4 text-[#3d5270]" />
+          <Lock className="h-4 w-4 text-t5" />
           <h2 className={sectionTitle}>Control Posture — NIST SP 800-171 Rev. 3 Families</h2>
         </div>
         <div className={`${card} overflow-hidden`}>
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="bg-[#09101e]">
-                <th className="px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">Family</th>
-                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">Status</th>
-                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">Observation</th>
+              <tr className="bg-surf3">
+                <th className="px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">Family</th>
+                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">Status</th>
+                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">Observation</th>
               </tr>
             </thead>
             <tbody>
               {CONTROL_POSTURE.map((c) => (
-                <tr key={c.code} className="border-t border-[#1a2f4a]">
+                <tr key={c.code} className="border-t border-line">
                   <td className="px-[18px] py-3 align-top">
-                    <span className="text-[13px] font-semibold text-[#cbd5e1]">{c.family}</span>
-                    <span className="ml-2 font-mono text-[11px] text-[#3d5270]">{c.code}</span>
+                    <span className="text-[13px] font-semibold text-t2">{c.family}</span>
+                    <span className="ml-2 font-mono text-[11px] text-t5">{c.code}</span>
                   </td>
                   <td className={`px-3.5 py-3 align-top text-[12px] font-semibold ${statusColor[c.status]}`}>
                     {c.status}
                   </td>
-                  <td className="px-3.5 py-3 align-top text-[12px] leading-relaxed text-[#7d97b3]">
+                  <td className="px-3.5 py-3 align-top text-[12px] leading-relaxed text-t4">
                     {c.note}
                   </td>
                 </tr>
@@ -190,7 +190,7 @@ export default async function SecurityPage() {
         <div className={`${card} p-5`}>
           <ul className="space-y-2.5">
             {POSITIVES.map((p) => (
-              <li key={p} className="flex items-start gap-2.5 text-[13px] leading-relaxed text-[#cbd5e1]">
+              <li key={p} className="flex items-start gap-2.5 text-[13px] leading-relaxed text-t2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#7de0a0]" />
                 {p}
               </li>
@@ -215,14 +215,14 @@ export default async function SecurityPage() {
                 style={{ borderLeft: `3px solid ${severityAccent[f.severity]}` }}
               >
                 <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[11px] text-[#3d5270]">{f.id}</span>
+                  <span className="font-mono text-[11px] text-t5">{f.id}</span>
                   <span className={`${badgeBase} ${severityBadge[f.severity]}`}>{f.severity}</span>
                   <span className={`${badgeBase} ${findingStatusBadge[f.status]}`}>{f.status}</span>
-                  <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+                  <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
                     {f.window}
                   </span>
                 </div>
-                <h3 className="mb-2 text-[14px] font-bold text-[#f0f4ff]">{f.title}</h3>
+                <h3 className="mb-2 text-[14px] font-bold text-t1">{f.title}</h3>
                 <div className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
                   {[
                     ['Component', f.component],
@@ -232,10 +232,10 @@ export default async function SecurityPage() {
                     ['Control mapping', f.mapping]
                   ].map(([label, value]) => (
                     <div key={label} className={label === 'Component' || label === 'Control mapping' ? '' : 'sm:col-span-2'}>
-                      <div className="mb-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+                      <div className="mb-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
                         {label}
                       </div>
-                      <div className="text-[12px] leading-relaxed text-[#cbd5e1]">{value}</div>
+                      <div className="text-[12px] leading-relaxed text-t2">{value}</div>
                     </div>
                   ))}
                 </div>
@@ -244,7 +244,7 @@ export default async function SecurityPage() {
           </div>
         ) : (
           <div className={`${card} p-6`}>
-            <p className="mb-4 text-[13px] leading-relaxed text-[#cbd5e1]">
+            <p className="mb-4 text-[13px] leading-relaxed text-t2">
               A point-in-time assessment was completed on {ASSESSMENT.performed}. Findings
               are tracked and remediated on the schedule below. Detailed technical
               findings are restricted to platform administrators.
@@ -260,7 +260,7 @@ export default async function SecurityPage() {
         )}
       </section>
 
-      <p className="mt-8 text-[11px] leading-relaxed text-[#3d5270]">
+      <p className="mt-8 text-[11px] leading-relaxed text-t5">
         This page reflects an internal, evidence-based review and is not a formal
         certification or third-party attestation. Items that could not be confirmed
         from the codebase are treated as unverified rather than compliant.

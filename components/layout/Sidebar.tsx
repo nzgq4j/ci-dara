@@ -15,6 +15,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
+import ThemeToggle from '@/components/layout/ThemeToggle';
 
 interface NavItem {
   href: string;
@@ -90,9 +91,9 @@ export default function Sidebar({
   };
 
   return (
-    <aside className="flex h-full w-[220px] flex-shrink-0 flex-col overflow-hidden border-r border-[#1a2f4a] bg-[#09101e]">
+    <aside className="flex h-full w-[220px] flex-shrink-0 flex-col overflow-hidden border-r border-line bg-surf3">
       {/* Logo + company */}
-      <div className="flex items-center gap-2.5 border-b border-[#1a2f4a] px-4 py-3">
+      <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/dara-logo.png"
@@ -100,15 +101,15 @@ export default function Sidebar({
           className="h-8 w-8 flex-shrink-0 object-contain"
         />
         <div className="min-w-0">
-          <div className="text-sm font-bold leading-tight tracking-tight text-[#e8eef7]">
+          <div className="text-sm font-bold leading-tight tracking-tight text-t1">
             DARA
           </div>
-          <div className="truncate text-[11px] text-[#7d97b3]">{company.name}</div>
+          <div className="truncate text-[11px] text-t4">{company.name}</div>
         </div>
       </div>
 
       {/* Plan */}
-      <div className="border-b border-[#1a2f4a] px-4 py-2">
+      <div className="border-b border-line px-4 py-2">
         <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#3b6ef0]">
           {planLabel} plan
         </div>
@@ -118,7 +119,7 @@ export default function Sidebar({
       <nav className="flex-1 overflow-y-auto p-2">
         {sections.map((section) => (
           <div key={section.label}>
-            <div className="px-2 pb-1.5 pt-3 font-mono text-[9px] uppercase tracking-[0.1em] text-[#3d5270]">
+            <div className="px-2 pb-1.5 pt-3 font-mono text-[9px] uppercase tracking-[0.1em] text-t5">
               {section.label}
             </div>
             {section.items.map(({ href, label, icon: Icon }) => {
@@ -129,8 +130,8 @@ export default function Sidebar({
                   href={href}
                   className={`mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors ${
                     active
-                      ? 'bg-[#3b6ef0]/15 text-[#e8eef7]'
-                      : 'text-[#7d97b3] hover:bg-white/5 hover:text-[#e8eef7]'
+                      ? 'bg-[#3b6ef0]/15 text-t1'
+                      : 'text-t4 hover:bg-surf2 hover:text-t1'
                   }`}
                 >
                   <Icon className="h-4 w-4 flex-shrink-0" />
@@ -143,21 +144,22 @@ export default function Sidebar({
       </nav>
 
       {/* User */}
-      <div className="flex items-center gap-2.5 border-t border-[#1a2f4a] px-3.5 py-3">
+      <div className="flex items-center gap-2.5 border-t border-line px-3.5 py-3">
         <div className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#1d4ed8] to-[#7c3aed] text-xs font-bold text-white">
           {initials}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-[#cbd5e1]">
+          <div className="truncate text-xs font-semibold text-t2">
             {user.name || user.email}
           </div>
-          <div className="text-[10px] text-[#3d5270]">{titleCase(user.role)}</div>
+          <div className="text-[10px] text-t5">{titleCase(user.role)}</div>
         </div>
+        <ThemeToggle />
         <button
           onClick={handleSignOut}
           disabled={signingOut}
           title="Sign out"
-          className="text-[#3d5270] transition-colors hover:text-[#e8eef7] disabled:opacity-50"
+          className="text-t5 transition-colors hover:text-t1 disabled:opacity-50"
         >
           <LogOut className="h-4 w-4" />
         </button>

@@ -12,9 +12,9 @@ interface PasswordSignInProps {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-[#1a2f4a] bg-[#0f1c2e] px-3.5 py-2.5 text-[#e8eef7] outline-none transition-colors focus:border-[#3b6ef0]';
+  'w-full rounded-lg border border-line bg-surf2 px-3.5 py-2.5 text-t1 outline-none transition-colors focus:border-[#3b6ef0]';
 const labelCls =
-  'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.04em] text-[#7d97b3]';
+  'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.04em] text-t4';
 
 export default function PasswordSignIn({
   allowEmail,
@@ -77,7 +77,7 @@ export default function PasswordSignIn({
         </button>
       </form>
 
-      <div className="mt-6 space-y-2 text-center text-[12px] text-[#7d97b3]">
+      <div className="mt-6 space-y-2 text-center text-[12px] text-t4">
         {allowEmail && (
           <div>
             <Link href="/signin/email_signin" className="text-[#3b6ef0]">

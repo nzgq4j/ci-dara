@@ -49,8 +49,8 @@ export default async function SolicitationsPage() {
         <div
           className={`${cardDashed} flex flex-col items-center justify-center px-6 py-16 text-center`}
         >
-          <FileText className="h-10 w-10 text-[#3d5270]" />
-          <p className="mt-4 text-sm text-[#7d97b3]">
+          <FileText className="h-10 w-10 text-t5" />
+          <p className="mt-4 text-sm text-t4">
             No solicitations yet. Create your first one to get started.
           </p>
           <Link
@@ -65,23 +65,23 @@ export default async function SolicitationsPage() {
         <div className={`${card} overflow-hidden`}>
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="bg-[#09101e]">
-                <th className="px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+              <tr className="bg-surf3">
+                <th className="px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Title
                 </th>
-                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Reference
                 </th>
-                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Agency
                 </th>
-                <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                   Criteria
                 </th>
-                <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                   Offerors
                 </th>
-                <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-[#3d5270]">
+                <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                   Evaluations
                 </th>
               </tr>
@@ -90,29 +90,29 @@ export default async function SolicitationsPage() {
               {solicitations.map((sol) => (
                 <tr
                   key={sol.id.toString()}
-                  className="border-t border-[#1a2f4a] transition-colors hover:bg-[#0f1c2e]"
+                  className="border-t border-line transition-colors hover:bg-surf2"
                 >
                   <td className="px-[18px] py-3">
                     <Link
                       href={`/app/solicitations/${sol.id}`}
-                      className="text-[13px] font-semibold text-[#cbd5e1] transition-colors hover:text-[#3b6ef0]"
+                      className="text-[13px] font-semibold text-t2 transition-colors hover:text-[#3b6ef0]"
                     >
                       {sol.title}
                     </Link>
                   </td>
-                  <td className="px-3.5 py-3 font-mono text-[11px] text-[#3d5270]">
+                  <td className="px-3.5 py-3 font-mono text-[11px] text-t5">
                     {sol.solNumber || '—'}
                   </td>
-                  <td className="px-3.5 py-3 text-[12px] text-[#7d97b3]">
+                  <td className="px-3.5 py-3 text-[12px] text-t4">
                     {sol.agency || '—'}
                   </td>
-                  <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-[#94a3b8]">
+                  <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.criteria}
                   </td>
-                  <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-[#94a3b8]">
+                  <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.responses}
                   </td>
-                  <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-[#94a3b8]">
+                  <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.evaluations}
                   </td>
                 </tr>

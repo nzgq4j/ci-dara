@@ -23,7 +23,7 @@ export default function Tabs({
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-[#1a2f4a]">
+      <div className="mb-6 flex flex-wrap gap-1 border-b border-line">
         {tabs.map((t) => {
           const on = t.id === active;
           return (
@@ -32,7 +32,7 @@ export default function Tabs({
               type="button"
               onClick={() => setActive(t.id)}
               className={`relative -mb-px flex items-center gap-2 px-4 py-2.5 text-[13px] font-semibold transition-colors ${
-                on ? 'text-[#e8eef7]' : 'text-[#7d97b3] hover:text-[#cbd5e1]'
+                on ? 'text-t1' : 'text-t4 hover:text-t2'
               }`}
             >
               {t.label}
@@ -41,7 +41,7 @@ export default function Tabs({
                   className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
                     on
                       ? 'bg-[#3b6ef0]/20 text-[#6f9bf5]'
-                      : 'bg-[#1a2f4a] text-[#7d97b3]'
+                      : 'bg-line text-t4'
                   }`}
                 >
                   {t.count}

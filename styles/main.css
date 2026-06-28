@@ -2,6 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* DARA theme tokens (RGB channels; consumed via tailwind colors + var()).
+   Dark is the default; [data-theme="light"] is applied by next-themes. */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+  --c-bg: 7 12 22;
+  --c-surf: 13 21 39;
+  --c-surf2: 15 28 46;
+  --c-surf3: 9 16 30;
+  --c-border: 26 47 74;
+  --c-t1: 240 244 255;
+  --c-t2: 203 213 225;
+  --c-t3: 148 163 184;
+  --c-t4: 125 151 179;
+  --c-t5: 61 82 112;
+}
+[data-theme='light'] {
+  color-scheme: light;
+  --c-bg: 240 244 255;
+  --c-surf: 255 255 255;
+  --c-surf2: 241 245 249;
+  --c-surf3: 232 237 245;
+  --c-border: 199 212 232;
+  --c-t1: 15 23 42;
+  --c-t2: 30 41 59;
+  --c-t3: 71 85 105;
+  --c-t4: 100 116 139;
+  --c-t5: 148 163 184;
+}
+
 *,
 *:before,
 *:after {
@@ -28,7 +58,8 @@ body {
     'Helvetica Neue', 'Helvetica', sans-serif;
   text-rendering: optimizeLegibility;
   -moz-osx-font-smoothing: grayscale;
-  @apply text-[#e8eef7] bg-[#070c16] antialiased;
+  @apply text-t1 bg-bg antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* DARA design-system scrollbar + entrance animation (from prototype) */
@@ -40,7 +71,7 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1a2f4a;
+  background: rgb(var(--c-border));
   border-radius: 3px;
 }
 @keyframes daraFadeUp {

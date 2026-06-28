@@ -22,18 +22,19 @@ module.exports = {
         mono: ['var(--font-mono)', ...fontFamily.mono]
       },
       colors: {
-        dara: {
-          bg: '#070c16',
-          panel: '#09101e',
-          card: '#0d1527',
-          input: '#0f1c2e',
-          border: '#1a2f4a',
-          accent: '#3b6ef0',
-          faint: '#3d5270',
-          muted: '#7d97b3',
-          text: '#e8eef7',
-          heading: '#f0f4ff'
-        }
+        // Semantic theme tokens — resolve to CSS vars in styles/main.css so the
+        // whole UI flips with [data-theme]. RGB-channel form keeps Tailwind
+        // opacity modifiers (e.g. border-line/50) working.
+        bg: 'rgb(var(--c-bg) / <alpha-value>)',
+        surf: 'rgb(var(--c-surf) / <alpha-value>)',
+        surf2: 'rgb(var(--c-surf2) / <alpha-value>)',
+        surf3: 'rgb(var(--c-surf3) / <alpha-value>)',
+        line: 'rgb(var(--c-border) / <alpha-value>)',
+        t1: 'rgb(var(--c-t1) / <alpha-value>)',
+        t2: 'rgb(var(--c-t2) / <alpha-value>)',
+        t3: 'rgb(var(--c-t3) / <alpha-value>)',
+        t4: 'rgb(var(--c-t4) / <alpha-value>)',
+        t5: 'rgb(var(--c-t5) / <alpha-value>)'
       },
       keyframes: {
         'accordion-down': {

@@ -90,7 +90,7 @@ export default async function BillingPage({
         title="Billing"
         subtitle={
           <>
-            Current plan: <span className="text-[#e8eef7]">{currentLabel}</span> ({company.planStatus})
+            Current plan: <span className="text-t1">{currentLabel}</span> ({company.planStatus})
           </>
         }
         action={
@@ -119,29 +119,29 @@ export default async function BillingPage({
           return (
             <div
               key={plan}
-              className={`flex flex-col rounded-[10px] border bg-[#0d1527] p-5 ${
-                isCurrent ? 'border-[#3b6ef0] ring-1 ring-[#3b6ef0]/40' : 'border-[#1a2f4a]'
+              className={`flex flex-col rounded-[10px] border bg-surf p-5 ${
+                isCurrent ? 'border-[#3b6ef0] ring-1 ring-[#3b6ef0]/40' : 'border-line'
               }`}
             >
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-[#f0f4ff]">{info.name}</h3>
+                <h3 className="text-base font-bold text-t1">{info.name}</h3>
                 {isCurrent && (
                   <span className="rounded bg-[#3b6ef0]/20 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#6f9bf5]">
                     Current
                   </span>
                 )}
               </div>
-              <div className="mt-3 text-3xl font-bold leading-none text-[#f0f4ff]">
+              <div className="mt-3 text-3xl font-bold leading-none text-t1">
                 ${info.amount}
-                <span className="text-[13px] font-normal text-[#7d97b3]">/mo</span>
+                <span className="text-[13px] font-normal text-t4">/mo</span>
               </div>
-              <p className="mt-2 text-[13px] text-[#7d97b3]">{info.blurb}</p>
+              <p className="mt-2 text-[13px] text-t4">{info.blurb}</p>
               <div className="mt-5 flex-1" />
               {isCurrent ? (
                 <button
                   type="button"
                   disabled
-                  className="w-full cursor-default rounded-lg border border-[#1a2f4a] px-3 py-2 text-[13px] font-medium text-[#7d97b3]"
+                  className="w-full cursor-default rounded-lg border border-line px-3 py-2 text-[13px] font-medium text-t4"
                 >
                   Active plan
                 </button>
@@ -159,7 +159,7 @@ export default async function BillingPage({
         })}
       </div>
 
-      <p className="mt-6 text-[12px] text-[#3d5270]">
+      <p className="mt-6 text-[12px] text-t5">
         Have a coupon? You can enter a promotion code on the Stripe checkout page.
         Subscriptions are billed monthly; manage or cancel anytime via &ldquo;Manage
         billing&rdquo;.

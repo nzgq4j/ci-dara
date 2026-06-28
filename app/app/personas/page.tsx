@@ -138,14 +138,14 @@ export default async function PersonasPage() {
         }
       />
 
-      <div className={`${card} mb-6 px-4 py-3 text-[12px] text-[#7d97b3]`}>
-        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3d5270]">
+      <div className={`${card} mb-6 px-4 py-3 text-[12px] text-t4`}>
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
           Template variables
         </span>{' '}
         {PERSONA_TEMPLATE_VARS.map((v) => (
           <code
             key={v}
-            className="mx-0.5 rounded bg-[#070c16] px-1.5 py-0.5 font-mono text-[11px] text-[#6f9bf5]"
+            className="mx-0.5 rounded bg-bg px-1.5 py-0.5 font-mono text-[11px] text-[#6f9bf5]"
           >
             {v}
           </code>
@@ -168,7 +168,7 @@ export default async function PersonasPage() {
                     className={fieldClasses}
                   />
                 </div>
-                <label className="flex h-9 items-center gap-2 text-[13px] text-[#7d97b3]">
+                <label className="flex h-9 items-center gap-2 text-[13px] text-t4">
                   <input
                     type="checkbox"
                     name="isActive"
@@ -196,7 +196,7 @@ export default async function PersonasPage() {
             </form>
             <form
               action={deletePersona}
-              className="mt-2 flex justify-end border-t border-[#1a2f4a] pt-2"
+              className="mt-2 flex justify-end border-t border-line pt-2"
             >
               <input type="hidden" name="personaId" value={p.id.toString()} />
               <button type="submit" className={btnDanger}>
@@ -223,7 +223,7 @@ export default async function PersonasPage() {
                   className={fieldClasses}
                 />
               </div>
-              <label className="flex h-9 items-center gap-2 text-[13px] text-[#7d97b3]">
+              <label className="flex h-9 items-center gap-2 text-[13px] text-t4">
                 <input
                   type="checkbox"
                   name="isActive"

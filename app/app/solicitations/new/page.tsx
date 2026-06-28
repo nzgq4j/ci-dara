@@ -53,15 +53,15 @@ export default function NewSolicitationPage() {
     <div className="mx-auto max-w-2xl fade">
       <Link
         href="/app/solicitations"
-        className="mb-4 inline-flex items-center gap-2 text-[13px] text-[#7d97b3] transition-colors hover:text-[#e8eef7]"
+        className="mb-4 inline-flex items-center gap-2 text-[13px] text-t4 transition-colors hover:text-t1"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Solicitations
       </Link>
-      <h1 className="text-2xl font-bold tracking-tight text-[#f0f4ff]">
+      <h1 className="text-2xl font-bold tracking-tight text-t1">
         New Solicitation
       </h1>
-      <p className="mb-7 text-[13px] text-[#7d97b3]">
+      <p className="mb-7 text-[13px] text-t4">
         Create a solicitation to start evaluating proposals.
       </p>
 
