@@ -196,18 +196,19 @@ export default async function PersonasPage() {
                 <input type="hidden" name="personaId" value={p.id.toString()} />
                 <button
                   type="submit"
-                  aria-pressed={p.isActive}
-                  title={p.isActive ? 'Turn off (exclude from evaluations)' : 'Turn on'}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] font-semibold transition-colors ${
-                    p.isActive
-                      ? 'border-[#10b981]/40 bg-[#10b981]/10 text-[#7de0a0]'
-                      : 'border-line text-t5 hover:text-t3'
+                  role="switch"
+                  aria-checked={p.isActive}
+                  aria-label={p.isActive ? 'Active — click to turn off' : 'Inactive — click to turn on'}
+                  title={p.isActive ? 'Active — click to turn off' : 'Inactive — click to turn on'}
+                  className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${
+                    p.isActive ? 'bg-[#10b981]' : 'bg-line'
                   }`}
                 >
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${p.isActive ? 'bg-[#10b981]' : 'bg-[#3d5270]'}`}
+                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                      p.isActive ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                    }`}
                   />
-                  {p.isActive ? 'ACTIVE' : 'INACTIVE'}
                 </button>
               </form>
             </div>

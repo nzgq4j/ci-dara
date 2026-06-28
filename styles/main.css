@@ -4,7 +4,6 @@
 
 /* DARA theme tokens (RGB channels; consumed via tailwind colors + var()).
    Dark is the default; [data-theme="light"] is applied by next-themes. */
-:root,
 [data-theme='dark'] {
   color-scheme: dark;
   --c-bg: 7 12 22;
@@ -18,6 +17,7 @@
   --c-t4: 125 151 179;
   --c-t5: 61 82 112;
 }
+:root,
 [data-theme='light'] {
   color-scheme: light;
   --c-bg: 240 244 255;
