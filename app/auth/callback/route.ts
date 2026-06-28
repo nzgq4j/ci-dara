@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
 import { provisionNewUser } from '@/utils/dara/provision';
+import { recordAudit } from '@/utils/dara/audit';
 
 // DARA-018: only allow same-origin, single-slash-rooted relative paths as the
 // post-login destination. Reject absolute URLs, protocol-relative `//host`, and
@@ -30,11 +31,21 @@ export async function GET(request: Request) {
       } = await supabase.auth.getUser();
 
       if (user) {
-        await provisionNewUser(
+        const daraUser = await provisionNewUser(
           user.id,
           user.email ?? '',
           user.user_metadata?.full_name ?? user.email ?? ''
         );
+        // Audit every successful OAuth / magic-link sign-in (NIST AU; DARA-013).
+        await recordAudit({
+          action: 'user.signin',
+          companyId: daraUser.companyId,
+          actorId: daraUser.id,
+          actorEmail: daraUser.email,
+          entityType: 'user',
+          entityId: daraUser.id,
+          metadata: { provider: user.app_metadata?.provider ?? 'oauth' }
+        });
       }
 
       return NextResponse.redirect(`${origin}${redirectTo}`);
