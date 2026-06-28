@@ -1,6 +1,6 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-06-27_
+_Last updated: 2026-06-28_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
 **Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
@@ -244,5 +244,31 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 - Design tokens: `tailwind.config.js`, `styles/main.css`, fonts in `app/layout.tsx`
 - Design primitives: `components/dara/{theme.ts,PageHeader.tsx,Tabs.tsx}`
 - Security page + content: `app/app/security/page.tsx`, `utils/dara/security-content.ts`
+- System Security Plan (SSP): `app/app/security/plan/page.tsx` (renders `SSP` + `CONTROL_POSTURE` + POA&M)
 - Security SQL artifact: `prisma/security/2026-06-27_lock_dara_tables.sql`
 - Security headers: `next.config.js`
+
+---
+
+## 7. Session log & handoff
+
+**Session 2026-06-28 (this session) — shipped:**
+- Google OAuth sign-in (Supabase provider) with security controls; `safeRelativePath`
+  redirect validation (DARA-018); sign-in audited; root/middleware `?code=` forwarders.
+- Logout fixed (server-side `SignOut` action clears SSR cookies).
+- "Remember me" — both email pre-fill (localStorage) and session-only cookies
+  (`dara-remember` cookie strips maxAge/expires in server + middleware).
+- Personas page redesign (split-pane), clickable template-variable chips, selectable
+  emoji icons, slide-toggle for active; persona toggle bug fixed (auto-persist).
+- Light/dark theme tokenization, light default; theme-ordering bug fixed.
+- Control posture refreshed to current reality across all families.
+- **System Security Plan (SSP)** built at `/app/security/plan` (linked from Security).
+- Deployed prod (`668b406`) and pushed to `main`; CI gates running.
+
+**Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
+1. **Operator action (you):** enable branch protection on `main` (item #13) — the
+   only thing gating DARA-015 from "enforced."
+2. **DARA-002** (secrets handling) and **DARA-017** (migration history) — the two
+   remaining open findings.
+3. Feature backlog: per-company admin audit-log viewer (Team tab) and the AI
+   codebase security-audit (back-office, platform key).
