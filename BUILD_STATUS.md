@@ -186,10 +186,12 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 5. **Housekeeping** — optimized logo asset; smoke-test a real evaluation run.
 
 ### Security remediation backlog (status tracked on `/app/security`)
-- **Next small wins:** DARA-014 (enforce DB TLS `sslmode=require`), DARA-018
-  (validate `redirect_to` in `auth/callback`), DARA-019 (drop crypto plaintext
-  fallback), DARA-016 (remove stale `package-lock.json`), DARA-015 (CI
-  secret-scanning + dependency-audit gates).
+- **Quick wins (Remediated 2026-06-28):** DARA-014 (DB TLS enforced via pg adapter
+  `ssl`; harness-verified), DARA-018 (`redirect_to` validated as a safe relative
+  path), DARA-019 (crypto plaintext fallback removed + APP_KEY entropy warning),
+  DARA-016 (`package-lock.json` removed + gitignored, pnpm declared). DARA-015
+  **In progress** — CI added (gitleaks secret scan, frozen-lockfile + dependency
+  audit, CodeQL SAST); branch protection + SBOM remain.
 - **Larger, dedicated passes:** ~~DARA-004 (least-privilege DB role + per-tenant
   RLS policies)~~ **done 2026-06-28**; DARA-009 (encrypt CUI at rest), DARA-013 (DB
   audit logging), DARA-007 (CUI→LLM data-boundary / zero-retention decision).

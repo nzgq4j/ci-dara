@@ -51,11 +51,18 @@ function connString(primary: string | undefined, varName: string): string {
   return '';
 }
 
+// DARA-014: require TLS on every runtime DB connection (sslmode=require). The
+// Supabase pooler terminates TLS with a cert not in the system CA bundle, so we
+// encrypt without CA verification; verify-full (bundled CA) is a future hardening.
+const ssl = { rejectUnauthorized: false };
+
 const tenantAdapter = new PrismaPg({
-  connectionString: connString(process.env.DATABASE_URL_APP, 'DATABASE_URL_APP')
+  connectionString: connString(process.env.DATABASE_URL_APP, 'DATABASE_URL_APP'),
+  ssl
 });
 const adminAdapter = new PrismaPg({
-  connectionString: connString(process.env.DATABASE_URL_ADMIN, 'DATABASE_URL_ADMIN')
+  connectionString: connString(process.env.DATABASE_URL_ADMIN, 'DATABASE_URL_ADMIN'),
+  ssl
 });
 
 export const prismaTenant =
