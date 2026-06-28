@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { Save, KeyRound, Users, Cpu } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import { encryptSecret, secretHint } from '@/utils/dara/crypto';
 import PageHeader from '@/components/dara/PageHeader';
 import {
@@ -38,14 +38,16 @@ async function updateAIConfig(formData: FormData) {
   const aiKeyMode = String(formData.get('aiKeyMode') ?? 'platform');
   const activeProvider = String(formData.get('activeProvider') ?? 'anthropic');
   const activeModel = String(formData.get('activeModel') ?? '').trim() || 'claude-sonnet-4-6';
-  await prisma.company.update({
-    where: { id: daraUser.companyId },
-    data: {
-      aiKeyMode: KEY_MODES.includes(aiKeyMode) ? (aiKeyMode as any) : 'platform',
-      activeProvider: PROVIDERS.includes(activeProvider) ? (activeProvider as any) : 'anthropic',
-      activeModel
-    }
-  });
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.company.update({
+      where: { id: daraUser.companyId },
+      data: {
+        aiKeyMode: KEY_MODES.includes(aiKeyMode) ? (aiKeyMode as any) : 'platform',
+        activeProvider: PROVIDERS.includes(activeProvider) ? (activeProvider as any) : 'anthropic',
+        activeModel
+      }
+    })
+  );
   revalidatePath('/app/settings');
 }
 
@@ -66,7 +68,9 @@ async function updateApiKeys(formData: FormData) {
     }
   }
   if (Object.keys(data).length > 0) {
-    await prisma.company.update({ where: { id: daraUser.companyId }, data });
+    await withTenant(daraUser.companyId, (tx) =>
+      tx.company.update({ where: { id: daraUser.companyId }, data })
+    );
   }
   revalidatePath('/app/settings');
 }
@@ -75,30 +79,34 @@ async function updateUser(formData: FormData) {
   'use server';
   const daraUser = await requireCompanyAdmin();
   const userId = String(formData.get('userId') ?? '');
-  const target = await prisma.daraUser.findFirst({
-    where: { id: userId, companyId: daraUser.companyId }
-  });
-  if (!target) return;
-  const role = String(formData.get('role') ?? target.role);
-  await prisma.daraUser.update({
-    where: { id: userId },
-    data: {
-      role: ROLES.includes(role) ? (role as any) : target.role,
-      isActive: formData.get('isActive') === 'on'
-    }
+  await withTenant(daraUser.companyId, async (tx) => {
+    const target = await tx.daraUser.findFirst({
+      where: { id: userId, companyId: daraUser.companyId }
+    });
+    if (!target) return;
+    const role = String(formData.get('role') ?? target.role);
+    await tx.daraUser.update({
+      where: { id: userId },
+      data: {
+        role: ROLES.includes(role) ? (role as any) : target.role,
+        isActive: formData.get('isActive') === 'on'
+      }
+    });
   });
   revalidatePath('/app/settings');
 }
 
 export default async function SettingsPage() {
   const daraUser = await requireCompanyAdmin();
-  const company = await prisma.company.findUnique({ where: { id: daraUser.companyId } });
-  if (!company) redirect('/app/dashboard');
-
-  const users = await prisma.daraUser.findMany({
-    where: { companyId: daraUser.companyId },
-    orderBy: { createdAt: 'asc' }
+  const { company, users } = await withTenant(daraUser.companyId, async (tx) => {
+    const company = await tx.company.findUnique({ where: { id: daraUser.companyId } });
+    const users = await tx.daraUser.findMany({
+      where: { companyId: daraUser.companyId },
+      orderBy: { createdAt: 'asc' }
+    });
+    return { company, users };
   });
+  if (!company) redirect('/app/dashboard');
 
   const keyHints = {
     anthropic: secretHint(company.anthropicKeyEnc),

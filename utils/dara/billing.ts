@@ -1,6 +1,6 @@
 import type Stripe from 'stripe';
 import { stripe } from '@/utils/stripe/config';
-import { prisma } from '@/utils/prisma';
+import { withTenant, prismaAdmin } from '@/utils/prisma';
 
 // Plan catalog — maps the Company.plan enum to live Stripe prices.
 export const PLAN_CATALOG = {
@@ -39,18 +39,23 @@ export function priceIdToPlan(priceId: string): PaidPlan | null {
 
 /** Get the company's Stripe customer id, creating the customer if needed. */
 export async function getOrCreateCustomer(companyId: bigint, email: string): Promise<string> {
-  const company = await prisma.company.findUnique({ where: { id: companyId } });
+  const company = await withTenant(companyId, (tx) =>
+    tx.company.findUnique({ where: { id: companyId } })
+  );
   if (!company) throw new Error('Company not found');
   if (company.stripeCustomerId) return company.stripeCustomerId;
 
+  // Stripe call (network) outside any transaction.
   const customer = await stripe.customers.create({
     email,
     metadata: { companyId: companyId.toString() }
   });
-  await prisma.company.update({
-    where: { id: companyId },
-    data: { stripeCustomerId: customer.id }
-  });
+  await withTenant(companyId, (tx) =>
+    tx.company.update({
+      where: { id: companyId },
+      data: { stripeCustomerId: customer.id }
+    })
+  );
   return customer.id;
 }
 
@@ -61,18 +66,24 @@ function mapStatus(s: Stripe.Subscription.Status): 'active' | 'past_due' | 'canc
   return 'canceled'; // canceled / incomplete / incomplete_expired / paused
 }
 
-/** Apply a Stripe subscription's state to the owning Company. */
+/**
+ * Apply a Stripe subscription's state to the owning Company.
+ *
+ * Cross-tenant by nature: the webhook resolves the company by stripeCustomerId
+ * with no companyId in hand, so it runs on prismaAdmin (one of the three audited
+ * cross-tenant paths). Only invoked from app/api/webhooks/route.ts. (DARA-004)
+ */
 export async function syncSubscriptionToCompany(subscription: Stripe.Subscription): Promise<void> {
   const customerId =
     typeof subscription.customer === 'string'
       ? subscription.customer
       : subscription.customer.id;
 
-  let company = await prisma.company.findFirst({
+  let company = await prismaAdmin.company.findFirst({
     where: { stripeCustomerId: customerId }
   });
   if (!company && subscription.metadata?.companyId) {
-    company = await prisma.company.findUnique({
+    company = await prismaAdmin.company.findUnique({
       where: { id: BigInt(subscription.metadata.companyId) }
     });
   }
@@ -83,7 +94,7 @@ export async function syncSubscriptionToCompany(subscription: Stripe.Subscriptio
   const status = mapStatus(subscription.status);
   const isActive = subscription.status === 'active' || subscription.status === 'trialing';
 
-  await prisma.company.update({
+  await prismaAdmin.company.update({
     where: { id: company.id },
     data: {
       stripeCustomerId: customerId,

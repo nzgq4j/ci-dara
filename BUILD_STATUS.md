@@ -1,10 +1,11 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-06-26_
+_Last updated: 2026-06-27_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (all work below committed & deployed)
-**Stack:** Next.js 14 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage) · Stripe · Vercel
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
+**Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel --prod --yes` after `git push`. (See §4.)
+**Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage) · Stripe · Vercel
 
 ---
 
@@ -14,6 +15,9 @@ The app was migrated to a new Supabase project, its (previously never-passing)
 build was fixed, the DARA persona + evaluation engine was ported from the
 WordPress plugin and wired end-to-end, and admin/billing and a prototype-matched
 UID redesign were added. The app builds green and is deployed to production.
+The UI redesign was then completed across all pages, and a full NIST 800-171 /
+CMMC L2 / OWASP **security audit** was performed (2026-06-27) with an in-app
+Security page and the first wave of remediations shipped (see §3 / §5).
 
 ---
 
@@ -21,7 +25,7 @@ UID redesign were added. The app builds green and is deployed to production.
 
 | Area | Decision | Why |
 |------|----------|-----|
-| **Prisma 7 runtime** | Use `@prisma/adapter-pg` driver adapter, constructed with `DATABASE_URL` | Prisma 7 no longer reads the datasource URL from the schema or `prisma.config.ts` at runtime; a driver adapter is the supported path. URLs stay in `prisma.config.ts` for the CLI. |
+| **Prisma 7 runtime** | `@prisma/adapter-pg` driver adapter, constructed with `DATABASE_URL` | Prisma 7 no longer reads the datasource URL from the schema/`prisma.config.ts` at runtime; a driver adapter is the supported path. `prisma.config.ts` now loads the CLI datasource URL from env (`DIRECT_URL`) — no longer hardcoded (fixed DARA-001). |
 | **PDF extraction** | `unpdf` (not `pdf-parse`) | `pdf-parse` v2 works locally but fails in Vercel's serverless runtime (pdfjs worker/asset tracing). `unpdf` ships a worker-free serverless pdfjs build. DOCX still uses `mammoth`. |
 | **Auth provisioning** | Call `provisionNewUser` on email+password sign-in too | Provisioning previously only ran in `/auth/callback` (OAuth/magic-link), so password users had "no account information". |
 | **Admin model** | Platform admin via email allow-list (`PLATFORM_ADMIN_EMAILS`, fallback list); company admin via `UserRole = company_admin` | No super-admin concept existed in the schema; email allow-list is simple and explicit. |
@@ -32,6 +36,10 @@ UID redesign were added. The app builds green and is deployed to production.
 | **Webhook endpoint** | `https://dara.crucibleinsight.com/api/webhooks` | Canonical custom domain (matches `NEXT_PUBLIC_SITE_URL`); both domains are Vercel-served. (A trailing-dot typo in the Stripe endpoint URL was the cause of the first failed sync.) |
 | **Plan↔price map** | Base=$150 `price_1Tm7jq…`, Pro=$399 `price_1Tm7kH…`, Enterprise=$899 `price_1Tm7kr…` | Existing live Stripe catalog. `starter` plan is labelled **"Base"** in the UI. |
 | **UI design system** | Port `DARA App Prototype.dc.html` (from the claude.ai design project via DesignSync) | IBM Plex fonts, accent `#3b6ef0`, layered dark palette, 220px sectioned sidebar, full-screen app shell (marketing chrome gated off `/app`). |
+| **Security standards** | NIST SP 800-171 r3 / 800-53 r5 / CSF 2.0 / CMMC 2.0 L2 / OWASP as **standing guidance for all future builds** | App handles likely FCI/CUI; small-business contractor targeting CMMC L2 readiness. Saved to agent memory. |
+| **Tenant isolation (DB)** | Revoke `anon`/`authenticated` on `dara_*` + enable RLS as a deny-by-default backstop; app keeps connecting as the `postgres` owner (BYPASSRLS) | Closed the confirmed anon-key REST exposure with zero app risk. Full per-tenant RLS policies + a least-privilege role (DARA-004) deferred — they require a per-request `company_id` GUC and Prisma transaction refactor. |
+| **In-app Security page** | `/app/security`, themed; standards + control posture visible to all signed-in users, **detailed findings gated to platform admins** | Keeps reports visible (per request) without publishing exploit detail; severity cards count open findings + a remediated tally. |
+| **Deploy workflow** | Manual `vercel --prod` after push | GitHub→Vercel auto-deploy stopped firing (last git-triggered build `4512262`); manual deploys are the interim path until the Git integration is reconnected. |
 
 ---
 
@@ -80,6 +88,31 @@ UID redesign were added. The app builds green and is deployed to production.
   - **Personas, Settings, Billing, Admin** aligned to the shared cards, tables,
     status badges, and mono labels.
 
+### Security audit & remediation (2026-06-27)
+- **Audit** against NIST 800-171 r3 / 800-53 r5 / CMMC L2 / OWASP; ~20 findings.
+  Rendered in-app at **`/app/security`** (`utils/dara/security-content.ts` is the
+  single source of truth); detailed register gated to platform admins.
+- **Remediated:**
+  - **DARA-001 (Critical)** — DB credential removed from tracked `prisma.config.ts`
+    (now env), **password rotated**, and **purged from git history**
+    (`git filter-branch` literal scrub of both historical values + force-push).
+  - **DARA-005 (Critical)** — confirmed the public anon key had full CRUD on all
+    `dara_*` tables via PostgREST; **revoked** `anon`/`authenticated`, **enabled
+    RLS** on 11/11 tables, blocked future default grants. SQL artifact:
+    `prisma/security/2026-06-27_lock_dara_tables.sql`. Verified anon now gets 401.
+  - **DARA-011** — security headers (CSP, HSTS, X-Frame-Options DENY, nosniff,
+    Referrer-Policy, Permissions-Policy) via `next.config.js`.
+  - **DARA-012** — server-side upload validation (allow-list, 20 MB cap,
+    magic-byte checks, server-derived content type) in `utils/dara/documents.ts`.
+- **Partial / in progress:**
+  - **DARA-003** — RLS now enabled (backstop); per-tenant policies pending (→ DARA-004).
+  - **DARA-006** — Next.js `14.2.3 → 14.2.35` (clears CVE-2025-29927 + 14.2.x advisories).
+  - **DARA-008** — LLM prompt-injection hardening: untrusted doc/sol text wrapped
+    in randomized fences + "treat as data, not instructions" guard (`prompt.ts`).
+- **Prod outage fixed mid-effort:** after the DB password rotation, production 500'd
+  because Vercel still held the old `DATABASE_URL`/`DIRECT_URL`; updated both prod
+  env vars and redeployed. (Rotation runbook noted in §4.)
+
 ---
 
 ## 4. Known gaps / action items
@@ -100,6 +133,29 @@ UID redesign were added. The app builds green and is deployed to production.
    from the WP plugin are not ported yet.
 6. No OCR for scanned/image-only PDFs.
 7. `dara-logo.png` (~630 KB) is heavy for an icon; an optimized version would help.
+8. **Vercel auto-deploy not firing (your action).** Reconnect the GitHub
+   integration (Project → Settings → Git), confirm Production Branch = `main`,
+   and check for an "Ignored Build Step". Until then, deploy via `vercel --prod`.
+9. **Secret-rotation runbook.** Rotating the DB password (or any secret) requires
+   updating the value in **Vercel env (all environments)** + redeploy — not just
+   `.env.local`. Skipping Vercel is what caused the post-rotation 500s.
+   - **DARA-004 role credentials.** Three DB roles, three secrets, by least
+     privilege (NIST 800-171 03.01.05 / AC-6): `dara_app` (restricted runtime,
+     `DATABASE_URL_APP`), `dara_admin` (cross-tenant runtime, `DATABASE_URL_ADMIN`),
+     `postgres` (owner/DDL — migrations only, `DIRECT_URL`). To set/rotate the two
+     new roles run `prisma/security/rotate-dara004-roles.sh` (reads passwords from
+     shell env — no secrets in the script), then update the matching
+     `DATABASE_URL_APP` / `DATABASE_URL_ADMIN` in **Vercel (all envs)** + `.env.local`
+     and redeploy. `dara_app`/`dara_admin` are low-privilege and only need rotation
+     on suspected compromise; routine rotation is still effectively just `postgres`.
+10. **Unused `DARA_*` env vars.** A Supabase/Vercel integration added
+    `DARA_POSTGRES_*` / `DARA_SUPABASE_*` vars that the code does not read. Either
+    remove them or wire the app to the integration's pooled URL (more robust for
+    future rotations).
+11. **Open security findings** (full detail + status on `/app/security`). Highest
+    remaining: DARA-004 (least-privilege role + per-tenant RLS), DARA-009 (encrypt
+    CUI `extracted_text` at rest), DARA-013 (DB audit logging), DARA-007 (CUI→LLM
+    boundary/retention), DARA-002 (secrets handling), DARA-010 (admin model).
 
 ---
 
@@ -120,6 +176,16 @@ UID redesign were added. The app builds green and is deployed to production.
    `customer.subscription.paused`.
 5. **Housekeeping** — optimized logo asset; smoke-test a real evaluation run.
 
+### Security remediation backlog (status tracked on `/app/security`)
+- **Next small wins:** DARA-014 (enforce DB TLS `sslmode=require`), DARA-018
+  (validate `redirect_to` in `auth/callback`), DARA-019 (drop crypto plaintext
+  fallback), DARA-016 (remove stale `package-lock.json`), DARA-015 (CI
+  secret-scanning + dependency-audit gates).
+- **Larger, dedicated passes:** DARA-004 (least-privilege DB role + per-tenant
+  RLS policies via a per-request `company_id` GUC + Prisma transactions),
+  DARA-009 (encrypt CUI at rest), DARA-013 (DB audit logging), DARA-007 (CUI→LLM
+  data-boundary / zero-retention decision).
+
 ---
 
 ## 6. Key paths
@@ -129,3 +195,7 @@ UID redesign were added. The app builds green and is deployed to production.
 - Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin}/…`
 - Webhook: `app/api/webhooks/route.ts`
 - Design tokens: `tailwind.config.js`, `styles/main.css`, fonts in `app/layout.tsx`
+- Design primitives: `components/dara/{theme.ts,PageHeader.tsx,Tabs.tsx}`
+- Security page + content: `app/app/security/page.tsx`, `utils/dara/security-content.ts`
+- Security SQL artifact: `prisma/security/2026-06-27_lock_dara_tables.sql`
+- Security headers: `next.config.js`

@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { Plus, Trash2, Save, RotateCcw } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import {
   seedBuiltinPersonas,
   PERSONA_TEMPLATE_VARS
@@ -39,17 +39,19 @@ async function addPersona(formData: FormData) {
   const systemPrompt = String(formData.get('systemPrompt') ?? '').trim();
   if (!displayName || !systemPrompt) return;
 
-  const count = await prisma.persona.count({
-    where: { companyId: daraUser.companyId }
-  });
-  await prisma.persona.create({
-    data: {
-      companyId: daraUser.companyId,
-      displayName,
-      systemPrompt,
-      isActive: formData.get('isActive') === 'on',
-      sortOrder: count
-    }
+  await withTenant(daraUser.companyId, async (tx) => {
+    const count = await tx.persona.count({
+      where: { companyId: daraUser.companyId }
+    });
+    await tx.persona.create({
+      data: {
+        companyId: daraUser.companyId,
+        displayName,
+        systemPrompt,
+        isActive: formData.get('isActive') === 'on',
+        sortOrder: count
+      }
+    });
   });
   revalidatePath('/app/personas');
 }
@@ -58,21 +60,23 @@ async function updatePersona(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('personaId')));
-  const owned = await prisma.persona.findFirst({
-    where: { id, companyId: daraUser.companyId }
-  });
-  if (!owned) return;
-
   const displayName = String(formData.get('displayName') ?? '').trim();
   const systemPrompt = String(formData.get('systemPrompt') ?? '').trim();
-  await prisma.persona.update({
-    where: { id },
-    data: {
-      displayName: displayName || owned.displayName,
-      systemPrompt: systemPrompt || owned.systemPrompt,
-      isActive: formData.get('isActive') === 'on',
-      sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
-    }
+
+  await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.persona.findFirst({
+      where: { id, companyId: daraUser.companyId }
+    });
+    if (!owned) return;
+    await tx.persona.update({
+      where: { id },
+      data: {
+        displayName: displayName || owned.displayName,
+        systemPrompt: systemPrompt || owned.systemPrompt,
+        isActive: formData.get('isActive') === 'on',
+        sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
+      }
+    });
   });
   revalidatePath('/app/personas');
 }
@@ -81,35 +85,40 @@ async function deletePersona(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('personaId')));
-  const owned = await prisma.persona.findFirst({
-    where: { id, companyId: daraUser.companyId }
+  await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.persona.findFirst({
+      where: { id, companyId: daraUser.companyId }
+    });
+    if (!owned) return;
+    await tx.persona.delete({ where: { id } });
   });
-  if (!owned) return;
-  await prisma.persona.delete({ where: { id } });
   revalidatePath('/app/personas');
 }
 
 async function restoreDefaults() {
   'use server';
   const daraUser = await authedUser();
-  await seedBuiltinPersonas(daraUser.companyId);
+  await withTenant(daraUser.companyId, (tx) =>
+    seedBuiltinPersonas(tx, daraUser.companyId)
+  );
   revalidatePath('/app/personas');
 }
 
 export default async function PersonasPage() {
   const daraUser = await authedUser();
 
-  // Auto-seed the built-in personas for a company that has none yet.
-  const count = await prisma.persona.count({
-    where: { companyId: daraUser.companyId }
-  });
-  if (count === 0) {
-    await seedBuiltinPersonas(daraUser.companyId);
-  }
-
-  const personas = await prisma.persona.findMany({
-    where: { companyId: daraUser.companyId },
-    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+  const personas = await withTenant(daraUser.companyId, async (tx) => {
+    // Auto-seed the built-in personas for a company that has none yet.
+    const count = await tx.persona.count({
+      where: { companyId: daraUser.companyId }
+    });
+    if (count === 0) {
+      await seedBuiltinPersonas(tx, daraUser.companyId);
+    }
+    return tx.persona.findMany({
+      where: { companyId: daraUser.companyId },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+    });
   });
   const activeCount = personas.filter((p) => p.isActive).length;
 

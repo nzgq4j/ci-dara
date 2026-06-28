@@ -1,23 +1,91 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+// DARA-004: tenant isolation is enforced at the database via RLS, not just by
+// app-layer `where: { companyId }` filters. That requires connecting as
+// least-privilege roles instead of the BYPASSRLS owner:
+//
+//   prismaTenant  -> role `dara_app`  (NOT bypassrls). MUST be used through
+//                    withTenant(), which sets the per-transaction GUC the RLS
+//                    policies read. A bare query on it with no tenant context is
+//                    fail-closed (returns zero rows), by design.
+//   prismaAdmin   -> role `dara_admin` (permissive RLS policy = sees all tenants).
+//                    ONLY for the audited cross-tenant paths: user provisioning,
+//                    the Stripe webhook (lookup by stripeCustomerId), and the
+//                    platform-admin pages. Every call site should justify itself.
+//
+// See prisma/security/2026-06-27_dara004_rls_policies.sql.
+
 declare global {
-  var prisma: PrismaClient | undefined;
+  // eslint-disable-next-line no-var
+  var prismaTenant: PrismaClient | undefined;
+  // eslint-disable-next-line no-var
+  var prismaAdmin: PrismaClient | undefined;
 }
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
 };
 
-// Prisma 7 no longer reads the datasource URL from prisma.config.ts or the
-// schema at runtime; a direct database connection must be supplied via a driver
-// adapter passed to the PrismaClient constructor. The pg adapter connects using
-// DATABASE_URL (the transaction pooler). Constructing the adapter does not open
-// a connection — pg connects lazily on first query — so this is safe at build.
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+// Constructing an adapter does not open a connection (pg connects lazily on the
+// first query), so referencing possibly-undefined URLs here is safe at build.
+// Transitional fallback to DATABASE_URL keeps the app from hard-failing if it is
+// deployed before DATABASE_URL_APP / DATABASE_URL_ADMIN are set in the
+// environment; it is logged so the misconfiguration is not silent. Remove the
+// fallback once the new roles are provisioned (see the rotation runbook).
+function connString(primary: string | undefined, role: string): string {
+  if (primary) return primary;
+  if (process.env.DATABASE_URL) {
+    console.warn(
+      `[prisma] ${role} connection string is unset; falling back to DATABASE_URL ` +
+        `(owner role — RLS NOT enforced). Set it before relying on tenant isolation.`
+    );
+    return process.env.DATABASE_URL;
+  }
+  return '';
+}
 
-export const prisma = global.prisma ?? new PrismaClient({ adapter });
+const tenantAdapter = new PrismaPg({
+  connectionString: connString(process.env.DATABASE_URL_APP, 'DATABASE_URL_APP')
+});
+const adminAdapter = new PrismaPg({
+  connectionString: connString(process.env.DATABASE_URL_ADMIN, 'DATABASE_URL_ADMIN')
+});
+
+export const prismaTenant =
+  global.prismaTenant ?? new PrismaClient({ adapter: tenantAdapter });
+export const prismaAdmin =
+  global.prismaAdmin ?? new PrismaClient({ adapter: adminAdapter });
 
 if (process.env.NODE_ENV !== 'production') {
-  global.prisma = prisma;
+  global.prismaTenant = prismaTenant;
+  global.prismaAdmin = prismaAdmin;
+}
+
+/** The transaction-scoped client handed to a withTenant() callback. */
+export type TenantTx = Prisma.TransactionClient;
+
+/**
+ * Run tenant-scoped work with database-enforced isolation.
+ *
+ * Opens an interactive transaction on the restricted `dara_app` role, sets the
+ * `app.company_id` GUC LOCAL to that transaction, then runs `fn`. SET LOCAL is
+ * the only safe way to pin the tenant on Supabase's transaction-mode pooler: the
+ * value lives and dies with this one transaction and never leaks across pooled
+ * connections.
+ *
+ * Keep the callback short and DB-only — do NOT await slow work (e.g. LLM calls)
+ * inside it, or the pinned connection is held and the interactive-transaction
+ * timeout can trip. For long jobs, split into multiple withTenant() bursts around
+ * the slow work (see utils/dara/evaluator.ts).
+ */
+export function withTenant<T>(
+  companyId: bigint,
+  fn: (tx: TenantTx) => Promise<T>
+): Promise<T> {
+  return prismaTenant.$transaction(async (tx) => {
+    // set_config(setting, value, is_local=true) == SET LOCAL. Parameterized.
+    await tx.$executeRaw`select set_config('app.company_id', ${companyId.toString()}, true)`;
+    return fn(tx);
+  });
 }

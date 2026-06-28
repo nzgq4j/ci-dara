@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { Check, CreditCard, ExternalLink } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import { stripe } from '@/utils/stripe/config';
 import { getURL } from '@/utils/helpers';
 import {
@@ -57,7 +57,9 @@ async function createCheckout(formData: FormData) {
 async function manageBilling() {
   'use server';
   const daraUser = await requireCompanyAdmin();
-  const company = await prisma.company.findUnique({ where: { id: daraUser.companyId } });
+  const company = await withTenant(daraUser.companyId, (tx) =>
+    tx.company.findUnique({ where: { id: daraUser.companyId } })
+  );
   if (!company?.stripeCustomerId) return;
   const session = await stripe.billingPortal.sessions.create({
     customer: company.stripeCustomerId,
@@ -72,7 +74,9 @@ export default async function BillingPage({
   searchParams: { success?: string };
 }) {
   const daraUser = await requireCompanyAdmin();
-  const company = await prisma.company.findUnique({ where: { id: daraUser.companyId } });
+  const company = await withTenant(daraUser.companyId, (tx) =>
+    tx.company.findUnique({ where: { id: daraUser.companyId } })
+  );
   if (!company) redirect('/app/dashboard');
 
   const currentPlan = company.plan;

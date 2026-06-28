@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 
 const planLabels: Record<string, string> = {
   trial: 'Trial',
@@ -38,25 +38,28 @@ export default async function DashboardPage() {
     recentSolicitations,
     recentEvaluations,
     personas
-  ] = await Promise.all([
-    prisma.solicitation.count({ where: { companyId } }),
-    prisma.response.count({ where: { companyId } }),
-    prisma.evaluation.count({ where: { companyId } }),
-    prisma.persona.count({ where: { companyId, isActive: true } }),
-    prisma.solicitation.findMany({
-      where: { companyId },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-      include: { _count: { select: { criteria: true, responses: true } } }
-    }),
-    prisma.evaluation.findMany({
-      where: { companyId },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-      include: { response: true }
-    }),
-    prisma.persona.findMany({ where: { companyId }, select: { id: true, displayName: true } })
-  ]);
+  ] = await withTenant(companyId, (tx) =>
+    Promise.all([
+      // companyId filters kept as defense-in-depth alongside RLS (DARA-004).
+      tx.solicitation.count({ where: { companyId } }),
+      tx.response.count({ where: { companyId } }),
+      tx.evaluation.count({ where: { companyId } }),
+      tx.persona.count({ where: { companyId, isActive: true } }),
+      tx.solicitation.findMany({
+        where: { companyId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: { _count: { select: { criteria: true, responses: true } } }
+      }),
+      tx.evaluation.findMany({
+        where: { companyId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: { response: true }
+      }),
+      tx.persona.findMany({ where: { companyId }, select: { id: true, displayName: true } })
+    ])
+  );
 
   const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
 

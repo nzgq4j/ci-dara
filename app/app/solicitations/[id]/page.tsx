@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation } from '@/utils/dara/evaluator';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
@@ -55,7 +55,9 @@ async function authedUser() {
 }
 
 async function requireOwnedSolicitation(solId: bigint, companyId: bigint) {
-  const owned = await prisma.solicitation.findFirst({ where: { id: solId, companyId } });
+  const owned = await withTenant(companyId, (tx) =>
+    tx.solicitation.findFirst({ where: { id: solId, companyId } })
+  );
   if (!owned) redirect('/app/solicitations');
   return owned;
 }
@@ -68,15 +70,17 @@ async function updateSolicitation(formData: FormData) {
   await requireOwnedSolicitation(id, daraUser.companyId);
   const title = String(formData.get('title') ?? '').trim();
   if (!title) return;
-  await prisma.solicitation.update({
-    where: { id },
-    data: {
-      title,
-      solNumber: String(formData.get('solNumber') ?? '').trim(),
-      agency: String(formData.get('agency') ?? '').trim(),
-      notes: String(formData.get('notes') ?? '').trim() || null
-    }
-  });
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.solicitation.update({
+      where: { id },
+      data: {
+        title,
+        solNumber: String(formData.get('solNumber') ?? '').trim(),
+        agency: String(formData.get('agency') ?? '').trim(),
+        notes: String(formData.get('notes') ?? '').trim() || null
+      }
+    })
+  );
   revalidatePath(`/app/solicitations/${id}`);
 }
 
@@ -85,7 +89,7 @@ async function deleteSolicitation(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('solId')));
   await requireOwnedSolicitation(id, daraUser.companyId);
-  await prisma.solicitation.delete({ where: { id } });
+  await withTenant(daraUser.companyId, (tx) => tx.solicitation.delete({ where: { id } }));
   redirect('/app/solicitations');
 }
 
@@ -97,18 +101,20 @@ async function addCriterion(formData: FormData) {
   await requireOwnedSolicitation(solId, daraUser.companyId);
   const name = String(formData.get('name') ?? '').trim();
   if (!name) return;
-  await prisma.criterion.create({
-    data: {
-      companyId: daraUser.companyId,
-      solicitationId: solId,
-      name,
-      description: String(formData.get('description') ?? '').trim() || null,
-      criterionType: String(formData.get('criterionType') ?? 'scored_factor'),
-      farReference: String(formData.get('farReference') ?? '').trim(),
-      weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
-      sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
-    }
-  });
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.criterion.create({
+      data: {
+        companyId: daraUser.companyId,
+        solicitationId: solId,
+        name,
+        description: String(formData.get('description') ?? '').trim() || null,
+        criterionType: String(formData.get('criterionType') ?? 'scored_factor'),
+        farReference: String(formData.get('farReference') ?? '').trim(),
+        weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
+        sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
+      }
+    })
+  );
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -117,19 +123,23 @@ async function updateCriterion(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('criterionId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await prisma.criterion.findFirst({ where: { id, companyId: daraUser.companyId } });
-  if (!owned) redirect('/app/solicitations');
-  await prisma.criterion.update({
-    where: { id },
-    data: {
-      name: String(formData.get('name') ?? '').trim() || owned.name,
-      description: String(formData.get('description') ?? '').trim() || null,
-      criterionType: String(formData.get('criterionType') ?? owned.criterionType),
-      farReference: String(formData.get('farReference') ?? '').trim(),
-      weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
-      sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
-    }
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.criterion.findFirst({ where: { id, companyId: daraUser.companyId } });
+    if (!owned) return false;
+    await tx.criterion.update({
+      where: { id },
+      data: {
+        name: String(formData.get('name') ?? '').trim() || owned.name,
+        description: String(formData.get('description') ?? '').trim() || null,
+        criterionType: String(formData.get('criterionType') ?? owned.criterionType),
+        farReference: String(formData.get('farReference') ?? '').trim(),
+        weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
+        sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
+      }
+    });
+    return true;
   });
+  if (!ok) redirect('/app/solicitations');
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -138,9 +148,13 @@ async function deleteCriterion(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('criterionId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await prisma.criterion.findFirst({ where: { id, companyId: daraUser.companyId } });
-  if (!owned) redirect('/app/solicitations');
-  await prisma.criterion.delete({ where: { id } });
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.criterion.findFirst({ where: { id, companyId: daraUser.companyId } });
+    if (!owned) return false;
+    await tx.criterion.delete({ where: { id } });
+    return true;
+  });
+  if (!ok) redirect('/app/solicitations');
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -152,14 +166,16 @@ async function addResponse(formData: FormData) {
   await requireOwnedSolicitation(solId, daraUser.companyId);
   const offerorName = String(formData.get('offerorName') ?? '').trim();
   if (!offerorName) return;
-  await prisma.response.create({
-    data: {
-      companyId: daraUser.companyId,
-      solicitationId: solId,
-      offerorName,
-      notes: String(formData.get('notes') ?? '').trim() || null
-    }
-  });
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.response.create({
+      data: {
+        companyId: daraUser.companyId,
+        solicitationId: solId,
+        offerorName,
+        notes: String(formData.get('notes') ?? '').trim() || null
+      }
+    })
+  );
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -168,15 +184,19 @@ async function updateResponse(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('responseId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await prisma.response.findFirst({ where: { id, companyId: daraUser.companyId } });
-  if (!owned) redirect('/app/solicitations');
-  await prisma.response.update({
-    where: { id },
-    data: {
-      offerorName: String(formData.get('offerorName') ?? '').trim() || owned.offerorName,
-      notes: String(formData.get('notes') ?? '').trim() || null
-    }
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.response.findFirst({ where: { id, companyId: daraUser.companyId } });
+    if (!owned) return false;
+    await tx.response.update({
+      where: { id },
+      data: {
+        offerorName: String(formData.get('offerorName') ?? '').trim() || owned.offerorName,
+        notes: String(formData.get('notes') ?? '').trim() || null
+      }
+    });
+    return true;
   });
+  if (!ok) redirect('/app/solicitations');
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -185,13 +205,16 @@ async function deleteResponse(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('responseId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await prisma.response.findFirst({
-    where: { id, companyId: daraUser.companyId },
-    include: { files: true }
-  });
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.response.findFirst({
+      where: { id, companyId: daraUser.companyId },
+      include: { files: true }
+    })
+  );
   if (!owned) redirect('/app/solicitations');
+  // Storage I/O outside any transaction.
   await removeStored(owned.files.map((f) => f.storedFilename));
-  await prisma.response.delete({ where: { id } });
+  await withTenant(daraUser.companyId, (tx) => tx.response.delete({ where: { id } }));
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -203,19 +226,22 @@ async function uploadSolDoc(formData: FormData) {
   await requireOwnedSolicitation(solId, daraUser.companyId);
   const file = formData.get('file');
   if (!(file instanceof File) || file.size === 0) return;
+  // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'sol', Date.now());
-  await prisma.solDocument.create({
-    data: {
-      companyId: daraUser.companyId,
-      solicitationId: solId,
-      originalFilename: doc.originalFilename,
-      storedFilename: doc.storedFilename,
-      fileSize: doc.fileSize,
-      extractionStatus: doc.extractionStatus,
-      extractedText: doc.extractedText || null,
-      uploadedBy: daraUser.id
-    }
-  });
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.solDocument.create({
+      data: {
+        companyId: daraUser.companyId,
+        solicitationId: solId,
+        originalFilename: doc.originalFilename,
+        storedFilename: doc.storedFilename,
+        fileSize: doc.fileSize,
+        extractionStatus: doc.extractionStatus,
+        extractedText: doc.extractedText || null,
+        uploadedBy: daraUser.id
+      }
+    })
+  );
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -224,10 +250,12 @@ async function deleteSolDoc(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('docId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await prisma.solDocument.findFirst({ where: { id, companyId: daraUser.companyId } });
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.solDocument.findFirst({ where: { id, companyId: daraUser.companyId } })
+  );
   if (!owned) return;
   await removeStored([owned.storedFilename]);
-  await prisma.solDocument.delete({ where: { id } });
+  await withTenant(daraUser.companyId, (tx) => tx.solDocument.delete({ where: { id } }));
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -236,24 +264,29 @@ async function uploadResponseFile(formData: FormData) {
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const responseId = BigInt(String(formData.get('responseId')));
-  const response = await prisma.response.findFirst({
-    where: { id: responseId, companyId: daraUser.companyId }
-  });
+  const response = await withTenant(daraUser.companyId, (tx) =>
+    tx.response.findFirst({
+      where: { id: responseId, companyId: daraUser.companyId }
+    })
+  );
   if (!response) return;
   const file = formData.get('file');
   if (!(file instanceof File) || file.size === 0) return;
+  // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'response', Date.now());
-  await prisma.responseFile.create({
-    data: {
-      companyId: daraUser.companyId,
-      responseId,
-      originalFilename: doc.originalFilename,
-      storedFilename: doc.storedFilename,
-      fileSize: doc.fileSize,
-      extractionStatus: doc.extractionStatus,
-      extractedText: doc.extractedText || null
-    }
-  });
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.responseFile.create({
+      data: {
+        companyId: daraUser.companyId,
+        responseId,
+        originalFilename: doc.originalFilename,
+        storedFilename: doc.storedFilename,
+        fileSize: doc.fileSize,
+        extractionStatus: doc.extractionStatus,
+        extractedText: doc.extractedText || null
+      }
+    })
+  );
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -262,10 +295,12 @@ async function deleteResponseFile(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('fileId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await prisma.responseFile.findFirst({ where: { id, companyId: daraUser.companyId } });
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.responseFile.findFirst({ where: { id, companyId: daraUser.companyId } })
+  );
   if (!owned) return;
   await removeStored([owned.storedFilename]);
-  await prisma.responseFile.delete({ where: { id } });
+  await withTenant(daraUser.companyId, (tx) => tx.responseFile.delete({ where: { id } }));
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
@@ -276,30 +311,38 @@ async function runEvaluations(formData: FormData) {
   const solId = BigInt(String(formData.get('solId')));
   const responseId = BigInt(String(formData.get('responseId')));
   await requireOwnedSolicitation(solId, daraUser.companyId);
-  const response = await prisma.response.findFirst({
-    where: { id: responseId, companyId: daraUser.companyId }
+  const activePersonas = await withTenant(daraUser.companyId, async (tx) => {
+    const response = await tx.response.findFirst({
+      where: { id: responseId, companyId: daraUser.companyId }
+    });
+    if (!response) return null;
+    return tx.persona.findMany({
+      where: { companyId: daraUser.companyId, isActive: true }
+    });
   });
-  if (!response) return;
-
-  const activePersonas = await prisma.persona.findMany({
-    where: { companyId: daraUser.companyId, isActive: true }
-  });
+  if (!activePersonas) return;
 
   for (const persona of activePersonas) {
-    let evaluation = await prisma.evaluation.findFirst({
-      where: { companyId: daraUser.companyId, responseId, personaId: persona.id }
-    });
-    if (!evaluation) {
-      evaluation = await prisma.evaluation.create({
-        data: {
-          companyId: daraUser.companyId,
-          solicitationId: solId,
-          responseId,
-          personaId: persona.id,
-          status: 'pending'
-        }
+    // Find-or-create the evaluation row in its own short burst...
+    const evaluation = await withTenant(daraUser.companyId, async (tx) => {
+      const existing = await tx.evaluation.findFirst({
+        where: { companyId: daraUser.companyId, responseId, personaId: persona.id }
       });
-    }
+      return (
+        existing ??
+        tx.evaluation.create({
+          data: {
+            companyId: daraUser.companyId,
+            solicitationId: solId,
+            responseId,
+            personaId: persona.id,
+            status: 'pending'
+          }
+        })
+      );
+    });
+    // ...then run it OUTSIDE any transaction — runEvaluation manages its own
+    // withTenant bursts around the slow LLM calls (do not nest transactions).
     await runEvaluation(evaluation.id, daraUser.companyId);
   }
   revalidatePath(`/app/solicitations/${solId}`);
@@ -323,33 +366,37 @@ export default async function SolicitationDetailPage({
   if (!/^\d+$/.test(params.id)) notFound();
   const solId = BigInt(params.id);
 
-  const solicitation = await prisma.solicitation.findFirst({
-    where: { id: solId, companyId: daraUser.companyId },
-    include: {
-      criteria: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
-      solDocs: { orderBy: { uploadedAt: 'desc' } },
-      responses: {
-        orderBy: { createdAt: 'desc' },
-        include: { files: { orderBy: { uploadedAt: 'desc' } } }
-      },
-      evaluations: {
-        orderBy: { createdAt: 'desc' },
-        include: {
-          response: true,
-          results: {
-            include: { criterion: true, persona: true },
-            orderBy: { criterionId: 'asc' }
+  const data = await withTenant(daraUser.companyId, async (tx) => {
+    const solicitation = await tx.solicitation.findFirst({
+      where: { id: solId, companyId: daraUser.companyId },
+      include: {
+        criteria: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
+        solDocs: { orderBy: { uploadedAt: 'desc' } },
+        responses: {
+          orderBy: { createdAt: 'desc' },
+          include: { files: { orderBy: { uploadedAt: 'desc' } } }
+        },
+        evaluations: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            response: true,
+            results: {
+              include: { criterion: true, persona: true },
+              orderBy: { criterionId: 'asc' }
+            }
           }
         }
       }
-    }
+    });
+    if (!solicitation) return null;
+    const personas = await tx.persona.findMany({
+      where: { companyId: daraUser.companyId }
+    });
+    return { solicitation, personas };
   });
 
-  if (!solicitation) notFound();
-
-  const personas = await prisma.persona.findMany({
-    where: { companyId: daraUser.companyId }
-  });
+  if (!data) notFound();
+  const { solicitation, personas } = data;
   const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
   const activeCount = personas.filter((p) => p.isActive).length;
 

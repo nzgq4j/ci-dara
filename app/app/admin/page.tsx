@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { Save, Building2, Users } from 'lucide-react';
-import { prisma } from '@/utils/prisma';
+import { prismaAdmin } from '@/utils/prisma';
 import { requirePlatformAdmin } from '@/utils/dara/admin';
 import { secretHint } from '@/utils/dara/crypto';
 import PageHeader from '@/components/dara/PageHeader';
@@ -29,7 +29,7 @@ async function updateCompany(formData: FormData) {
   await requirePlatformAdmin();
   const id = BigInt(String(formData.get('companyId')));
   const trialRaw = String(formData.get('trialEndsAt') ?? '').trim();
-  await prisma.company.update({
+  await prismaAdmin.company.update({
     where: { id },
     data: {
       plan: pick(PLANS, String(formData.get('plan') ?? ''), 'trial') as any,
@@ -47,9 +47,9 @@ async function updateAnyUser(formData: FormData) {
   'use server';
   await requirePlatformAdmin();
   const userId = String(formData.get('userId') ?? '');
-  const target = await prisma.daraUser.findUnique({ where: { id: userId } });
+  const target = await prismaAdmin.daraUser.findUnique({ where: { id: userId } });
   if (!target) return;
-  await prisma.daraUser.update({
+  await prismaAdmin.daraUser.update({
     where: { id: userId },
     data: {
       role: pick(ROLES, String(formData.get('role') ?? ''), target.role) as any,
@@ -62,13 +62,13 @@ async function updateAnyUser(formData: FormData) {
 export default async function AdminPage() {
   await requirePlatformAdmin();
 
-  const companies = await prisma.company.findMany({
+  const companies = await prismaAdmin.company.findMany({
     orderBy: { createdAt: 'desc' },
     include: {
       _count: { select: { users: true, solicitations: true, evaluations: true } }
     }
   });
-  const users = await prisma.daraUser.findMany({
+  const users = await prismaAdmin.daraUser.findMany({
     orderBy: { createdAt: 'asc' },
     include: { company: { select: { name: true } } }
   });

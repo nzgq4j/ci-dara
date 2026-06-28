@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { ArrowLeft, Plus } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import {
   card,
   fieldClasses,
@@ -32,16 +32,18 @@ async function createSolicitation(formData: FormData) {
 
   if (!title) redirect('/app/solicitations/new');
 
-  const solicitation = await prisma.solicitation.create({
-    data: {
-      companyId: daraUser.companyId,
-      title,
-      solNumber,
-      agency,
-      notes: notes || null,
-      createdBy: daraUser.id
-    }
-  });
+  const solicitation = await withTenant(daraUser.companyId, (tx) =>
+    tx.solicitation.create({
+      data: {
+        companyId: daraUser.companyId,
+        title,
+        solNumber,
+        agency,
+        notes: notes || null,
+        createdBy: daraUser.id
+      }
+    })
+  );
 
   redirect(`/app/solicitations/${solicitation.id}`);
 }

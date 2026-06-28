@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { Plus, FileText } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { prisma } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, cardDashed, btnPrimary } from '@/components/dara/theme';
 
@@ -18,15 +18,18 @@ export default async function SolicitationsPage() {
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
 
-  const solicitations = await prisma.solicitation.findMany({
-    where: { companyId: daraUser.companyId },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      _count: {
-        select: { criteria: true, responses: true, evaluations: true }
+  const solicitations = await withTenant(daraUser.companyId, (tx) =>
+    tx.solicitation.findMany({
+      // companyId filter kept as defense-in-depth alongside RLS (DARA-004).
+      where: { companyId: daraUser.companyId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: { criteria: true, responses: true, evaluations: true }
+        }
       }
-    }
-  });
+    })
+  );
 
   return (
     <div className="mx-auto max-w-6xl fade">

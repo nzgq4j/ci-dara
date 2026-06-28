@@ -1,4 +1,4 @@
-import { prisma } from '@/utils/prisma';
+import type { TenantTx } from '@/utils/prisma';
 
 // The five built-in evaluator personas, ported from the original DARA WordPress
 // plugin (CruxInsight\Personas\PersonaManager). systemPrompt is the role
@@ -47,9 +47,12 @@ export const BUILTIN_PERSONAS: { displayName: string; systemPrompt: string }[] =
  * Ensure the company has the built-in personas. Idempotent: only creates ones
  * whose displayName is not already present for the company. Returns the number
  * created.
+ *
+ * Takes the active tenant transaction (`tx` from withTenant) so the caller owns
+ * the tenant context — RLS scopes these reads/writes to the GUC'd company.
  */
-export async function seedBuiltinPersonas(companyId: bigint): Promise<number> {
-  const existing = await prisma.persona.findMany({
+export async function seedBuiltinPersonas(tx: TenantTx, companyId: bigint): Promise<number> {
+  const existing = await tx.persona.findMany({
     where: { companyId },
     select: { displayName: true }
   });
@@ -59,7 +62,7 @@ export async function seedBuiltinPersonas(companyId: bigint): Promise<number> {
   );
   if (toCreate.length === 0) return 0;
 
-  await prisma.persona.createMany({
+  await tx.persona.createMany({
     data: toCreate.map((p) => ({
       companyId,
       displayName: p.displayName,
