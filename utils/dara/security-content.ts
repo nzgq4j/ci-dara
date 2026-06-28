@@ -102,23 +102,52 @@ export const FRAMEWORKS: Framework[] = [
 ];
 
 export const CONTROL_POSTURE: ControlPosture[] = [
-  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS policies enforced on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; app-layer companyId scoping retained as defense-in-depth. Remaining: platform-admin via email allow-list (DARA-010).' },
+  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; platform-admin via env allow-list (no source-embedded identities) with audited admin actions (DARA-010); app-layer companyId scoping retained as defense-in-depth. Remaining: a per-user platform-admin DB role for finer control.' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
-  { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (auth/provisioning, authz + BYOK-key changes, CUI document/evaluation handling, billing). Remaining: fine-grained CRUD + sign-in events, retention policy, and log review/alerting.' },
+  { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (sign-in/provisioning, authz + BYOK-key changes, persona changes, CUI document/evaluation handling, billing). Remaining: an admin-only, per-company audit viewer (planned under Team), a retention policy, and log review/alerting.' },
   { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; single pnpm lockfile (frozen in CI); CI security gates in place (secret scan, dependency audit, SAST, SBOM). Remaining: tracked migration history (DARA-017) and enabling branch protection on main.' },
-  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; committed DB credential remediated (moved to env, rotated, purged from history); MFA posture Unverified.' },
+  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth with Google SSO (OAuth/PKCE) and email+password; "remember me" session controls; committed DB credential remediated (env, rotated, history-purged). MFA available via the identity provider; org-level enforcement Unverified.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
   { family: 'Maintenance', code: 'MA', status: 'Undetermined', note: 'No maintenance procedure evidenced in the repository.' },
-  { family: 'Media Protection', code: 'MP', status: 'Partial', note: 'BYOK keys encrypted (AES-256-GCM); CUI extracted text stored in plaintext; best-effort deletion.' },
+  { family: 'Media Protection', code: 'MP', status: 'Partial', note: 'BYOK keys and CUI extracted text both encrypted at rest (AES-256-GCM; DARA-009); private storage bucket; best-effort deletion. Remaining: a formal media sanitization/retention policy.' },
   { family: 'Personnel Security', code: 'PS', status: 'Not applicable', note: 'Organizational process; not assessable from the repository.' },
   { family: 'Physical Protection', code: 'PE', status: 'Not applicable', note: 'Inherited from cloud providers (Vercel / Supabase / AWS).' },
-  { family: 'Risk Assessment', code: 'RA', status: 'Partial', note: 'This assessment performed; no continuous vulnerability scanning.' },
-  { family: 'Security Assessment & Monitoring', code: 'CA', status: 'Partial', note: 'Point-in-time review; no continuous monitoring program.' },
+  { family: 'Risk Assessment', code: 'RA', status: 'Partial', note: 'This assessment performed; automated dependency audit + CodeQL SAST run in CI on every push/PR. Remaining: continuous/runtime vulnerability scanning and a recurring risk-assessment cadence.' },
+  { family: 'Security Assessment & Monitoring', code: 'CA', status: 'Partial', note: 'Point-in-time review plus per-push CI scanning (secret, dependency, SAST). A System Security Plan is documented in-app (/app/security/plan). Remaining: continuous runtime monitoring and alerting.' },
   { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP; DB TLS enforced (DARA-014); CUI encrypted at rest (DARA-009). CUI→LLM egress: commercial endpoints retained with compensating controls — boundary notices, BYOK option, per-run audit (DARA-007, risk accepted); zero-data-retention agreements on platform keys pursued offline.' },
-  { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Next.js patched to 14.2.35; LLM input now fenced; React output escaping sound; remaining dev-only transitive advisories + no automated dependency scanning.' },
-  { family: 'Planning', code: 'PL', status: 'Not implemented', note: 'No System Security Plan (SSP) evidenced.' },
+  { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Next.js patched to 14.2.35; LLM input fenced; React output escaping sound; automated dependency audit + CodeQL SAST in CI. Remaining: triage of dev-only transitive advisories.' },
+  { family: 'Planning', code: 'PL', status: 'Partial', note: 'System Security Plan drafted as a living in-app document (/app/security/plan) mapping implemented controls to NIST families, with the findings register serving as the POA&M. Remaining: formal sign-off and a maintenance cadence.' },
   { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Frozen pnpm lockfile, high-severity dependency audit, and a CycloneDX SBOM generated in CI. Remaining: artifact provenance/signing.' }
 ];
+
+// ── System Security Plan (SSP) — living document; see /app/security/plan ─────────
+export const SSP = {
+  version: 'Draft 0.1',
+  updated: 'June 28, 2026',
+  owner: 'Crucible Insight LLC',
+  system: 'DARA — Document Analysis & Response Assistant',
+  overview:
+    'DARA is a multi-tenant SaaS that performs AI-assisted evaluation of government solicitations and offeror proposals. It ingests solicitation and proposal documents (which may contain FCI/CUI), extracts their text, and scores responses against user-defined criteria using configurable AI personas. Each company is an isolated tenant; users have role-based access. The plan below reflects the controls as implemented; the findings register is the Plan of Action & Milestones (POA&M).',
+  dataCategories: [
+    'FCI / CUI — solicitation and proposal document content (extracted text) and evaluation results.',
+    'Authentication identifiers — names, emails, roles (Supabase Auth / Google SSO).',
+    'Secrets — customer BYOK provider API keys (encrypted at rest).',
+    'Billing — Stripe customer / subscription identifiers (no CUI).'
+  ],
+  boundary: [
+    { component: 'Vercel', role: 'App hosting & serverless functions (Next.js)', data: 'Processes requests in transit; no persistent CUI storage.' },
+    { component: 'Supabase Postgres', role: 'Primary database (Prisma)', data: 'Tenant data incl. CUI extracted_text, encrypted at rest; per-tenant RLS.' },
+    { component: 'Supabase Auth', role: 'Authentication / SSO', data: 'User identities and sessions.' },
+    { component: 'Supabase Storage', role: 'Private document bucket', data: 'Uploaded solicitation / proposal files.' },
+    { component: 'LLM provider (Anthropic / OpenAI / Google)', role: 'AI evaluation', data: 'Receives document text at evaluation time (DARA-007; commercial endpoints, BYOK / ZDR).' },
+    { component: 'Stripe', role: 'Payments', data: 'Billing identifiers only; no CUI.' }
+  ],
+  roles: [
+    { role: 'Platform admin', who: 'Crucible Insight operators (env allow-list)', responsibility: 'Cross-tenant administration; all actions audited; no source-embedded identities.' },
+    { role: 'Company admin', who: 'Customer organization administrator', responsibility: 'Manage company users/roles, AI configuration & BYOK keys, billing.' },
+    { role: 'Manager / Reviewer', who: 'Customer users', responsibility: 'Create and run evaluations, or view results, per assigned role.' }
+  ]
+};
 
 export const FINDINGS: Finding[] = [
   {

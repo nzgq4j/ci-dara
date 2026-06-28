@@ -215,6 +215,23 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   rest/in transit, per-run provider/mode audit, `DARA-007-data-boundary.md`. ZDR
   agreements on the platform keys (Anthropic/OpenAI/Google) pursued **offline**;
   update the notice copy + status on signing. (No FedRAMP/GovCloud migration.)
+- **Still open:** DARA-002 (secrets handling), DARA-017 (migration history).
+
+### Compliance / docs (new)
+- **System Security Plan (SSP)** — started 2026-06-28 as a living in-app document at
+  `/app/security/plan` (system overview, authorization boundary, roles, NIST
+  800-171 control implementation, POA&M from the findings register; POA&M detail
+  gated to platform admins). Moves the PL family to Partial. Remaining: formal
+  sign-off + maintenance cadence.
+
+### Feature backlog (security-adjacent)
+- **Admin-only audit-log viewer (per company).** `dara_audit_log` is already
+  per-company; build a read-only viewer for **company admins** under the **Team**
+  tab (filter by actor/action/date; export). Closes the AU "log review" gap.
+- **AI codebase security-audit (back-office).** A platform-admin feature that runs
+  an automated NIST-800-171 / best-practice vulnerability review of the codebase
+  using the **platform API key** (LLM), producing a detailed findings report that
+  feeds the register. Backlog.
 
 ---
 

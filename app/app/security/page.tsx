@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ShieldCheck, FileText, Lock, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
@@ -73,6 +74,15 @@ export default async function SecurityPage() {
         eyebrow="Trust & Compliance"
         title="Security &amp; Compliance"
         subtitle="The standards DARA is built against and the results of our internal security assessment."
+        action={
+          <Link
+            href="/app/security/plan"
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-line px-4 py-2 text-sm font-medium text-t4 transition-colors hover:border-[#3b6ef0] hover:text-t1"
+          >
+            <FileText className="h-4 w-4" />
+            System Security Plan
+          </Link>
+        }
       />
 
       {/* Assessment summary */}
