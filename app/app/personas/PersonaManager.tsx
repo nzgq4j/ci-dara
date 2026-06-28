@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, RotateCcw, ChevronRight, Save } from 'lucide-react';
 import { PERSONA_TEMPLATE_VARS } from '@/utils/dara/personas';
@@ -9,6 +9,7 @@ import {
   updatePersona,
   deletePersona,
   togglePersonaActive,
+  setPersonaIcon,
   restorePersonaDefaults
 } from './actions';
 
@@ -17,8 +18,15 @@ export interface PersonaItem {
   displayName: string;
   systemPrompt: string;
   isActive: boolean;
+  icon: string | null;
   usedIn: number;
 }
+
+const EMOJI_CHOICES = [
+  '🔬', '⚖️', '📋', '🗂️', '🏢', '🔒',
+  '🎯', '📊', '🛡️', '💼', '🧭', '⚙️',
+  '📁', '🔎', '🧠', '✅', '📐', '💡'
+];
 
 // Deterministic icon + tint per persona (matches the prototype's semantic icons
 // for the built-ins, with a neutral fallback for custom ones).
@@ -54,12 +62,31 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
   const selected = personas.find((p) => p.id === selectedId) ?? null;
   const [name, setName] = useState(selected?.displayName ?? '');
   const [prompt, setPrompt] = useState(selected?.systemPrompt ?? '');
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Load the editor when the selected persona (or its server data) changes.
   useEffect(() => {
     setName(selected?.displayName ?? '');
     setPrompt(selected?.systemPrompt ?? '');
+    setIconPickerOpen(false);
   }, [selectedId, selected?.displayName, selected?.systemPrompt]);
+
+  // Insert a template variable at the textarea's last cursor position.
+  const insertVar = (v: string) => {
+    const el = textareaRef.current;
+    const start = el?.selectionStart ?? prompt.length;
+    const end = el?.selectionEnd ?? prompt.length;
+    const next = prompt.slice(0, start) + v + prompt.slice(end);
+    setPrompt(next);
+    requestAnimationFrame(() => {
+      if (el) {
+        const pos = start + v.length;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      }
+    });
+  };
 
   // Keep selection valid after server refreshes (e.g. delete).
   useEffect(() => {
@@ -122,6 +149,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
         <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
           {personas.map((p) => {
             const ic = iconFor(p.displayName);
+            const emoji = p.icon || ic.emoji;
             const sel = p.id === selectedId;
             return (
               <button
@@ -137,7 +165,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                   className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[8px] text-[16px]"
                   style={{ background: `rgba(${ic.tint},0.15)` }}
                 >
-                  {ic.emoji}
+                  {emoji}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
@@ -195,19 +223,22 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
               </button>
             </div>
 
-            {/* Template variables */}
+            {/* Template variables — click to insert at the cursor */}
             <div className="mt-5 rounded-lg border border-line bg-surf2 px-4 py-3">
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
-                Template vars
+                Template variables
               </div>
               <div className="flex flex-wrap gap-2">
                 {PERSONA_TEMPLATE_VARS.map((v) => (
-                  <code
+                  <button
                     key={v}
-                    className="rounded border border-[#3b6ef0]/20 bg-[#3b6ef0]/10 px-2 py-0.5 font-mono text-[10px] text-[#6f9bf5]"
+                    type="button"
+                    onClick={() => insertVar(v)}
+                    title="Insert at cursor"
+                    className="rounded border border-[#3b6ef0]/20 bg-[#3b6ef0]/10 px-2 py-0.5 font-mono text-[10px] text-[#6f9bf5] transition-colors hover:border-[#3b6ef0]/50 hover:bg-[#3b6ef0]/20"
                   >
                     {v}
-                  </code>
+                  </button>
                 ))}
               </div>
             </div>
@@ -218,6 +249,38 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                 Display name
               </label>
               <div className="flex items-center gap-3">
+                {/* Icon picker */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIconPickerOpen((o) => !o)}
+                    title="Change icon"
+                    aria-label="Change persona icon"
+                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-lg border border-line text-[18px] transition-colors hover:border-[#3b6ef0]"
+                    style={{
+                      background: `rgba(${iconFor(selected.displayName).tint},0.15)`
+                    }}
+                  >
+                    {selected.icon || iconFor(selected.displayName).emoji}
+                  </button>
+                  {iconPickerOpen && (
+                    <div className="absolute left-0 top-[48px] z-20 grid w-[208px] grid-cols-6 gap-1 rounded-lg border border-line bg-surf p-2 shadow-lg">
+                      {EMOJI_CHOICES.map((e) => (
+                        <button
+                          key={e}
+                          type="button"
+                          onClick={() => {
+                            setIconPickerOpen(false);
+                            refreshAfter(() => setPersonaIcon(selected.id, e));
+                          }}
+                          className="flex h-7 w-7 items-center justify-center rounded text-[16px] transition-colors hover:bg-surf2"
+                        >
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -253,6 +316,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                 System prompt template
               </label>
               <textarea
+                ref={textareaRef}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 className="min-h-[200px] flex-1 resize-y rounded-lg border border-line bg-surf2 p-3 font-mono text-[12px] leading-relaxed text-t1 outline-none transition-colors focus:border-[#3b6ef0]"

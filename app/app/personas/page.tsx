@@ -37,6 +37,7 @@ export default async function PersonasPage() {
     displayName: p.displayName,
     systemPrompt: p.systemPrompt,
     isActive: p.isActive,
+    icon: p.icon ?? null,
     usedIn: usedIn.get(p.id.toString()) ?? 0
   }));
 

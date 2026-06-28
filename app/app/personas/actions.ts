@@ -119,6 +119,18 @@ export async function togglePersonaActive(idStr: string) {
   revalidatePath('/app/personas');
 }
 
+export async function setPersonaIcon(idStr: string, icon: string) {
+  const u = await authed();
+  const id = BigInt(idStr);
+  const value = icon.trim().slice(0, 16) || null;
+  await withTenant(u.companyId, async (tx) => {
+    const owned = await tx.persona.findFirst({ where: { id, companyId: u.companyId } });
+    if (!owned) return;
+    await tx.persona.update({ where: { id }, data: { icon: value } });
+  });
+  revalidatePath('/app/personas');
+}
+
 export async function restorePersonaDefaults() {
   const u = await authed();
   const created = await withTenant(u.companyId, (tx) =>

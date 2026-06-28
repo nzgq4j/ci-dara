@@ -176,6 +176,7 @@ model Persona {
   displayName  String   @map("display_name") @db.VarChar(200)
   systemPrompt String   @map("system_prompt")
   isActive     Boolean  @default(true) @map("is_active")
+  icon         String?  @db.VarChar(16)
   sortOrder    Int      @default(0) @map("sort_order")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
