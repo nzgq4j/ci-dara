@@ -42,3 +42,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITLEAKS_LICENSE only required for GitHub *organization* accounts.
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # DARA-015: software bill of materials from the lockfile (Syft reads
+      # pnpm-lock.yaml). Uploaded as a build artifact for supply-chain assurance.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          artifact-name: dara-sbom.cyclonedx.json

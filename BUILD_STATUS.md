@@ -163,9 +163,16 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     future rotations).
 11. **Open security findings** (full detail + status on `/app/security`). Remaining:
     DARA-002 (secrets handling), DARA-017 (migration history). DARA-007 (CUI→LLM)
-    is **Risk accepted** with controls; DARA-015 (CI gates) **in progress**
-    (branch protection + SBOM left). Everything else remediated as of 2026-06-28
-    (incl. DARA-010 admin model).
+    is **Risk accepted** with controls. Everything else remediated as of 2026-06-28
+    (incl. DARA-010 admin model and DARA-015 CI gates — see action item #13 to
+    enforce them via branch protection).
+13. **Enable branch protection on `main` (your action — closes DARA-015 enforcement).**
+    GitHub → repo **Settings → Branches → Add branch ruleset / protection rule** for
+    `main`: **Require status checks to pass** (select the `Security` checks +
+    `CodeQL`), **Require branches up to date**, **Block force pushes**, **Block
+    deletions**. (Solo dev: you can skip "require PR approval" until you have a
+    second reviewer — the status-check + no-force-push controls are the key ones.)
+    Without this, the CI gates run but don't *block* a bad merge.
 12. **Persona active toggle — FIXED (2026-06-28).** Root cause: the toggle only
     persisted when you clicked each persona's *Save*, so an unsaved "off" persona
     still ran. Added a dedicated auto-persisting toggle (`toggleActive`) on
@@ -198,8 +205,8 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   `ssl`; harness-verified), DARA-018 (`redirect_to` validated as a safe relative
   path), DARA-019 (crypto plaintext fallback removed + APP_KEY entropy warning),
   DARA-016 (`package-lock.json` removed + gitignored, pnpm declared). DARA-015
-  **In progress** — CI added (gitleaks secret scan, frozen-lockfile + dependency
-  audit, CodeQL SAST); branch protection + SBOM remain.
+  **Remediated 2026-06-28** — CI gates (gitleaks, frozen-lockfile + dependency
+  audit, CodeQL SAST, CycloneDX SBOM); enforce via branch protection (action #13).
 - **Larger, dedicated passes:** ~~DARA-004 (least-privilege DB role + per-tenant
   RLS)~~, ~~DARA-009 (encrypt CUI at rest)~~, and ~~DARA-013 (append-only audit
   trail)~~ **done 2026-06-28**. **DARA-007 (CUI→LLM): Risk accepted** — decision to

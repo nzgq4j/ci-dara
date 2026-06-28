@@ -105,7 +105,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS policies enforced on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; app-layer companyId scoping retained as defense-in-depth. Remaining: platform-admin via email allow-list (DARA-010).' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
   { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (auth/provisioning, authz + BYOK-key changes, CUI document/evaluation handling, billing). Remaining: fine-grained CRUD + sign-in events, retention policy, and log review/alerting.' },
-  { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; dual lockfiles, no migration history, no CI security gates.' },
+  { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; single pnpm lockfile (frozen in CI); CI security gates in place (secret scan, dependency audit, SAST, SBOM). Remaining: tracked migration history (DARA-017) and enabling branch protection on main.' },
   { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth; committed DB credential remediated (moved to env, rotated, purged from history); MFA posture Unverified.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
   { family: 'Maintenance', code: 'MA', status: 'Undetermined', note: 'No maintenance procedure evidenced in the repository.' },
@@ -117,7 +117,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP; DB TLS enforced (DARA-014); CUI encrypted at rest (DARA-009). CUI→LLM egress: commercial endpoints retained with compensating controls — boundary notices, BYOK option, per-run audit (DARA-007, risk accepted); zero-data-retention agreements on platform keys pursued offline.' },
   { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Next.js patched to 14.2.35; LLM input now fenced; React output escaping sound; remaining dev-only transitive advisories + no automated dependency scanning.' },
   { family: 'Planning', code: 'PL', status: 'Not implemented', note: 'No System Security Plan (SSP) evidenced.' },
-  { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Lockfiles present; no SBOM, dependency scanning, or provenance controls.' }
+  { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Frozen pnpm lockfile, high-severity dependency audit, and a CycloneDX SBOM generated in CI. Remaining: artifact provenance/signing.' }
 ];
 
 export const FINDINGS: Finding[] = [
@@ -295,13 +295,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-015',
     title: 'No CI/CD security gates',
     severity: 'Moderate',
-    status: 'In progress',
+    status: 'Remediated',
     component: '.github/workflows/',
-    evidence: 'CI gates added: gitleaks secret scanning (full history), pnpm frozen-lockfile + high-severity dependency audit, and CodeQL SAST (security-and-quality) on push/PR to main.',
-    impact: 'Issues like DARA-001 (committed secret) and DARA-016 (lockfile drift) are now caught automatically on every push/PR.',
-    remediation: 'Done: secret scan, dependency audit, SAST, frozen-lockfile gate. Remaining: branch protection (repo setting) and SBOM generation.',
+    evidence: 'CI gates on push/PR to main: gitleaks secret scanning (full history), pnpm frozen-lockfile install + high-severity dependency audit, CodeQL SAST (security-and-quality), and a CycloneDX SBOM (Syft) uploaded as a build artifact.',
+    impact: 'Issues like DARA-001 (committed secret) and DARA-016 (lockfile drift) are caught automatically; a supply-chain SBOM is produced each run.',
+    remediation: 'Completed: secret scan, dependency audit, SAST, frozen-lockfile gate, SBOM. Enforcement requires enabling branch protection on main (require these status checks + block force-push/deletion) — a one-time repo setting documented in BUILD_STATUS §4.',
     mapping: 'NIST CA-7, RA-5, SR-3 · OWASP A05',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-016',
