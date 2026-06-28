@@ -102,7 +102,7 @@ export const FRAMEWORKS: Framework[] = [
 ];
 
 export const CONTROL_POSTURE: ControlPosture[] = [
-  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Consistent app-layer tenant scoping by companyId; RLS now enabled on all tenant tables and anon/authenticated REST access revoked; per-tenant policies + least-privilege role still pending; platform-admin via email allow-list.' },
+  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS policies enforced on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; app-layer companyId scoping retained as defense-in-depth. Remaining: platform-admin via email allow-list (DARA-010).' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
   { family: 'Audit & Accountability', code: 'AU', status: 'Not implemented', note: 'No database audit logging; most mutations record no actor.' },
   { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; dual lockfiles, no migration history, no CI security gates.' },
@@ -151,25 +151,25 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-003',
     title: 'No Row-Level Security on application (tenant) tables',
     severity: 'High',
-    status: 'In progress',
+    status: 'Remediated',
     component: 'Postgres schema (dara_* tables)',
-    evidence: 'RLS is now ENABLED on all 11 dara_* tables as a deny-by-default backstop (verified 11/11). Per-tenant policies keyed on company_id are still pending and depend on the least-privilege role work (DARA-004).',
-    impact: 'Untrusted roles are now denied at the database; full per-tenant DB enforcement arrives with DARA-004. App-layer companyId scoping remains the active per-tenant control until then.',
-    remediation: 'Done: RLS enabled. Remaining: add per-tenant policies (company_id GUC set per request) once the app runs under a non-BYPASSRLS role.',
+    evidence: 'Per-tenant RLS policies are deployed on all 11 dara_* tables, keyed on company_id (id for dara_companies) against a per-request app.company_id GUC set inside each transaction via withTenant(). Verified by a two-tenant isolation harness (14/14: cross-tenant read/update/delete/insert all blocked, unscoped queries fail-closed to zero rows) and live in production.',
+    impact: 'Resolved. The database enforces tenant isolation independently of application code; a missing scope returns zero rows rather than another tenant’s data. App-layer companyId scoping is retained as defense-in-depth.',
+    remediation: 'Completed: per-tenant policies deployed (prisma/security/2026-06-27_dara004_rls_policies.sql) and the app runs under the non-BYPASSRLS dara_app role (closed together with DARA-004).',
     mapping: 'NIST AC-3, AC-4, SC-2 · OWASP API1 (BOLA)',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-004',
     title: 'Application connects with an RLS-bypassing database role',
     severity: 'High',
-    status: 'Open',
-    component: 'utils/prisma.ts:17 · connection string',
-    evidence: 'Runtime connects as the Supabase project-owner role (BYPASSRLS), which nullifies any RLS even if added.',
-    impact: 'Defense-in-depth from RLS cannot take effect; leaked credentials grant unrestricted access.',
-    remediation: 'Create a dedicated non-superuser application role with DML-only grants on dara_* tables; reserve the owner role for migrations.',
-    mapping: 'NIST AC-6, AC-3 · OWASP API8',
-    window: 'Short-term (8–30 days)'
+    status: 'Remediated',
+    component: 'utils/prisma.ts · withTenant / prismaTenant / prismaAdmin',
+    evidence: 'Runtime now connects as the least-privilege dara_app role (NOT BYPASSRLS, DML-only on dara_*) through withTenant(), which sets the per-request app.company_id GUC. The three audited cross-tenant paths (provisioning, Stripe webhook, platform admin) use a separate dara_admin role; the owner role is reserved for migrations only. Production hard-fails if the role connection strings are missing (no silent owner fallback).',
+    impact: 'Resolved. RLS is now effective; a leaked application credential is confined by RLS and cannot alter schema. Verified in production and by the two-tenant isolation harness.',
+    remediation: 'Completed: three-role least-privilege model deployed (prisma/security/2026-06-27_dara004_rls_policies.sql; see DARA-004-handoff.md).',
+    mapping: 'NIST AC-6, AC-3, AC-5 · OWASP API8',
+    window: 'Closed'
   },
   {
     id: 'DARA-005',

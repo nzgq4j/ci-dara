@@ -104,8 +104,17 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     Referrer-Policy, Permissions-Policy) via `next.config.js`.
   - **DARA-012** — server-side upload validation (allow-list, 20 MB cap,
     magic-byte checks, server-derived content type) in `utils/dara/documents.ts`.
+  - **DARA-004 + DARA-003 (Remediated 2026-06-28)** — database-enforced per-tenant
+    isolation. Three-role least-privilege model (`dara_app` non-BYPASSRLS runtime,
+    `dara_admin` cross-tenant, `postgres` migrations-only) + per-tenant RLS policies on
+    all 11 `dara_*` tables; app refactored to `withTenant()` (per-request `app.company_id`
+    GUC), cross-tenant paths on `prismaAdmin`; production hard-fails if the role URLs are
+    missing. Verified by `dara004-isolation-test.ts` (14/14) and live in production.
+    Artifacts: `prisma/security/2026-06-27_dara004_rls_policies.sql`,
+    `DARA-004-{scope,status,handoff}.md`. (Two cutover outages from a bad prod env value
+    — host `base` — caught and rolled back; fixed by sourcing prod/preview vars from the
+    verified `.env.local`.)
 - **Partial / in progress:**
-  - **DARA-003** — RLS now enabled (backstop); per-tenant policies pending (→ DARA-004).
   - **DARA-006** — Next.js `14.2.3 → 14.2.35` (clears CVE-2025-29927 + 14.2.x advisories).
   - **DARA-008** — LLM prompt-injection hardening: untrusted doc/sol text wrapped
     in randomized fences + "treat as data, not instructions" guard (`prompt.ts`).
@@ -153,9 +162,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     remove them or wire the app to the integration's pooled URL (more robust for
     future rotations).
 11. **Open security findings** (full detail + status on `/app/security`). Highest
-    remaining: DARA-004 (least-privilege role + per-tenant RLS), DARA-009 (encrypt
-    CUI `extracted_text` at rest), DARA-013 (DB audit logging), DARA-007 (CUI→LLM
-    boundary/retention), DARA-002 (secrets handling), DARA-010 (admin model).
+    remaining: DARA-009 (encrypt CUI `extracted_text` at rest), DARA-013 (DB audit
+    logging), DARA-007 (CUI→LLM boundary/retention), DARA-002 (secrets handling),
+    DARA-010 (admin model). (DARA-003 + DARA-004 remediated 2026-06-28.)
 
 ---
 
@@ -181,10 +190,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   (validate `redirect_to` in `auth/callback`), DARA-019 (drop crypto plaintext
   fallback), DARA-016 (remove stale `package-lock.json`), DARA-015 (CI
   secret-scanning + dependency-audit gates).
-- **Larger, dedicated passes:** DARA-004 (least-privilege DB role + per-tenant
-  RLS policies via a per-request `company_id` GUC + Prisma transactions),
-  DARA-009 (encrypt CUI at rest), DARA-013 (DB audit logging), DARA-007 (CUI→LLM
-  data-boundary / zero-retention decision).
+- **Larger, dedicated passes:** ~~DARA-004 (least-privilege DB role + per-tenant
+  RLS policies)~~ **done 2026-06-28**; DARA-009 (encrypt CUI at rest), DARA-013 (DB
+  audit logging), DARA-007 (CUI→LLM data-boundary / zero-retention decision).
 
 ---
 

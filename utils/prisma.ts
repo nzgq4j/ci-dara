@@ -29,16 +29,22 @@ declare global {
 
 // Constructing an adapter does not open a connection (pg connects lazily on the
 // first query), so referencing possibly-undefined URLs here is safe at build.
-// Transitional fallback to DATABASE_URL keeps the app from hard-failing if it is
-// deployed before DATABASE_URL_APP / DATABASE_URL_ADMIN are set in the
-// environment; it is logged so the misconfiguration is not silent. Remove the
-// fallback once the new roles are provisioned (see the rotation runbook).
-function connString(primary: string | undefined, role: string): string {
+// DARA-004: in production a missing tenant/admin URL must fail LOUDLY rather than
+// silently fall back to the owner connection (which bypasses RLS) — that footgun
+// would quietly disable tenant isolation. In development we still fall back to
+// DATABASE_URL (with a warning) for convenience.
+function connString(primary: string | undefined, varName: string): string {
   if (primary) return primary;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `${varName} is required in production (DARA-004 least-privilege RLS roles). ` +
+        `Refusing to fall back to the owner connection, which would bypass RLS.`
+    );
+  }
   if (process.env.DATABASE_URL) {
     console.warn(
-      `[prisma] ${role} connection string is unset; falling back to DATABASE_URL ` +
-        `(owner role — RLS NOT enforced). Set it before relying on tenant isolation.`
+      `[prisma] ${varName} is unset; falling back to DATABASE_URL ` +
+        `(owner role — RLS NOT enforced). Development only.`
     );
     return process.env.DATABASE_URL;
   }
