@@ -223,13 +223,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-009',
     title: 'CUI extracted text stored in plaintext at rest',
     severity: 'High',
-    status: 'Open',
+    status: 'Remediated',
     component: 'dara_sol_documents / dara_response_files',
-    evidence: 'extracted_text columns persist full proposal/solicitation content in plaintext.',
-    impact: 'CUI is readable to anyone with database access; increases the impact of DARA-001/003/004/005.',
-    remediation: 'Encrypt extracted text at the application layer (as with BYOK keys) or rely on verified storage encryption plus strict access control.',
+    evidence: 'extracted_text is encrypted at the application layer (AES-256-GCM, same envelope as BYOK keys): encrypted on write (documents.ts) and decrypted at point of use in the evaluator (decryptField). Existing rows were backfill-encrypted (0 plaintext remaining) and a live production evaluation confirmed correct end-to-end decryption.',
+    impact: 'Resolved. Proposal/solicitation CUI is no longer readable from the database without APP_KEY.',
+    remediation: 'Completed: app-layer encryption + idempotent backfill (prisma/security/backfill-dara009-encrypt-extracted-text.ts). Future: rotate APP_KEY with re-encryption tooling.',
     mapping: 'NIST SC-28, MP-4',
-    window: 'Mid-term (31–90 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-010',

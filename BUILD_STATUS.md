@@ -162,9 +162,15 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     remove them or wire the app to the integration's pooled URL (more robust for
     future rotations).
 11. **Open security findings** (full detail + status on `/app/security`). Highest
-    remaining: DARA-009 (encrypt CUI `extracted_text` at rest), DARA-013 (DB audit
-    logging), DARA-007 (CUI→LLM boundary/retention), DARA-002 (secrets handling),
-    DARA-010 (admin model). (DARA-003 + DARA-004 remediated 2026-06-28.)
+    remaining: DARA-013 (DB audit logging), DARA-007 (CUI→LLM boundary/retention),
+    DARA-002 (secrets handling), DARA-010 (admin model). (DARA-003, DARA-004,
+    DARA-009, and the DARA-014/016/018/019 quick wins remediated 2026-06-28;
+    DARA-015 CI gates in progress.)
+12. **Evaluation ignores the persona active toggle (functional bug, not security).**
+    A production run scored against personas that were toggled off; "Run evaluation"
+    should use only `isActive: true` personas (and/or the matrix shows stale results
+    from prior runs). Investigate `runEvaluations` in `app/app/solicitations/[id]/page.tsx`
+    and the matrix/results rendering. Logged 2026-06-28.
 
 ---
 
@@ -193,8 +199,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   **In progress** — CI added (gitleaks secret scan, frozen-lockfile + dependency
   audit, CodeQL SAST); branch protection + SBOM remain.
 - **Larger, dedicated passes:** ~~DARA-004 (least-privilege DB role + per-tenant
-  RLS policies)~~ **done 2026-06-28**; DARA-009 (encrypt CUI at rest), DARA-013 (DB
-  audit logging), DARA-007 (CUI→LLM data-boundary / zero-retention decision).
+  RLS policies)~~ and ~~DARA-009 (encrypt CUI at rest)~~ **done 2026-06-28**;
+  remaining: DARA-013 (DB audit logging), DARA-007 (CUI→LLM data-boundary /
+  zero-retention decision).
 
 ---
 
