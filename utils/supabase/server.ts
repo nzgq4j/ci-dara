@@ -5,7 +5,11 @@ import { Database } from '@/types_db';
 
 // Define a function to create a Supabase client for server-side operations
 // The function takes a cookie store created with next/headers cookies as an argument
-export const createClient = (): SupabaseClient<Database> => {
+// opts.sessionOnly (DARA "remember me" off) drops cookie maxAge/expires so auth
+// cookies become session cookies that clear when the browser closes.
+export const createClient = (opts?: {
+  sessionOnly?: boolean;
+}): SupabaseClient<Database> => {
   const cookieStore = cookies();
 
   return createServerClient<Database>(
@@ -23,7 +27,10 @@ export const createClient = (): SupabaseClient<Database> => {
         // The set method is used to set a cookie with a given name, value, and options
         set(name: string, value: string, options: CookieOptions) {
           try {
-            cookieStore.set({ name, value, ...options });
+            const o = opts?.sessionOnly
+              ? { ...options, maxAge: undefined, expires: undefined }
+              : options;
+            cookieStore.set({ name, value, ...o });
           } catch (error) {
             // If the set method is called from a Server Component, an error may occur
             // This can be ignored if there is middleware refreshing user sessions

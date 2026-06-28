@@ -136,9 +136,24 @@ export async function signInWithPassword(formData: FormData) {
   const cookieStore = cookies();
   const email = String(formData.get('email')).trim();
   const password = String(formData.get('password')).trim();
+  const remember = formData.get('remember') === 'on';
   let redirectPath: string;
 
-  const supabase = createClient();
+  // "Remember me": when off, mark the session session-only so it clears on browser
+  // close — set the flag BEFORE sign-in and create the client in session-only mode
+  // so the auth cookies it writes are session-scoped immediately. The middleware
+  // reads this flag to keep refreshed cookies session-scoped too.
+  if (remember) {
+    cookieStore.set('dara-remember', 'true', {
+      path: '/',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365
+    });
+  } else {
+    cookieStore.set('dara-remember', 'false', { path: '/', sameSite: 'lax' });
+  }
+
+  const supabase = createClient({ sessionOnly: !remember });
   const { error, data } = await supabase.auth.signInWithPassword({
     email,
     password

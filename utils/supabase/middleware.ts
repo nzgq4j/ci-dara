@@ -18,11 +18,16 @@ export const createClient = (request: NextRequest) => {
           return request.cookies.get(name)?.value;
         },
         set(name: string, value: string, options: CookieOptions) {
+          // DARA "remember me" off → keep refreshed auth cookies session-scoped.
+          const o =
+            request.cookies.get('dara-remember')?.value === 'false'
+              ? { ...options, maxAge: undefined, expires: undefined }
+              : options;
           // If the cookie is updated, update the cookies for the request and response
           request.cookies.set({
             name,
             value,
-            ...options
+            ...o
           });
           response = NextResponse.next({
             request: {
@@ -32,7 +37,7 @@ export const createClient = (request: NextRequest) => {
           response.cookies.set({
             name,
             value,
-            ...options
+            ...o
           });
         },
         remove(name: string, options: CookieOptions) {
