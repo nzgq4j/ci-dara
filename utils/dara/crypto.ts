@@ -46,6 +46,23 @@ export function decryptSecret(payload: string | null | undefined): string {
   }
 }
 
+// ── Field-level encryption for CUI at rest (DARA-009) ──────────────────────────
+// Same AES-256-GCM "v1:" envelope, used for document extracted_text. Unlike
+// decryptSecret, decryptField TOLERATES legacy plaintext so rows written before
+// DARA-009 keep working until the one-time backfill
+// (prisma/security/backfill-dara009-encrypt-extracted-text.ts) encrypts them.
+
+export function encryptField(plain: string | null | undefined): string {
+  if (!plain) return '';
+  return encryptSecret(plain);
+}
+
+export function decryptField(payload: string | null | undefined): string {
+  if (!payload) return '';
+  if (!payload.startsWith('v1:')) return payload; // legacy plaintext (pre-DARA-009)
+  return decryptSecret(payload);
+}
+
 /** A short, non-reversible hint for display (last 4 chars), or '' if empty. */
 export function secretHint(payload: string | null | undefined): string {
   const plain = decryptSecret(payload);

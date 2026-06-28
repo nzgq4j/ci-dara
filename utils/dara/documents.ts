@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { encryptField } from '@/utils/dara/crypto';
 
 // Document storage + text extraction for evaluation inputs.
 // Files are stored in a private Supabase Storage bucket; text is extracted
@@ -117,12 +118,15 @@ export async function uploadAndExtract(
   if (error) throw new Error(`Upload failed: ${error.message}`);
 
   const text = await extractText(file.name, buffer);
+  // Status reflects whether text was extracted (from plaintext); the stored value
+  // is encrypted at rest (DARA-009). The evaluator decrypts it via decryptField.
+  const extractionStatus = text.trim() !== '' ? 'complete' : 'failed';
   return {
     originalFilename: file.name,
     storedFilename,
     fileSize: buffer.length,
-    extractedText: text,
-    extractionStatus: text.trim() !== '' ? 'complete' : 'failed'
+    extractedText: encryptField(text),
+    extractionStatus
   };
 }
 

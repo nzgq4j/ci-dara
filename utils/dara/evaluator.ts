@@ -1,4 +1,5 @@
 import { withTenant } from '@/utils/prisma';
+import { decryptField } from '@/utils/dara/crypto';
 import { buildSystemPrompt, buildUserPrompt, parseResult } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 
@@ -17,8 +18,11 @@ interface DocFile {
 
 function concatDocs(files: DocFile[]): string {
   return files
-    .filter((f) => f.extractionStatus === 'complete' && (f.extractedText ?? '').trim() !== '')
-    .map((f) => `=== ${f.originalFilename} ===\n\n${f.extractedText}`)
+    .filter((f) => f.extractionStatus === 'complete')
+    // Decrypt CUI at the point of use (DARA-009); tolerate legacy plaintext rows.
+    .map((f) => ({ name: f.originalFilename, text: decryptField(f.extractedText) }))
+    .filter((d) => d.text.trim() !== '')
+    .map((d) => `=== ${d.name} ===\n\n${d.text}`)
     .join('\n\n');
 }
 
