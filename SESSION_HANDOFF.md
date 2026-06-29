@@ -10,9 +10,9 @@ This is the "start here tomorrow" doc. Authoritative status lives in
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `78953dd` (Team UI rebuilt to the prototype)
-  is **deployed to prod and pushed to GitHub**. (Prior: `b5048d8` DARA-002, `287e5af`
-  DARA-017, `c7a7a5f` Teams feature.)
+- **Branch:** `main`, clean. Last commit `2c6519a` (solicitation department access)
+  is **deployed to prod and pushed to GitHub**. (Prior this session: `b5048d8`
+  DARA-002, `287e5af` DARA-017, `c7a7a5f` Teams feature, `78953dd` Team UI rebuild.)
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -36,6 +36,13 @@ This is the "start here tomorrow" doc. Authoritative status lives in
   chips + unified users table + modals. Single-department-per-user in the UI (schema
   stays multi-capable). "Last Active" reads "Never" until each user's next sign-in
   (`lastLoginAt` only starts recording from this deploy).
+- **Solicitation visibility is now department-scoped** (`2c6519a`). Admins see all;
+  the creator always sees their own; everyone else only sees solicitations assigned to
+  a department they belong to (unassigned ⇒ admins + creator). Enforced **app-layer**
+  (`utils/dara/sol-access.ts`) — the detail gate `requireViewableSolicitation` covers
+  the page + every mutation; list/dashboard scoped to match; company RLS is the DB
+  backstop (DB-level department RLS deferred). **Existing solicitations have no
+  departments**, so non-admin/non-creator users can't see them until assigned.
 - The stray nested **`ci-dara/`** directory has been **deleted** (resolved
   2026-06-29) — working tree is clean.
 - `vercel deploy --prod --yes` is the working deploy command this session (despite a
@@ -91,6 +98,21 @@ invited users to the existing company/team on first sign-in (was: new company pe
 signup). New tables `dara_teams` / `dara_team_members` / `dara_invitations` under the
 DARA-004 RLS model; first migration via the DARA-017 workflow. Member management
 moved out of Settings. Dependency: Supabase Auth Site URL (#1) for invite emails.
+Team UI later rebuilt to the prototype (`78953dd`); `lastLoginAt` wired on sign-in.
+
+### Solicitation department access — ✅ DONE 2026-06-29 (commit `2c6519a`, deployed)
+Solicitations assignable to **multiple departments** (`dara_solicitation_departments`,
+migration `20260629230000` + RLS). **Visibility rules** (chosen): `company_admin` sees
+all; the **creator** always sees their own; everyone else sees a solicitation only if
+it's assigned to a department they belong to; unassigned ⇒ admins + creator only.
+**Who assigns:** admins + creator. **Enforcement:** app-layer (`utils/dara/sol-access.ts`)
+— list/dashboard queries filtered; the detail gate `requireViewableSolicitation` covers
+the page AND every mutation (so a non-viewer can't act via a direct server-action call),
+and child data (docs/criteria/offerors/evaluations) is covered transitively. Company-level
+RLS stays the DB backstop; **DB-level department RLS deferred** as hardening. Assign via
+checkboxes on create and a Departments card in the detail Overview; list shows dept chips.
+**Migration-onset behavior:** existing solicitations have no departments → non-admin/
+non-creator users lose visibility to them until an admin/creator assigns departments.
 
 ### D. Feature backlog (security-adjacent — build when ready)
 1. **Per-company admin audit-log viewer** — the **Team** page now exists, so this has

@@ -40,6 +40,10 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 | **Tenant isolation (DB)** | Revoke `anon`/`authenticated` on `dara_*` + enable RLS as a deny-by-default backstop; app keeps connecting as the `postgres` owner (BYPASSRLS) | Closed the confirmed anon-key REST exposure with zero app risk. Full per-tenant RLS policies + a least-privilege role (DARA-004) deferred — they require a per-request `company_id` GUC and Prisma transaction refactor. |
 | **In-app Security page** | `/app/security`, themed; standards + control posture visible to all signed-in users, **detailed findings gated to platform admins** | Keeps reports visible (per request) without publishing exploit detail; severity cards count open findings + a remediated tally. |
 | **Deploy workflow** | Manual `vercel --prod` after push | GitHub→Vercel auto-deploy stopped firing (last git-triggered build `4512262`); manual deploys are the interim path until the Git integration is reconnected. |
+| **Schema migrations** | Tracked Prisma migrations (`migrate dev`/`deploy`), **not** `db push`. Owner-only security DDL (RLS/grants/roles/audit) stays in `prisma/security/*.sql` via `apply-sql.ts` | DARA-017 baseline. Two-layer source of truth: Prisma migrations = table structure; owner-SQL = RLS/grants Prisma can't model. New `dara_*` tables are fail-closed for the runtime roles until granted, so each migration ships with a paired RLS file. No local DB, so new migrations are generated offline via `migrate diff` (committed schema → edited schema) and applied with `migrate deploy`. |
+| **Teams / departments model** | `Team` (`dara_teams`) per company; `TeamMember` join with a per-team `UserRole`; `Invitation` (`dara_invitations`) email-invite with `pending/accepted/revoked/expired` | `DaraUser.role` stays the **company-level** role (the `company_admin` gate); per-team role lives on `TeamMember`. The Team UI presents one department per user (single-select); schema stays multi-capable. |
+| **Invitations / join flow** | `provisionNewUser` matches a pending invite by email and attaches the user to that company + team with the invited role on first sign-in; else creates a new company (prior behavior) | Previously every signup made a one-person company — there was no way to join an existing one. Invite emails are Supabase-sent; the invite **row** is the source of truth, so joining works via sign-in even if email isn't configured. |
+| **Solicitation visibility** | Solicitations assignable to **multiple departments** (`dara_solicitation_departments`). Rules: `company_admin` sees all; **creator** always sees own; others see only via an assigned department; unassigned ⇒ admins + creator only | Department-scoped authorization within a tenant. **Enforced app-layer** (`utils/dara/sol-access.ts`): list/dashboard queries filtered; the detail gate (`requireViewableSolicitation`) covers the page + every mutation, so child data (docs/criteria/offerors/evaluations) is covered transitively. Company-level RLS remains the DB backstop; DB-level department RLS is a deferred hardening. Assign rights: admins + creator. |
 
 ---
 
@@ -64,6 +68,10 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 
 ### Features
 - **Solicitations**: list, create, detail with full CRUD on criteria & offerors.
+  **Department-scoped access**: assignable to multiple departments (create form +
+  detail Overview "Departments" card); visibility per the access rules (admins all,
+  creator own, others via assigned department). Enforced app-layer in
+  `utils/dara/sol-access.ts` + the detail gate; list/dashboard scoped to match.
 - **Personas** (`/app/personas`): 5 built-ins auto-seeded; full CRUD + active toggle.
 - **Evaluation pipeline** (`utils/dara/`): prompt builder, providers
   (Anthropic/OpenAI/Google + platform/BYOK resolution), evaluator, document
@@ -276,7 +284,8 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 ## 6. Key paths
 
 - Engine: `utils/dara/{prompt,providers,evaluator,documents,personas,billing,crypto,admin,provision,teams}.ts`
-- Teams: `app/app/team/page.tsx`, `utils/dara/teams.ts` (invite email), invite-accept in `utils/dara/provision.ts`; RLS `prisma/security/2026-06-29_teams_rls.sql`
+- Teams: `app/app/team/{page.tsx,TeamView.tsx,actions.ts}`, `utils/dara/teams.ts` (invite email), invite-accept + `touchLastLogin` in `utils/dara/provision.ts`; RLS `prisma/security/2026-06-29_teams_rls.sql`
+- Solicitation access: `utils/dara/sol-access.ts` (rules + `requireViewableSolicitation` gate in the detail page); RLS `prisma/security/2026-06-29_solicitation_departments_rls.sql`; join table `dara_solicitation_departments`
 - App shell: `app/app/layout.tsx`, `components/layout/{Sidebar,ChromeGate}.tsx`
 - Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin,team}/…`
 - Webhook: `app/api/webhooks/route.ts`
@@ -331,6 +340,14 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   "Last Active" is real — existing users read "Never" until their next sign-in.
 - **Email "from" line** is Supabase config, not code — to brand it, configure Custom
   SMTP sender name/email (see action #1).
+- **Solicitation department access shipped** (commit `2c6519a`, deployed). New join
+  table `dara_solicitation_departments` (migration `20260629230000` + RLS, verified).
+  Department-scoped visibility (admins all / creator own / others via assigned dept)
+  enforced app-layer (`utils/dara/sol-access.ts`) with the detail gate covering the
+  page + all mutations + child data; list/dashboard scoped to match. Assign on create
+  and in the detail Overview (admins + creator). **Behavior change on deploy:** existing
+  solicitations have no departments, so non-admin/non-creator users stop seeing them
+  until an admin/creator assigns departments.
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —
