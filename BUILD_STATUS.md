@@ -136,12 +136,20 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 
 ## 4. Known gaps / action items
 
-1. **Supabase Auth URL config (your action, dashboard).** Set Site URL =
-   `https://dara.crucibleinsight.com` and add redirect URLs
-   `https://dara.crucibleinsight.com/**`, `http://localhost:3000/**`. Until then,
-   confirmation/magic-link emails — **and the new Team invite emails** — point at
-   `localhost`. (Invitations still work without this: an invited person who signs in
-   is attached to the company/team correctly; only the convenience email link breaks.)
+1. **Supabase Auth email config (your action, dashboard).** Two settings, both in
+   the Supabase dashboard, both affecting auth emails (confirmation/magic-link **and
+   Team invite emails**):
+   - **URL config:** Set Site URL = `https://dara.crucibleinsight.com` and add
+     redirect URLs `https://dara.crucibleinsight.com/**`, `http://localhost:3000/**`.
+     Until then the email links point at `localhost`. (Invitations still work without
+     this — an invited person who signs in is attached correctly; only the convenience
+     link breaks.)
+   - **Sender "from" line:** the from name/address is **not** in our code — it's
+     Supabase email config. The built-in service's sender is fixed; to brand it (e.g.
+     `DARA <no-reply@crucibleinsight.com>`) enable **Custom SMTP** under
+     Authentication → Emails → SMTP Settings and set **Sender name** + **Sender email**
+     (verified domain on your SMTP provider). `supabase/config.toml` only affects the
+     local dev stack, not prod.
 2. **Stripe webhook endpoint** — confirm the URL has **no trailing dot** and add
    `customer.subscription.updated` to the subscribed events (created/deleted are
    there; updated is needed for plan changes/renewals). Activate the **Customer
@@ -315,6 +323,14 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   the DARA-017 workflow (`20260629210000_teams_and_invitations`) + per-tenant RLS for
   the 3 new tables (verified: 6 policies + grants). Member management moved out of
   Settings. **Open dependency:** Supabase Auth Site URL (#1) for invite emails.
+- **Team page rebuilt to the prototype design** (commit `78953dd`, deployed). Server
+  page + client `TeamView` + typed `actions.ts`: header `+ Invite User`, DEPARTMENTS
+  filter chips, unified users table (avatar · color-coded role badge · department ·
+  last active · kebab menu), invite/new-department modals. Adopted single-department-
+  per-user in the UI. Wired `lastLoginAt` (`touchLastLogin` on both sign-in paths) so
+  "Last Active" is real — existing users read "Never" until their next sign-in.
+- **Email "from" line** is Supabase config, not code — to brand it, configure Custom
+  SMTP sender name/email (see action #1).
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —

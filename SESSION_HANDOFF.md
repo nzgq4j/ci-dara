@@ -10,8 +10,9 @@ This is the "start here tomorrow" doc. Authoritative status lives in
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `c7a7a5f` (Teams feature) is **deployed to
-  prod and pushed to GitHub**. (Prior: `b5048d8` DARA-002, `287e5af` DARA-017.)
+- **Branch:** `main`, clean. Last commit `78953dd` (Team UI rebuilt to the prototype)
+  is **deployed to prod and pushed to GitHub**. (Prior: `b5048d8` DARA-002, `287e5af`
+  DARA-017, `c7a7a5f` Teams feature.)
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -28,7 +29,13 @@ This is the "start here tomorrow" doc. Authoritative status lives in
   RLS/grants for new `dara_*` tables via `apply-sql.ts`. New tables are fail-closed
   for the runtime roles until granted — don't forget the RLS step.
 - **Team invite emails** need the Supabase Auth Site URL set (#1) to resolve in prod;
-  invitations still function via sign-in without it.
+  invitations still function via sign-in without it. The invite email **"from" line**
+  (sender name/address) is Supabase config, not code — brand it via Custom SMTP
+  (Authentication → Emails → SMTP Settings; see BUILD_STATUS #1).
+- **Team page UI was rebuilt to the prototype** (`78953dd`): departments-as-filter-
+  chips + unified users table + modals. Single-department-per-user in the UI (schema
+  stays multi-capable). "Last Active" reads "Never" until each user's next sign-in
+  (`lastLoginAt` only starts recording from this deploy).
 - The stray nested **`ci-dara/`** directory has been **deleted** (resolved
   2026-06-29) — working tree is clean.
 - `vercel deploy --prod --yes` is the working deploy command this session (despite a
