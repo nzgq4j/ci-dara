@@ -10,8 +10,8 @@ This is the "start here tomorrow" doc. Authoritative status lives in
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `668b406` (SSP page + control-posture
-  refresh) is **deployed to prod and pushed to GitHub** (CI running).
+- **Branch:** `main`, clean. Last commit `c7a7a5f` (Teams feature) is **deployed to
+  prod and pushed to GitHub**. (Prior: `b5048d8` DARA-002, `287e5af` DARA-017.)
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -22,6 +22,13 @@ This is the "start here tomorrow" doc. Authoritative status lives in
   (`/app/security/plan`) and the POA&M renders from the findings register.
 
 ### Watch-outs (don't trip on these)
+- **Teams feature is live** (`/app/team`). Schema changes now ship as real Prisma
+  migrations via the DARA-017 workflow: edit `schema.prisma` → generate the migration
+  (offline diff is fine; no local DB) → `prisma migrate deploy` (owner) → apply any
+  RLS/grants for new `dara_*` tables via `apply-sql.ts`. New tables are fail-closed
+  for the runtime roles until granted — don't forget the RLS step.
+- **Team invite emails** need the Supabase Auth Site URL set (#1) to resolve in prod;
+  invitations still function via sign-in without it.
 - The stray nested **`ci-dara/`** directory has been **deleted** (resolved
   2026-06-29) — working tree is clean.
 - `vercel deploy --prod --yes` is the working deploy command this session (despite a
@@ -69,11 +76,21 @@ security DDL stays in `prisma/security/*.sql` via `apply-sql.ts`. Two-layer mode
 manifest + DR rebuild order documented in `prisma/security/DARA-017-migrations.md`
 and `prisma/migrations/README.md`.
 
+### Teams — ✅ DONE 2026-06-29 (commit `c7a7a5f`, deployed)
+Departments/sub-teams with per-team roles + email invitations. New `/app/team`
+(company-admin gated): create teams, invite by email/role/team, manage company
+members (org-wide role + active) and per-team membership. `provisionNewUser` attaches
+invited users to the existing company/team on first sign-in (was: new company per
+signup). New tables `dara_teams` / `dara_team_members` / `dara_invitations` under the
+DARA-004 RLS model; first migration via the DARA-017 workflow. Member management
+moved out of Settings. Dependency: Supabase Auth Site URL (#1) for invite emails.
+
 ### D. Feature backlog (security-adjacent — build when ready)
-1. **Per-company admin audit-log viewer** under the (future) **Team** tab.
-   `dara_audit_log` is already per-company; build a **read-only**, company-admin-gated
-   viewer (filter by actor/action/date, export). Closes the AU "log review" gap.
-   Reuse `prismaAdmin` reads scoped by `companyId`; gate on `UserRole = company_admin`.
+1. **Per-company admin audit-log viewer** — the **Team** page now exists, so this has
+   a home (add a read-only section/tab there). `dara_audit_log` is already per-company;
+   build a **read-only**, company-admin-gated viewer (filter by actor/action/date,
+   export). Closes the AU "log review" gap. Reuse `prismaAdmin` reads scoped by
+   `companyId`; gate on `UserRole = company_admin`.
 2. **AI codebase security-audit** (back-office, platform-admin only). Automated
    NIST-800-171 / best-practice vulnerability review of the codebase using the
    **platform Anthropic key**, producing a findings report that feeds the register.

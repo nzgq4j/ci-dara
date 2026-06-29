@@ -69,8 +69,16 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   (Anthropic/OpenAI/Google + platform/BYOK resolution), evaluator, document
   upload + extraction (unpdf/mammoth), per-offeror **Run evaluation**
   (synchronous, `maxDuration=300`), results view.
-- **Settings** (`/app/settings`, company admin): AI config + encrypted BYOK keys
-  + company user management.
+- **Settings** (`/app/settings`, company admin): AI config + encrypted BYOK keys.
+  (Member/team management moved to the Team page; Settings links to it.)
+- **Team** (`/app/team`, company admin): departments/sub-teams with per-team roles.
+  Create teams; **invite members by email** (role + optional team) — a pending
+  `dara_invitations` row + a Supabase invite email; the invitee is attached to the
+  company + team with the invited role on first sign-in (provisionNewUser), instead
+  of creating a new one-person company. Also manages company-level members (org-wide
+  role + active, with a self-lockout guard) and per-team membership (add existing,
+  change role, remove). All actions audited. New tables `dara_teams` /
+  `dara_team_members` / `dara_invitations` under the DARA-004 RLS model.
 - **Admin** (`/app/admin`, platform admin): manage all accounts (plan, status,
   trial end, AI config) and all users.
 - **Billing** (`/app/billing`): custom plan cards → Checkout (coupons enabled),
@@ -131,7 +139,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 1. **Supabase Auth URL config (your action, dashboard).** Set Site URL =
    `https://dara.crucibleinsight.com` and add redirect URLs
    `https://dara.crucibleinsight.com/**`, `http://localhost:3000/**`. Until then,
-   confirmation/magic-link emails point at `localhost`.
+   confirmation/magic-link emails — **and the new Team invite emails** — point at
+   `localhost`. (Invitations still work without this: an invited person who signs in
+   is attached to the company/team correctly; only the convenience email link breaks.)
 2. **Stripe webhook endpoint** — confirm the URL has **no trailing dot** and add
    `customer.subscription.updated` to the subscribed events (created/deleted are
    there; updated is needed for plan changes/renewals). Activate the **Customer
@@ -257,9 +267,10 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 
 ## 6. Key paths
 
-- Engine: `utils/dara/{prompt,providers,evaluator,documents,personas,billing,crypto,admin,provision}.ts`
+- Engine: `utils/dara/{prompt,providers,evaluator,documents,personas,billing,crypto,admin,provision,teams}.ts`
+- Teams: `app/app/team/page.tsx`, `utils/dara/teams.ts` (invite email), invite-accept in `utils/dara/provision.ts`; RLS `prisma/security/2026-06-29_teams_rls.sql`
 - App shell: `app/app/layout.tsx`, `components/layout/{Sidebar,ChromeGate}.tsx`
-- Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin}/…`
+- Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin,team}/…`
 - Webhook: `app/api/webhooks/route.ts`
 - Design tokens: `tailwind.config.js`, `styles/main.css`, fonts in `app/layout.tsx`
 - Design primitives: `components/dara/{theme.ts,PageHeader.tsx,Tabs.tsx}`
@@ -298,11 +309,19 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   (`migrate resolve`); documented the two-layer schema source of truth
   (`prisma/security/DARA-017-migrations.md`, `prisma/migrations/README.md`).
 - **No audit findings remain open** (DARA-007 risk-accepted).
+- **Teams feature shipped** (commit `c7a7a5f`, deployed prod). New `/app/team`
+  (departments + per-team roles + email invitations); `provisionNewUser` now attaches
+  invited users to an existing company/team on first sign-in. First real migration via
+  the DARA-017 workflow (`20260629210000_teams_and_invitations`) + per-tenant RLS for
+  the 3 new tables (verified: 6 policies + grants). Member management moved out of
+  Settings. **Open dependency:** Supabase Auth Site URL (#1) for invite emails.
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
-1. **Operator action (you):** enable branch protection on `main` (item #13) — the
-   only thing gating DARA-015 from "enforced."
-2. Feature backlog: per-company admin audit-log viewer (Team tab) and the AI
-   codebase security-audit (back-office, platform key).
+1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —
+   the only thing gating DARA-015 from "enforced"; (b) set the Supabase Auth Site URL
+   (#1) so Team invite emails resolve in prod.
+2. Feature backlog: per-company admin **audit-log viewer — now has a home in the
+   Team page** (`dara_audit_log` is per-company; add a read-only, company-admin-gated
+   tab/section there); and the AI codebase security-audit (back-office, platform key).
 3. Product backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron),
    billing polish.
