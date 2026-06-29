@@ -99,6 +99,7 @@ model Company {
   teams         Team[]
   teamMembers   TeamMember[]
   invitations   Invitation[]
+  solicitationDepartments SolicitationDepartment[]
 
   @@index([plan, planStatus])
   @@map("dara_companies")
@@ -130,9 +131,10 @@ model Team {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  members     TeamMember[]
-  invitations Invitation[]
+  company       Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  members       TeamMember[]
+  invitations   Invitation[]
+  solicitations SolicitationDepartment[]
 
   @@unique([companyId, name])
   @@index([companyId])
@@ -180,6 +182,27 @@ model Invitation {
   @@map("dara_invitations")
 }
 
+// Which departments a solicitation is shared with. A non-admin user sees a
+// solicitation only if it is assigned to a department they belong to (or they
+// created it); see utils/dara/sol-access.ts. company_id is denormalized for RLS.
+model SolicitationDepartment {
+  id             BigInt   @id @default(autoincrement())
+  companyId      BigInt   @map("company_id")
+  solicitationId BigInt   @map("solicitation_id")
+  teamId         BigInt   @map("team_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  team         Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([solicitationId, teamId])
+  @@index([companyId])
+  @@index([solicitationId])
+  @@index([teamId])
+  @@map("dara_solicitation_departments")
+}
+
 model Solicitation {
   id          BigInt   @id @default(autoincrement())
   companyId   BigInt   @map("company_id")
@@ -191,11 +214,12 @@ model Solicitation {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company     Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   solDocs     SolDocument[]
   criteria    Criterion[]
   responses   Response[]
   evaluations Evaluation[]
+  departments SolicitationDepartment[]
 
   @@index([companyId])
   @@map("dara_solicitations")

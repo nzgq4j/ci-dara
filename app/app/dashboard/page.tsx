@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
+import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
 
 const planLabels: Record<string, string> = {
   trial: 'Trial',
@@ -38,28 +39,32 @@ export default async function DashboardPage() {
     recentSolicitations,
     recentEvaluations,
     personas
-  ] = await withTenant(companyId, (tx) =>
-    Promise.all([
+  ] = await withTenant(companyId, async (tx) => {
+    // Stats reflect only solicitations this user can see (department-scoped).
+    const teamIds = await userTeamIds(tx, daraUser.id);
+    const access = solAccessWhere(daraUser.id, daraUser.role, teamIds);
+    const solWhere = { companyId, ...access };
+    return Promise.all([
       // companyId filters kept as defense-in-depth alongside RLS (DARA-004).
-      tx.solicitation.count({ where: { companyId } }),
-      tx.response.count({ where: { companyId } }),
-      tx.evaluation.count({ where: { companyId } }),
+      tx.solicitation.count({ where: solWhere }),
+      tx.response.count({ where: { companyId, solicitation: access } }),
+      tx.evaluation.count({ where: { companyId, solicitation: access } }),
       tx.persona.count({ where: { companyId, isActive: true } }),
       tx.solicitation.findMany({
-        where: { companyId },
+        where: solWhere,
         orderBy: { createdAt: 'desc' },
         take: 5,
         include: { _count: { select: { criteria: true, responses: true } } }
       }),
       tx.evaluation.findMany({
-        where: { companyId },
+        where: { companyId, solicitation: access },
         orderBy: { createdAt: 'desc' },
         take: 5,
         include: { response: true }
       }),
       tx.persona.findMany({ where: { companyId }, select: { id: true, displayName: true } })
-    ])
-  );
+    ]);
+  });
 
   const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
 

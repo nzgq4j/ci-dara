@@ -14,6 +14,7 @@ import {
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
+import { userTeamIds, canViewSolicitation, canManageDepartments } from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation } from '@/utils/dara/evaluator';
@@ -56,10 +57,30 @@ async function authedUser() {
   return daraUser;
 }
 
-async function requireOwnedSolicitation(solId: bigint, companyId: bigint) {
-  const owned = await withTenant(companyId, (tx) =>
-    tx.solicitation.findFirst({ where: { id: solId, companyId } })
-  );
+// Gate: the solicitation must exist in the company AND be viewable by this user
+// under the department-access rules (admins all; creator own; others only via an
+// assigned department). Used by the page and every mutation, so a user who can't
+// see a solicitation also can't act on it via a directly-invoked server action.
+async function requireViewableSolicitation(
+  solId: bigint,
+  daraUser: { id: string; companyId: bigint; role: string }
+) {
+  const owned = await withTenant(daraUser.companyId, async (tx) => {
+    const s = await tx.solicitation.findFirst({
+      where: { id: solId, companyId: daraUser.companyId },
+      include: { departments: { select: { teamId: true } } }
+    });
+    if (!s) return null;
+    const teamSet = new Set(await userTeamIds(tx, daraUser.id));
+    const ok = canViewSolicitation(
+      daraUser.id,
+      daraUser.role,
+      s.createdBy,
+      s.departments.map((d) => d.teamId),
+      teamSet
+    );
+    return ok ? s : null;
+  });
   if (!owned) redirect('/app/solicitations');
   return owned;
 }
@@ -69,7 +90,7 @@ async function updateSolicitation(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('solId')));
-  await requireOwnedSolicitation(id, daraUser.companyId);
+  await requireViewableSolicitation(id, daraUser);
   const title = String(formData.get('title') ?? '').trim();
   if (!title) return;
   await withTenant(daraUser.companyId, (tx) =>
@@ -86,11 +107,54 @@ async function updateSolicitation(formData: FormData) {
   revalidatePath(`/app/solicitations/${id}`);
 }
 
+// Assign the solicitation to a set of departments (replaces the current set).
+// Gated to admins + the creator (canManageDepartments). Department access itself
+// is enforced on read via requireViewableSolicitation.
+async function setSolicitationDepartments(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('solId')));
+  const sol = await requireViewableSolicitation(id, daraUser);
+  if (!canManageDepartments(daraUser.id, daraUser.role, sol.createdBy)) return;
+  const teamIds = formData
+    .getAll('dept')
+    .map((v) => String(v))
+    .filter((v) => /^\d+$/.test(v))
+    .map((v) => BigInt(v));
+
+  await withTenant(daraUser.companyId, async (tx) => {
+    // Keep only departments that actually belong to this company.
+    const valid = teamIds.length
+      ? await tx.team.findMany({
+          where: { id: { in: teamIds }, companyId: daraUser.companyId },
+          select: { id: true }
+        })
+      : [];
+    const validIds = valid.map((t) => t.id);
+    await tx.solicitationDepartment.deleteMany({ where: { solicitationId: id, companyId: daraUser.companyId } });
+    if (validIds.length) {
+      await tx.solicitationDepartment.createMany({
+        data: validIds.map((teamId) => ({ companyId: daraUser.companyId, solicitationId: id, teamId }))
+      });
+    }
+  });
+  await recordAudit({
+    action: 'solicitation.departments.set',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: id,
+    metadata: { teamIds: teamIds.map((t) => t.toString()) }
+  });
+  revalidatePath(`/app/solicitations/${id}`);
+}
+
 async function deleteSolicitation(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('solId')));
-  await requireOwnedSolicitation(id, daraUser.companyId);
+  await requireViewableSolicitation(id, daraUser);
   await withTenant(daraUser.companyId, (tx) => tx.solicitation.delete({ where: { id } }));
   await recordAudit({
     action: 'solicitation.delete',
@@ -108,7 +172,7 @@ async function addCriterion(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
-  await requireOwnedSolicitation(solId, daraUser.companyId);
+  await requireViewableSolicitation(solId, daraUser);
   const name = String(formData.get('name') ?? '').trim();
   if (!name) return;
   await withTenant(daraUser.companyId, (tx) =>
@@ -173,7 +237,7 @@ async function addResponse(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
-  await requireOwnedSolicitation(solId, daraUser.companyId);
+  await requireViewableSolicitation(solId, daraUser);
   const offerorName = String(formData.get('offerorName') ?? '').trim();
   if (!offerorName) return;
   const created = await withTenant(daraUser.companyId, (tx) =>
@@ -251,7 +315,7 @@ async function uploadSolDoc(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
-  await requireOwnedSolicitation(solId, daraUser.companyId);
+  await requireViewableSolicitation(solId, daraUser);
   const file = formData.get('file');
   if (!(file instanceof File) || file.size === 0) return;
   // Upload + extraction (Storage + CPU) outside any transaction.
@@ -374,7 +438,7 @@ async function runEvaluations(formData: FormData) {
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const responseId = BigInt(String(formData.get('responseId')));
-  await requireOwnedSolicitation(solId, daraUser.companyId);
+  await requireViewableSolicitation(solId, daraUser);
   const activePersonas = await withTenant(daraUser.companyId, async (tx) => {
     const response = await tx.response.findFirst({
       where: { id: responseId, companyId: daraUser.companyId }
@@ -451,6 +515,7 @@ export default async function SolicitationDetailPage({
       include: {
         criteria: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
         solDocs: { orderBy: { uploadedAt: 'desc' } },
+        departments: { include: { team: true } },
         responses: {
           orderBy: { createdAt: 'desc' },
           include: { files: { orderBy: { uploadedAt: 'desc' } } }
@@ -468,16 +533,32 @@ export default async function SolicitationDetailPage({
       }
     });
     if (!solicitation) return null;
+    // Department-access gate (admins all; creator own; others via assigned dept).
+    const teamSet = new Set(await userTeamIds(tx, daraUser.id));
+    const viewable = canViewSolicitation(
+      daraUser.id,
+      daraUser.role,
+      solicitation.createdBy,
+      solicitation.departments.map((d) => d.teamId),
+      teamSet
+    );
+    if (!viewable) return null;
     const personas = await tx.persona.findMany({
       where: { companyId: daraUser.companyId }
     });
-    return { solicitation, personas };
+    const allTeams = await tx.team.findMany({
+      where: { companyId: daraUser.companyId },
+      orderBy: { name: 'asc' }
+    });
+    return { solicitation, personas, allTeams };
   });
 
   if (!data) notFound();
-  const { solicitation, personas } = data;
+  const { solicitation, personas, allTeams } = data;
   const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
   const activeCount = personas.filter((p) => p.isActive).length;
+  const assignedTeamIds = new Set(solicitation.departments.map((d) => d.teamId.toString()));
+  const canManageDepts = canManageDepartments(daraUser.id, daraUser.role, solicitation.createdBy);
 
   const sid = solicitation.id.toString();
   const canEvaluate = activeCount > 0 && solicitation.criteria.length > 0;
@@ -529,6 +610,49 @@ export default async function SolicitationDetailPage({
             <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save changes</button>
           </div>
         </form>
+      </section>
+
+      <section className={`${card} p-6`}>
+        <h2 className={`mb-1 ${sectionTitle}`}>Departments</h2>
+        <p className="mb-4 text-[13px] text-t4">
+          Members of an assigned department can see this solicitation. Company admins
+          and the creator can always see it; with no departments assigned, no one else can.
+        </p>
+        {allTeams.length === 0 ? (
+          <p className="text-[13px] text-t5">
+            No departments exist yet. Create them on the{' '}
+            <Link href="/app/team" className="text-[#3b6ef0] hover:underline">Team</Link> page.
+          </p>
+        ) : canManageDepts ? (
+          <form action={setSolicitationDepartments} className="space-y-4">
+            <input type="hidden" name="solId" value={sid} />
+            <div className="flex flex-wrap gap-2">
+              {allTeams.map((t) => (
+                <label
+                  key={t.id.toString()}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t3 transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1"
+                >
+                  <input type="checkbox" name="dept" value={t.id.toString()} defaultChecked={assignedTeamIds.has(t.id.toString())} className="peer sr-only" />
+                  <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
+                  {t.name}
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end">
+              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save departments</button>
+            </div>
+          </form>
+        ) : solicitation.departments.length === 0 ? (
+          <p className="text-[13px] text-t5">No departments assigned.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {solicitation.departments.map((d) => (
+              <span key={d.id.toString()} className="inline-flex items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t3">
+                <span className="h-2 w-2 rounded-full bg-[#3b6ef0]" />{d.team.name}
+              </span>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-[10px] border border-[#5a1f1f]/50 bg-surf p-6">

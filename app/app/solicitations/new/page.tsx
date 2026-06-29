@@ -33,8 +33,14 @@ async function createSolicitation(formData: FormData) {
 
   if (!title) redirect('/app/solicitations/new');
 
-  const solicitation = await withTenant(daraUser.companyId, (tx) =>
-    tx.solicitation.create({
+  const teamIds = formData
+    .getAll('dept')
+    .map((v) => String(v))
+    .filter((v) => /^\d+$/.test(v))
+    .map((v) => BigInt(v));
+
+  const solicitation = await withTenant(daraUser.companyId, async (tx) => {
+    const sol = await tx.solicitation.create({
       data: {
         companyId: daraUser.companyId,
         title,
@@ -43,8 +49,20 @@ async function createSolicitation(formData: FormData) {
         notes: notes || null,
         createdBy: daraUser.id
       }
-    })
-  );
+    });
+    if (teamIds.length) {
+      const valid = await tx.team.findMany({
+        where: { id: { in: teamIds }, companyId: daraUser.companyId },
+        select: { id: true }
+      });
+      if (valid.length) {
+        await tx.solicitationDepartment.createMany({
+          data: valid.map((t) => ({ companyId: daraUser.companyId, solicitationId: sol.id, teamId: t.id }))
+        });
+      }
+    }
+    return sol;
+  });
 
   await recordAudit({
     action: 'solicitation.create',
@@ -59,7 +77,18 @@ async function createSolicitation(formData: FormData) {
   redirect(`/app/solicitations/${solicitation.id}`);
 }
 
-export default function NewSolicitationPage() {
+export default async function NewSolicitationPage() {
+  const supabase = createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/signin');
+  const daraUser = await getDaraUser(user.id);
+  if (!daraUser) redirect('/signin');
+  const teams = await withTenant(daraUser.companyId, (tx) =>
+    tx.team.findMany({ where: { companyId: daraUser.companyId }, orderBy: { name: 'asc' } })
+  );
+
   return (
     <div className="mx-auto max-w-2xl fade">
       <Link
@@ -131,6 +160,28 @@ export default function NewSolicitationPage() {
             className={fieldClasses}
           />
         </div>
+
+        {teams.length > 0 && (
+          <div className="space-y-1.5">
+            <label className={labelClasses}>Departments</label>
+            <p className="text-[12px] text-t5">
+              Choose which departments can see this solicitation. Leave empty and only
+              you (and company admins) will see it until you assign one.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {teams.map((t) => (
+                <label
+                  key={t.id.toString()}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t3 transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1"
+                >
+                  <input type="checkbox" name="dept" value={t.id.toString()} className="peer sr-only" />
+                  <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
+                  {t.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-3 pt-1">
           <Link href="/app/solicitations" className={btnGhost}>

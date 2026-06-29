@@ -4,6 +4,7 @@ import { Plus, FileText } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
+import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, cardDashed, btnPrimary } from '@/components/dara/theme';
 
@@ -18,18 +19,23 @@ export default async function SolicitationsPage() {
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
 
-  const solicitations = await withTenant(daraUser.companyId, (tx) =>
-    tx.solicitation.findMany({
-      // companyId filter kept as defense-in-depth alongside RLS (DARA-004).
-      where: { companyId: daraUser.companyId },
+  const solicitations = await withTenant(daraUser.companyId, async (tx) => {
+    // Department-scoped visibility: admins see all; others see their own + any
+    // assigned to a department they belong to (app-layer; company RLS is the DB
+    // backstop). companyId filter kept as defense-in-depth alongside RLS (DARA-004).
+    const teamIds = await userTeamIds(tx, daraUser.id);
+    return tx.solicitation.findMany({
+      where: {
+        companyId: daraUser.companyId,
+        ...solAccessWhere(daraUser.id, daraUser.role, teamIds)
+      },
       orderBy: { createdAt: 'desc' },
       include: {
-        _count: {
-          select: { criteria: true, responses: true, evaluations: true }
-        }
+        _count: { select: { criteria: true, responses: true, evaluations: true } },
+        departments: { include: { team: { select: { name: true } } } }
       }
-    })
-  );
+    });
+  });
 
   return (
     <div className="mx-auto max-w-6xl fade">
@@ -75,6 +81,9 @@ export default async function SolicitationsPage() {
                 <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Agency
                 </th>
+                <th className="px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
+                  Departments
+                </th>
                 <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                   Criteria
                 </th>
@@ -105,6 +114,22 @@ export default async function SolicitationsPage() {
                   </td>
                   <td className="px-3.5 py-3 text-[12px] text-t4">
                     {sol.agency || '—'}
+                  </td>
+                  <td className="px-3.5 py-3">
+                    {sol.departments.length === 0 ? (
+                      <span className="font-mono text-[11px] text-t5">—</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {sol.departments.map((d) => (
+                          <span
+                            key={d.id.toString()}
+                            className="inline-flex items-center rounded border border-line bg-bg px-1.5 py-0.5 text-[11px] text-t3"
+                          >
+                            {d.team.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.criteria}
