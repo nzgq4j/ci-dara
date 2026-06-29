@@ -105,7 +105,7 @@ export const CONTROL_POSTURE: ControlPosture[] = [
   { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; platform-admin via env allow-list (no source-embedded identities) with audited admin actions (DARA-010); app-layer companyId scoping retained as defense-in-depth. Remaining: a per-user platform-admin DB role for finer control.' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
   { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (sign-in/provisioning, authz + BYOK-key changes, persona changes, CUI document/evaluation handling, billing). Remaining: an admin-only, per-company audit viewer (planned under Team), a retention policy, and log review/alerting.' },
-  { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; single pnpm lockfile (frozen in CI); CI security gates in place (secret scan, dependency audit, SAST, SBOM). Remaining: tracked migration history (DARA-017) and enabling branch protection on main.' },
+  { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; single pnpm lockfile (frozen in CI); CI security gates in place (secret scan, dependency audit, SAST, SBOM); tracked migration baseline + documented two-layer schema source of truth (DARA-017). Remaining: enabling branch protection on main to enforce the CI gates.' },
   { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth with Google SSO (OAuth/PKCE) and email+password; "remember me" session controls; committed DB credential remediated (env, rotated, history-purged). MFA available via the identity provider; org-level enforcement Unverified.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
   { family: 'Maintenance', code: 'MA', status: 'Undetermined', note: 'No maintenance procedure evidenced in the repository.' },
@@ -348,13 +348,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-017',
     title: 'No migration history; legacy template schema drift',
     severity: 'Low',
-    status: 'Open',
-    component: 'prisma db push · legacy SQL',
-    evidence: 'Empty migrations directory; legacy template tables and an auth.users signup trigger coexist with the Prisma schema.',
-    impact: 'No schema change audit/rollback; two schemas of record with divergent RLS posture.',
-    remediation: 'Adopt tracked migrations; remove or formally own legacy objects; document the single source of truth.',
+    status: 'Remediated',
+    component: 'prisma/migrations · prisma/security/*.sql',
+    evidence: 'Read-only introspection (2026-06-29) confirmed production is clean: exactly the 12 dara_* tables, no legacy/template tables, no auth.users trigger, no template functions. schema.prisma matches the live DB with zero drift. A baseline migration (prisma/migrations/0_init) was generated and marked applied (migrate resolve); migrate status reports the schema up to date. The owner-only security DDL (RLS/grants/roles/audit triggers) is tracked as an ordered manifest in prisma/security/*.sql.',
+    impact: 'Resolved. Schema changes now have a tracked, auditable baseline and a documented two-layer source of truth (Prisma migrations for table structure + owner-SQL for security DDL). The legacy-drift concern was already eliminated by earlier work and is verified gone.',
+    remediation: 'Completed: database baselined (prisma/migrations/0_init), forward workflow is migrate dev/deploy (no db push), and the model is documented in prisma/security/DARA-017-migrations.md + prisma/migrations/README.md.',
     mapping: 'NIST CM-2, CM-3, CM-6',
-    window: 'Mid-term (31–90 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-018',

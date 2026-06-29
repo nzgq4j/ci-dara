@@ -51,7 +51,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
   `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SITE_URL`, `PLATFORM_ANTHROPIC_KEY`,
   `APP_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
-- `prisma db push` + `prisma generate` (wired into the build); pg driver adapter.
+- Schema originally applied via `prisma db push`; **now baselined to tracked
+  migrations** (`prisma/migrations/0_init`, DARA-017). Build runs `prisma generate`
+  only; pg driver adapter. Forward schema changes use `migrate dev`/`deploy`.
 - Private Supabase Storage bucket `dara-documents`.
 - Seed login user `david@crucibleinsight.com` (pre-confirmed).
 
@@ -161,13 +163,16 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     `DARA_POSTGRES_*` / `DARA_SUPABASE_*` vars that the code does not read. Either
     remove them or wire the app to the integration's pooled URL (more robust for
     future rotations).
-11. **Open security findings** (full detail + status on `/app/security`). Remaining:
-    **DARA-017 (migration history)** — the only open finding. DARA-007 (CUI→LLM) is
-    **Risk accepted** with controls. **DARA-002 (secrets handling) Remediated
-    2026-06-29** (platform-as-source-of-truth; redundant `.env` + dead vars removed;
-    rotation runbook — `prisma/security/DARA-002-secrets.md`). Everything else
-    remediated as of 2026-06-28 (incl. DARA-010 admin model and DARA-015 CI gates —
-    see action item #13 to enforce them via branch protection).
+11. **Open security findings** (full detail + status on `/app/security`). **None
+    open.** DARA-007 (CUI→LLM) is **Risk accepted** with controls. Latest closures:
+    **DARA-017 (migration history) Remediated 2026-06-29** (prod baselined to
+    `prisma/migrations/0_init`; two-layer schema source of truth documented in
+    `prisma/security/DARA-017-migrations.md`; legacy drift verified already gone) and
+    **DARA-002 (secrets handling) Remediated 2026-06-29** (platform-as-source-of-truth;
+    redundant `.env` + dead vars removed; rotation runbook —
+    `prisma/security/DARA-002-secrets.md`). Everything else remediated as of
+    2026-06-28 (incl. DARA-010 admin model and DARA-015 CI gates — see action item
+    #13 to enforce them via branch protection).
 13. **Enable branch protection on `main` (your action — closes DARA-015 enforcement).**
     GitHub → repo **Settings → Branches → Add branch ruleset / protection rule** for
     `main`: **Require status checks to pass** (select the `Security` checks +
@@ -223,7 +228,14 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   accurate secret-free `.env.example`; rotation-on-suspicion runbook in
   `prisma/security/DARA-002-secrets.md`. Residual on-disk presence risk-accepted
   with controls.
-- **Still open:** DARA-017 (migration history) — the last open finding.
+- **DARA-017 (migration history): Remediated 2026-06-29** — read-only introspection
+  confirmed prod is clean (12 `dara_*` tables, no legacy/template tables, no
+  `auth.users` trigger); `schema.prisma` matches the DB with zero drift; baselined to
+  `prisma/migrations/0_init` (generated + `migrate resolve --applied`, DDL not re-run);
+  forward workflow is `migrate dev`/`deploy` (no `db push`). Two-layer schema source of
+  truth (Prisma migrations + owner-SQL manifest) documented in
+  `prisma/security/DARA-017-migrations.md` + `prisma/migrations/README.md`.
+- **No open findings remain.** DARA-007 is Risk accepted with controls.
 
 ### Compliance / docs (new)
 - **System Security Plan (SSP)** — started 2026-06-28 as a living in-app document at
@@ -254,6 +266,8 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 - Security page + content: `app/app/security/page.tsx`, `utils/dara/security-content.ts`
 - System Security Plan (SSP): `app/app/security/plan/page.tsx` (renders `SSP` + `CONTROL_POSTURE` + POA&M)
 - Security SQL artifact: `prisma/security/2026-06-27_lock_dara_tables.sql`
+- Schema: `prisma/schema.prisma`; migrations baseline `prisma/migrations/0_init/` (+ `README.md`)
+- Owner-SQL layer + manifest: `prisma/security/*.sql` via `apply-sql.ts` (see `DARA-017-migrations.md`)
 - Security headers: `next.config.js`
 
 ---
@@ -273,10 +287,22 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 - **System Security Plan (SSP)** built at `/app/security/plan` (linked from Security).
 - Deployed prod (`668b406`) and pushed to `main`; CI gates running.
 
+**Session 2026-06-29 — shipped:**
+- Deleted the stray nested `ci-dara/` directory (working tree clean).
+- **DARA-002 (secrets handling) Remediated** — Vercel established as source of truth;
+  removed redundant `.env` + two dead secrets; accurate secret-free `.env.example`;
+  rotation runbook (`prisma/security/DARA-002-secrets.md`). Committed `b5048d8`,
+  deployed prod, pushed.
+- **DARA-017 (migration history) Remediated** — verified prod schema is clean (no
+  legacy drift) via read-only introspection; baselined to `prisma/migrations/0_init`
+  (`migrate resolve`); documented the two-layer schema source of truth
+  (`prisma/security/DARA-017-migrations.md`, `prisma/migrations/README.md`).
+- **No audit findings remain open** (DARA-007 risk-accepted).
+
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator action (you):** enable branch protection on `main` (item #13) — the
    only thing gating DARA-015 from "enforced."
-2. **DARA-002** (secrets handling) and **DARA-017** (migration history) — the two
-   remaining open findings.
-3. Feature backlog: per-company admin audit-log viewer (Team tab) and the AI
+2. Feature backlog: per-company admin audit-log viewer (Team tab) and the AI
    codebase security-audit (back-office, platform key).
+3. Product backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron),
+   billing polish.

@@ -15,11 +15,11 @@ This is the "start here tomorrow" doc. Authoritative status lives in
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
-- **Security posture:** Of the original audit, only **DARA-017** remains open;
-  **DARA-002** was remediated 2026-06-29 (platform-as-source-of-truth secrets;
-  `prisma/security/DARA-002-secrets.md`); **DARA-007** is risk-accepted with
-  compensating controls. The SSP is drafted (`/app/security/plan`) and the POA&M
-  renders from the findings register.
+- **Security posture:** **No audit findings remain open.** Both **DARA-002**
+  (secrets handling) and **DARA-017** (migration history) were remediated 2026-06-29
+  (`prisma/security/DARA-002-secrets.md`, `…/DARA-017-migrations.md`); **DARA-007**
+  is risk-accepted with compensating controls. The SSP is drafted
+  (`/app/security/plan`) and the POA&M renders from the findings register.
 
 ### Watch-outs (don't trip on these)
 - The stray nested **`ci-dara/`** directory has been **deleted** (resolved
@@ -58,12 +58,16 @@ documented the model + rotation-on-suspicion runbook in
 - **Note:** `CRON_SECRET` was removed; **regenerate it** when the JobQueue cron worker
   is built.
 
-### C. DARA-017 — no migration history / legacy template schema (open)
-Goal: get to a clean, reproducible schema baseline without `prisma db push`.
-- Decide: baseline migration from current prod schema (`prisma migrate diff` →
-  `migrate resolve`) vs. documented owner-SQL process.
-- Reconcile/retire the Supabase template tables that were dropped.
-- Keep the `apply-sql.ts` path for owner-only DDL.
+### C. DARA-017 — migration history / schema baseline — ✅ DONE 2026-06-29
+Remediated: read-only introspection confirmed prod is clean (12 `dara_*` tables, no
+legacy/template tables, no `auth.users` trigger — the legacy-drift half was already
+resolved by earlier work). `schema.prisma` matched the live DB with zero drift, so
+the DB was baselined to `prisma/migrations/0_init` (generated via `migrate diff` →
+marked applied via `migrate resolve`, DDL not re-run); `migrate status` reports up to
+date. Forward workflow is `migrate dev`/`deploy` (no `db push`); the owner-only
+security DDL stays in `prisma/security/*.sql` via `apply-sql.ts`. Two-layer model +
+manifest + DR rebuild order documented in `prisma/security/DARA-017-migrations.md`
+and `prisma/migrations/README.md`.
 
 ### D. Feature backlog (security-adjacent — build when ready)
 1. **Per-company admin audit-log viewer** under the (future) **Team** tab.
