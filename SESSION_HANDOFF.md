@@ -1,6 +1,6 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-06-28 (end of session) · for: next session_
+_Prepared: 2026-06-29 (end of session) · for: next session_
 
 This is the "start here tomorrow" doc. Authoritative status lives in
 `BUILD_STATUS.md` (§5 backlog, §7 session log); open security findings live on
@@ -15,14 +15,15 @@ This is the "start here tomorrow" doc. Authoritative status lives in
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
-- **Security posture:** Of the original audit, only **DARA-002** and **DARA-017**
-  remain open; **DARA-007** is risk-accepted with compensating controls. The SSP
-  is drafted (`/app/security/plan`) and the POA&M renders from the findings register.
+- **Security posture:** Of the original audit, only **DARA-017** remains open;
+  **DARA-002** was remediated 2026-06-29 (platform-as-source-of-truth secrets;
+  `prisma/security/DARA-002-secrets.md`); **DARA-007** is risk-accepted with
+  compensating controls. The SSP is drafted (`/app/security/plan`) and the POA&M
+  renders from the findings register.
 
 ### Watch-outs (don't trip on these)
-- There is a stray nested **`ci-dara/`** directory inside the repo (untracked). It
-  was accidentally staged as an embedded git repo this session and removed before
-  commit. **Confirm what it is** and delete/relocate it — don't let it get committed.
+- The stray nested **`ci-dara/`** directory has been **deleted** (resolved
+  2026-06-29) — working tree is clean.
 - `vercel deploy --prod --yes` is the working deploy command this session (despite a
   session-start note claiming the CLI isn't installed — it is).
 - Owner-only SQL goes through `prisma/security/apply-sql.ts` (pg + `DIRECT_URL`),
@@ -42,14 +43,20 @@ GitHub → repo **Settings → Branches → Add ruleset / protection rule** for 
 
 Then mark DARA-015 enforcement complete in BUILD_STATUS #13 + `/app/security`.
 
-### B. DARA-002 — live secrets in `.env.local` (High, open)
-Goal: minimize live keys on local disk; platform secret store is the source of truth.
-- Inventory what's actually in `.env.local` vs. what the app reads at runtime.
-- Move runtime secrets to Vercel env (already there for prod) and trim the local file
-  to only what local dev needs; document a rotation-on-suspicion note.
-- Consider the **unused `DARA_*` env vars** (BUILD_STATUS gap #10) at the same time —
-  remove or wire them.
-- Close-out: update the finding to Remediated/Risk-accepted with evidence.
+### B. DARA-002 — live secrets in `.env.local` (High) — ✅ DONE 2026-06-29
+Remediated: Vercel established as the authoritative secret store; removed the
+redundant duplicate `.env`; trimmed two dead secrets (`STRIPE_PRICING_TABLE_ID`,
+`CRON_SECRET`) from `.env.local`; restored an accurate secret-free `.env.example`;
+documented the model + rotation-on-suspicion runbook in
+`prisma/security/DARA-002-secrets.md`. Finding marked **Remediated** in
+`security-content.ts` (residual on-disk presence risk-accepted with controls).
+- **Still deferred** (BUILD_STATUS gap #10): the **unused `DARA_*` Vercel vars** were
+  left in place (deleting integration-managed vars can be reverted); revisit when the
+  Supabase integration is reconnected/removed.
+- **Noticed, not fixed:** prod has `STRIPE_PUBLISHABLE_KEY` but the client reads
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — verify the billing page renders in prod.
+- **Note:** `CRON_SECRET` was removed; **regenerate it** when the JobQueue cron worker
+  is built.
 
 ### C. DARA-017 — no migration history / legacy template schema (open)
 Goal: get to a clean, reproducible schema baseline without `prisma db push`.

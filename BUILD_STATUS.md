@@ -1,6 +1,6 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-06-28_
+_Last updated: 2026-06-29_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
 **Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
@@ -162,10 +162,12 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     remove them or wire the app to the integration's pooled URL (more robust for
     future rotations).
 11. **Open security findings** (full detail + status on `/app/security`). Remaining:
-    DARA-002 (secrets handling), DARA-017 (migration history). DARA-007 (CUI→LLM)
-    is **Risk accepted** with controls. Everything else remediated as of 2026-06-28
-    (incl. DARA-010 admin model and DARA-015 CI gates — see action item #13 to
-    enforce them via branch protection).
+    **DARA-017 (migration history)** — the only open finding. DARA-007 (CUI→LLM) is
+    **Risk accepted** with controls. **DARA-002 (secrets handling) Remediated
+    2026-06-29** (platform-as-source-of-truth; redundant `.env` + dead vars removed;
+    rotation runbook — `prisma/security/DARA-002-secrets.md`). Everything else
+    remediated as of 2026-06-28 (incl. DARA-010 admin model and DARA-015 CI gates —
+    see action item #13 to enforce them via branch protection).
 13. **Enable branch protection on `main` (your action — closes DARA-015 enforcement).**
     GitHub → repo **Settings → Branches → Add branch ruleset / protection rule** for
     `main`: **Require status checks to pass** (select the `Security` checks +
@@ -215,7 +217,13 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   rest/in transit, per-run provider/mode audit, `DARA-007-data-boundary.md`. ZDR
   agreements on the platform keys (Anthropic/OpenAI/Google) pursued **offline**;
   update the notice copy + status on signing. (No FedRAMP/GovCloud migration.)
-- **Still open:** DARA-002 (secrets handling), DARA-017 (migration history).
+- **DARA-002 (secrets handling): Remediated 2026-06-29** — Vercel is the
+  authoritative secret store; removed the redundant duplicate `.env` and two dead
+  secrets (`STRIPE_PRICING_TABLE_ID`, `CRON_SECRET`) from `.env.local`; restored an
+  accurate secret-free `.env.example`; rotation-on-suspicion runbook in
+  `prisma/security/DARA-002-secrets.md`. Residual on-disk presence risk-accepted
+  with controls.
+- **Still open:** DARA-017 (migration history) — the last open finding.
 
 ### Compliance / docs (new)
 - **System Security Plan (SSP)** — started 2026-06-28 as a living in-app document at

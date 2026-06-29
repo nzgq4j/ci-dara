@@ -168,13 +168,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-002',
     title: 'Live production secrets present in local environment file',
     severity: 'High',
-    status: 'Open',
+    status: 'Remediated',
     component: '.env.local (gitignored, on disk)',
-    evidence: 'Live Stripe secret/webhook keys, Supabase service-role JWT, platform Anthropic key, APP_KEY, DB password. Correctly untracked.',
-    impact: 'Broad blast radius if the workstation, a backup, or a malicious dependency reads the working tree.',
-    remediation: 'Keep runtime secrets in the platform secret store only; rotate on suspicion; minimize live keys on local disk.',
+    evidence: 'Vercel is the authoritative secret store (all runtime secrets present there). Local files never tracked (gitignore verified; only the secret-free .env.example is committed). Redundant duplicate .env removed; two dead secrets (STRIPE_PRICING_TABLE_ID, CRON_SECRET) trimmed from .env.local; accurate secret-free template restored. Documented in prisma/security/DARA-002-secrets.md.',
+    impact: 'Resolved for persistent divergence: the platform store is the source of truth and local files are a regenerable mirror. Residual: live keys still touch disk during local dev (risk-accepted) — bounded by gitignore + the rotation-on-suspicion runbook + DARA-004 least-privilege roles.',
+    remediation: 'Completed: platform-as-source-of-truth model documented, on-disk copies minimized, rotation-on-suspicion runbook recorded (DARA-002-secrets.md; BUILD_STATUS §4 #9). Residual local-disk presence risk-accepted with compensating controls.',
     mapping: 'NIST IA-5, SC-12 · OWASP A07',
-    window: 'Immediate (0–7 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-003',
