@@ -78,6 +78,19 @@ export async function getDaraUser(supabaseUserId: string) {
   });
 }
 
+// Record a sign-in time (powers the Team page "Last active" column). Best-effort:
+// runs on the auth paths only (not every request) and never throws into the caller.
+export async function touchLastLogin(supabaseUserId: string) {
+  try {
+    await prismaAdmin.daraUser.update({
+      where: { id: supabaseUserId },
+      data: { lastLoginAt: new Date() },
+    });
+  } catch (e) {
+    console.error('[provision] touchLastLogin failed:', e);
+  }
+}
+
 // Attach a newly-signing-in user to a company they were invited to. Returns the
 // created DaraUser (with company) on success, or null if there is no usable invite
 // (caller then falls back to creating a new company). Cross-tenant by design — runs

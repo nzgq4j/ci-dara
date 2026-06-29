@@ -5,7 +5,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getURL, getErrorRedirect, getStatusRedirect } from 'utils/helpers';
 import { getAuthTypes } from 'utils/auth-helpers/settings';
-import { provisionNewUser } from '@/utils/dara/provision';
+import { provisionNewUser, touchLastLogin } from '@/utils/dara/provision';
 
 function isValidEmail(email: string) {
   var regex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
@@ -173,6 +173,7 @@ export async function signInWithPassword(formData: FormData) {
       data.user.email ?? '',
       data.user.user_metadata?.full_name ?? data.user.email ?? ''
     );
+    await touchLastLogin(data.user.id);
     cookieStore.set('preferredSignInView', 'password_signin', { path: '/' });
     redirectPath = getStatusRedirect('/', 'Success!', 'You are now signed in.');
   } else {

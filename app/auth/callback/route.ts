@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
-import { provisionNewUser } from '@/utils/dara/provision';
+import { provisionNewUser, touchLastLogin } from '@/utils/dara/provision';
 import { recordAudit } from '@/utils/dara/audit';
 
 // DARA-018: only allow same-origin, single-slash-rooted relative paths as the
@@ -36,6 +36,7 @@ export async function GET(request: Request) {
           user.email ?? '',
           user.user_metadata?.full_name ?? user.email ?? ''
         );
+        await touchLastLogin(daraUser.id);
         // Audit every successful OAuth / magic-link sign-in (NIST AU; DARA-013).
         await recordAudit({
           action: 'user.signin',
