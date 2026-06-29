@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { Save, KeyRound, Users, Cpu } from 'lucide-react';
+import { Save, KeyRound, Cpu, UsersRound } from 'lucide-react';
+import Link from 'next/link';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
@@ -20,7 +21,6 @@ import {
 
 const PROVIDERS = ['anthropic', 'openai', 'google'];
 const KEY_MODES = ['platform', 'byok'];
-const ROLES = ['company_admin', 'dept_admin', 'manager', 'reviewer'];
 
 async function requireCompanyAdmin() {
   const supabase = createClient();
@@ -96,45 +96,11 @@ async function updateApiKeys(formData: FormData) {
   revalidatePath('/app/settings');
 }
 
-async function updateUser(formData: FormData) {
-  'use server';
-  const daraUser = await requireCompanyAdmin();
-  const userId = String(formData.get('userId') ?? '');
-  await withTenant(daraUser.companyId, async (tx) => {
-    const target = await tx.daraUser.findFirst({
-      where: { id: userId, companyId: daraUser.companyId }
-    });
-    if (!target) return;
-    const role = String(formData.get('role') ?? target.role);
-    const newRole = ROLES.includes(role) ? role : target.role;
-    const isActive = formData.get('isActive') === 'on';
-    await tx.daraUser.update({
-      where: { id: userId },
-      data: { role: newRole as any, isActive }
-    });
-    await recordAudit({
-      action: 'member.update',
-      companyId: daraUser.companyId,
-      actorId: daraUser.id,
-      actorEmail: daraUser.email,
-      entityType: 'user',
-      entityId: userId,
-      metadata: { role: newRole, isActive, fromRole: target.role }
-    });
-  });
-  revalidatePath('/app/settings');
-}
-
 export default async function SettingsPage() {
   const daraUser = await requireCompanyAdmin();
-  const { company, users } = await withTenant(daraUser.companyId, async (tx) => {
-    const company = await tx.company.findUnique({ where: { id: daraUser.companyId } });
-    const users = await tx.daraUser.findMany({
-      where: { companyId: daraUser.companyId },
-      orderBy: { createdAt: 'asc' }
-    });
-    return { company, users };
-  });
+  const company = await withTenant(daraUser.companyId, (tx) =>
+    tx.company.findUnique({ where: { id: daraUser.companyId } })
+  );
   if (!company) redirect('/app/dashboard');
 
   const keyHints = {
@@ -224,31 +190,15 @@ export default async function SettingsPage() {
           </form>
         </section>
 
-        {/* Users */}
+        {/* Members moved to the Team page */}
         <section className={`${card} p-6`}>
-          <h2 className={`mb-4 flex items-center gap-2 ${sectionTitle}`}>
-            <Users className="h-4 w-4 text-t5" />Users{' '}
-            <span className="font-mono text-[11px] font-normal text-t5">({users.length})</span>
+          <h2 className={`mb-2 flex items-center gap-2 ${sectionTitle}`}>
+            <UsersRound className="h-4 w-4 text-t5" />Members &amp; teams
           </h2>
-          <div className="space-y-3">
-            {users.map((u) => (
-              <form key={u.id} action={updateUser} className="flex items-center gap-3 rounded-lg border border-line bg-bg p-3">
-                <input type="hidden" name="userId" value={u.id} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] text-t1">{u.name || u.email}</div>
-                  <div className="truncate text-[11px] text-t5">{u.email}</div>
-                </div>
-                <select name="role" defaultValue={u.role} className={`${fieldClasses} w-40`}>
-                  {ROLES.map((r) => (<option key={r} value={r}>{r}</option>))}
-                </select>
-                <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-t4">
-                  <input type="checkbox" name="isActive" defaultChecked={u.isActive} className={checkboxClasses} />
-                  active
-                </label>
-                <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
-              </form>
-            ))}
-          </div>
+          <p className="mb-4 text-[12px] text-t4">
+            Inviting people, assigning roles, and organizing teams now live on the Team page.
+          </p>
+          <Link href="/app/team" className={btnGhost}><UsersRound className="h-4 w-4" />Go to Team</Link>
         </section>
       </div>
     </div>

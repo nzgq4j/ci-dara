@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   FileText,
   Users,
+  UsersRound,
   Settings,
   ShieldCheck,
   ShieldAlert,
@@ -69,6 +70,9 @@ export default function Sidebar({
       label: 'Account',
       items: [
         { href: '/app/billing', label: 'Billing', icon: CreditCard },
+        ...(user.role === 'company_admin'
+          ? [{ href: '/app/team', label: 'Team', icon: UsersRound }]
+          : []),
         { href: '/app/settings', label: 'Settings', icon: Settings },
         ...(isAdmin
           ? [{ href: '/app/admin', label: 'Admin', icon: ShieldCheck }]

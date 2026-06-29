@@ -17,6 +17,13 @@ export async function provisionNewUser(
 
   if (existing) return existing;
 
+  // Team invitations: if this email was invited to an existing company, attach the
+  // new user there (with the invited role) instead of creating a fresh company.
+  // Runs on prismaAdmin because no tenant context exists yet (DARA-004). Matched
+  // case-insensitively against pending, unexpired invites; newest wins.
+  const invited = await acceptInvitationOnProvision(supabaseUserId, email, name);
+  if (invited) return invited;
+
   const companyBase = name || email.split('@')[0];
   const slug =
     companyBase
@@ -69,4 +76,70 @@ export async function getDaraUser(supabaseUserId: string) {
     where: { id: supabaseUserId },
     include: { company: true },
   });
+}
+
+// Attach a newly-signing-in user to a company they were invited to. Returns the
+// created DaraUser (with company) on success, or null if there is no usable invite
+// (caller then falls back to creating a new company). Cross-tenant by design — runs
+// before any tenant GUC is set — so it uses prismaAdmin (DARA-004).
+async function acceptInvitationOnProvision(
+  supabaseUserId: string,
+  email: string,
+  name: string
+) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const invite = await prismaAdmin.invitation.findFirst({
+    where: {
+      email: normalizedEmail,
+      status: 'pending',
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!invite) return null;
+
+  const user = await prismaAdmin.$transaction(async (tx) => {
+    const created = await tx.daraUser.create({
+      data: {
+        id: supabaseUserId,
+        companyId: invite.companyId,
+        email: normalizedEmail,
+        name: name || email,
+        // Company-level role mirrors the invited role; the company_admin gate is
+        // what matters for company-wide screens, team role lives on TeamMember.
+        role: invite.role,
+      },
+      include: { company: true },
+    });
+
+    if (invite.teamId) {
+      await tx.teamMember.create({
+        data: {
+          companyId: invite.companyId,
+          teamId: invite.teamId,
+          userId: supabaseUserId,
+          role: invite.role,
+        },
+      });
+    }
+
+    await tx.invitation.update({
+      where: { id: invite.id },
+      data: { status: 'accepted', acceptedAt: new Date() },
+    });
+
+    return created;
+  });
+
+  await recordAudit({
+    action: 'invitation.accept',
+    companyId: invite.companyId,
+    actorId: user.id,
+    actorEmail: user.email,
+    entityType: 'invitation',
+    entityId: invite.id,
+    metadata: { role: invite.role, teamId: invite.teamId?.toString() ?? null },
+  });
+
+  return user;
 }

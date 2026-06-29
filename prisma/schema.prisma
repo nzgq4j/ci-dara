@@ -38,6 +38,13 @@ enum UserRole {
   reviewer
 }
 
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
 enum ExtractionStatus {
   pending
   processing
@@ -89,6 +96,9 @@ model Company {
   evaluations   Evaluation[]
   results       Result[]
   jobQueue      JobQueue[]
+  teams         Team[]
+  teamMembers   TeamMember[]
+  invitations   Invitation[]
 
   @@index([plan, planStatus])
   @@map("dara_companies")
@@ -105,10 +115,69 @@ model DaraUser {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company         Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  teamMemberships TeamMember[]
 
   @@index([companyId])
   @@map("dara_users")
+}
+
+model Team {
+  id          BigInt   @id @default(autoincrement())
+  companyId   BigInt   @map("company_id")
+  name        String   @db.VarChar(255)
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  members     TeamMember[]
+  invitations Invitation[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@map("dara_teams")
+}
+
+model TeamMember {
+  id        BigInt   @id @default(autoincrement())
+  companyId BigInt   @map("company_id")
+  teamId    BigInt   @map("team_id")
+  userId    String   @map("user_id") @db.Uuid
+  role      UserRole @default(reviewer)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  team    Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user    DaraUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([companyId])
+  @@index([teamId])
+  @@index([userId])
+  @@map("dara_team_members")
+}
+
+model Invitation {
+  id          BigInt           @id @default(autoincrement())
+  companyId   BigInt           @map("company_id")
+  teamId      BigInt?          @map("team_id")
+  email       String           @db.VarChar(255)
+  role        UserRole         @default(reviewer)
+  status      InvitationStatus @default(pending)
+  invitedById String?          @map("invited_by_id") @db.Uuid
+  acceptedAt  DateTime?        @map("accepted_at")
+  expiresAt   DateTime         @map("expires_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  team    Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([email])
+  @@map("dara_invitations")
 }
 
 model Solicitation {
