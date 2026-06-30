@@ -410,6 +410,8 @@ model Result {
   aiConfidence    Decimal? @map("ai_confidence") @db.Decimal(5, 4)
   aiStrengths     Json?    @map("ai_strengths")
   aiWeaknesses    Json?    @map("ai_weaknesses")
+  aiCompliance    String?  @map("ai_compliance")
+  aiSuggestedChanges Json? @map("ai_suggested_changes")
   modelId         String?  @map("model_id") @db.VarChar(100)
   tokenIn         Int      @default(0) @map("token_in")
   tokenOut        Int      @default(0) @map("token_out")

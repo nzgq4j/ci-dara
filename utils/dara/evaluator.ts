@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { buildSystemPrompt, buildUserPrompt, parseResult } from '@/utils/dara/prompt';
@@ -143,6 +144,10 @@ export async function runEvaluation(
             aiScore: parsed.aiScore,
             aiRationale: parsed.aiRationale,
             aiConfidence: parsed.aiConfidence,
+            aiStrengths: parsed.strengths,
+            aiWeaknesses: parsed.weaknesses,
+            aiCompliance: parsed.compliance,
+            aiSuggestedChanges: parsed.suggestedChanges as unknown as Prisma.InputJsonValue,
             modelId: model,
             tokenIn: ai.tokenIn,
             tokenOut: ai.tokenOut
@@ -152,6 +157,10 @@ export async function runEvaluation(
             aiScore: parsed.aiScore,
             aiRationale: parsed.aiRationale,
             aiConfidence: parsed.aiConfidence,
+            aiStrengths: parsed.strengths,
+            aiWeaknesses: parsed.weaknesses,
+            aiCompliance: parsed.compliance,
+            aiSuggestedChanges: parsed.suggestedChanges as unknown as Prisma.InputJsonValue,
             modelId: model,
             tokenIn: ai.tokenIn,
             tokenOut: ai.tokenOut

@@ -20,6 +20,7 @@ import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation } from '@/utils/dara/evaluator';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
+import ResultFindings from '@/components/dara/ResultFindings';
 import {
   card,
   cardDashed,
@@ -996,6 +997,12 @@ export default async function SolicitationDetailPage({
                           {res.aiRationale}
                         </p>
                       )}
+                      <ResultFindings
+                        strengths={res.aiStrengths}
+                        weaknesses={res.aiWeaknesses}
+                        compliance={res.aiCompliance}
+                        suggestedChanges={res.aiSuggestedChanges}
+                      />
                     </div>
                   ))}
                 </div>

@@ -30,6 +30,11 @@ export interface PromptPersona {
   systemPrompt: string;
 }
 
+export interface SuggestedChange {
+  change: string;
+  rationale: string;
+}
+
 export interface ParsedResult {
   resultType: string;
   aiDetermination: string | null;
@@ -37,6 +42,10 @@ export interface ParsedResult {
   aiRationale: string;
   aiConfidence: number;
   rating: string | null;
+  strengths: string[];
+  weaknesses: string[];
+  compliance: string | null;
+  suggestedChanges: SuggestedChange[];
 }
 
 /** Build the system prompt for a persona, substituting template variables. */
@@ -89,14 +98,14 @@ export function buildUserPrompt(
   }
 
   if (type === 'administrative') {
-    return `${solSection}## Proposal Document\n\n${docBlock}\n\n## Instructions\n\n${INJECTION_GUARD}\n\nYou are evaluating whether this proposal complies with the ADMINISTRATIVE AND PRODUCTION requirements specified in the solicitation — specifically Section L instructions. These are non-substantive formatting requirements that are typically Go/No-Go disqualifiers.\n\nCheck for compliance with requirements such as:\n- Page limits per volume (count text pages; exclude required forms, certifications, resumes where stated)\n- Font type and minimum point size (look for font declarations; if not verifiable from extracted text, note as unverifiable)\n- Margin requirements (note if unverifiable from text extraction)\n- Required section headers and labeling (verify all required sections are present with correct headings)\n- File format requirements (PDF, DOCX, etc.)\n- Required forms and attachments\n- Header/footer requirements (page numbers, solicitation reference number)\n\nFor requirements that cannot be verified from extracted text (font size, exact margins), explicitly note that physical review of the original file is required and mark as "unable_to_determine".\n\nRespond ONLY with a valid JSON object matching this schema:\n\n${schema}\n\nFor the rationale field:\n- List each requirement you checked as a numbered finding: (1) REQUIREMENT TYPE: finding\n- Cite the solicitation section that specifies the requirement\n- Clearly state pass/fail/unverifiable for each\n- End with an overall summary\n\nDo not include any text outside the JSON object.`;
+    return `${solSection}## Proposal Document\n\n${docBlock}\n\n## Instructions\n\n${INJECTION_GUARD}\n\nYou are evaluating whether this proposal complies with the ADMINISTRATIVE AND PRODUCTION requirements specified in the solicitation — specifically Section L instructions. These are non-substantive formatting requirements that are typically Go/No-Go disqualifiers.\n\nCheck for compliance with requirements such as:\n- Page limits per volume (count text pages; exclude required forms, certifications, resumes where stated)\n- Font type and minimum point size (look for font declarations; if not verifiable from extracted text, note as unverifiable)\n- Margin requirements (note if unverifiable from text extraction)\n- Required section headers and labeling (verify all required sections are present with correct headings)\n- File format requirements (PDF, DOCX, etc.)\n- Required forms and attachments\n- Header/footer requirements (page numbers, solicitation reference number)\n\nFor requirements that cannot be verified from extracted text (font size, exact margins), explicitly note that physical review of the original file is required and mark as "unable_to_determine".\n\nRespond ONLY with a valid JSON object matching this schema:\n\n${schema}\n\nFor the rationale field:\n- List each requirement you checked as a numbered finding: (1) REQUIREMENT TYPE: finding\n- Cite the solicitation section that specifies the requirement\n- Clearly state pass/fail/unverifiable for each\n- End with an overall summary\n\n${FINDINGS_INSTRUCTIONS}\n\nDo not include any text outside the JSON object.`;
   }
 
   return `${solSection}## Proposal Document\n\n${docBlock}\n\n## Instructions\n\n${INJECTION_GUARD}\n\nEvaluate the proposal document against the criterion${
     solSection
       ? ', using the solicitation document as the authoritative reference for requirements'
       : ''
-  }. Respond ONLY with a valid JSON object matching this schema exactly:\n\n${schema}\n\nFor the rationale field, write a structured assessment using this format:\n- Begin with one sentence summarising the overall finding.\n- Then add numbered findings: (1) TOPIC: specific observation with evidence quoted or paraphrased from the proposal. (2) TOPIC: etc.\n- End with a brief statement of any critical gaps or missing elements if non-compliant.\nCite specific sections, page references, or quoted text from the proposal wherever possible.\n\nDo not include any text outside the JSON object.`;
+  }. Respond ONLY with a valid JSON object matching this schema exactly:\n\n${schema}\n\nFor the rationale field, write a structured assessment using this format:\n- Begin with one sentence summarising the overall finding.\n- Then add numbered findings: (1) TOPIC: specific observation with evidence quoted or paraphrased from the proposal. (2) TOPIC: etc.\n- End with a brief statement of any critical gaps or missing elements if non-compliant.\nCite specific sections, page references, or quoted text from the proposal wherever possible.\n\n${FINDINGS_INSTRUCTIONS}\n\nDo not include any text outside the JSON object.`;
 }
 
 /** Parse an AI response into a structured result, or null if unparseable. */
@@ -119,6 +128,8 @@ export function parseResult(text: string, criterionType: string): ParsedResult |
 
   const confidence = Math.min(1, Math.max(0, Number(data.confidence ?? 0.5) || 0));
 
+  const findings = parseFindings(data);
+
   if (criterionType === 'scored_factor') {
     return {
       resultType: 'scoring',
@@ -126,7 +137,8 @@ export function parseResult(text: string, criterionType: string): ParsedResult |
       aiScore: Math.min(100, Math.max(0, Number(data.score ?? 0) || 0)),
       aiRationale: String(data.rationale ?? ''),
       aiConfidence: confidence,
-      rating: data.rating ? String(data.rating) : null
+      rating: data.rating ? String(data.rating) : null,
+      ...findings
     };
   }
 
@@ -136,18 +148,77 @@ export function parseResult(text: string, criterionType: string): ParsedResult |
     aiScore: null,
     aiRationale: String(data.rationale ?? ''),
     aiConfidence: confidence,
-    rating: null
+    rating: null,
+    ...findings
   };
 }
 
+// Extract the structured findings (strengths / weaknesses / compliance /
+// suggested changes) from a parsed response, tolerant of missing/odd shapes.
+function parseFindings(data: any): {
+  strengths: string[];
+  weaknesses: string[];
+  compliance: string | null;
+  suggestedChanges: SuggestedChange[];
+} {
+  const toStrings = (v: any): string[] =>
+    Array.isArray(v)
+      ? v
+          .map((x) => (typeof x === 'string' ? x : String(x?.text ?? x?.item ?? '')))
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+
+  const suggestedChanges: SuggestedChange[] = Array.isArray(data.suggested_changes)
+    ? data.suggested_changes
+        .map((c: any) =>
+          typeof c === 'string'
+            ? { change: c.trim(), rationale: '' }
+            : {
+                change: String(c?.change ?? c?.suggestion ?? '').trim(),
+                rationale: String(c?.rationale ?? c?.reason ?? '').trim()
+              }
+        )
+        .filter((c: SuggestedChange) => c.change)
+    : [];
+
+  const compliance =
+    data.compliance != null && String(data.compliance).trim()
+      ? String(data.compliance).trim()
+      : null;
+
+  return {
+    strengths: toStrings(data.strengths),
+    weaknesses: toStrings(data.weaknesses),
+    compliance,
+    suggestedChanges
+  };
+}
+
+// Shared structured-findings fields appended to every schema. The model returns
+// these in addition to the score/determination so the UI can present formatted
+// strengths, weaknesses, compliance, and suggested changes with rationale.
+const FINDINGS_SCHEMA =
+  '"strengths": ["<key strength of the proposal for this criterion>", "..."], ' +
+  '"weaknesses": ["<key weakness, gap, or risk>", "..."], ' +
+  '"compliance": "<assessment of how well the proposal complies with this criterion\'s requirements, citing the relevant requirement>", ' +
+  '"suggested_changes": [{"change": "<specific change the offeror could make to improve>", "rationale": "<why this change helps / which requirement it addresses>"}]';
+
+const FINDINGS_INSTRUCTIONS =
+  'In addition to the rationale, populate the structured findings: ' +
+  '"strengths" and "weaknesses" as arrays of concise, evidence-based bullet points; ' +
+  '"compliance" as a short assessment of compliance with the criterion\'s requirements; ' +
+  'and "suggested_changes" as an array of concrete, actionable changes the offeror could make, each with a "rationale" explaining why. ' +
+  'Use an empty array when there are no items (e.g. no suggested changes).';
+
 function schemaFor(type: string): string {
   if (type === 'scored_factor') {
-    return '{"score": <integer 0-100>, "rating": "<Outstanding|Good|Acceptable|Marginal|Unacceptable>", "rationale": "<detailed evaluation>", "confidence": <float 0.0-1.0>}';
+    return `{"score": <integer 0-100>, "rating": "<Outstanding|Good|Acceptable|Marginal|Unacceptable>", "rationale": "<overall summary>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
   }
   if (type === 'administrative') {
-    return '{"determination": "<compliant|non_compliant|unable_to_determine>", "violations": ["<specific violation 1>", "<specific violation 2>"], "rationale": "<numbered per-requirement findings>", "confidence": <float 0.0-1.0>}';
+    return `{"determination": "<compliant|non_compliant|unable_to_determine>", "violations": ["<specific violation 1>", "<specific violation 2>"], "rationale": "<numbered per-requirement findings>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
   }
-  return '{"determination": "<compliant|non_compliant|unable_to_determine>", "rationale": "<detailed evaluation>", "confidence": <float 0.0-1.0>}';
+  return `{"determination": "<compliant|non_compliant|unable_to_determine>", "rationale": "<overall summary>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
 }
 
 /**
