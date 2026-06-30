@@ -79,6 +79,13 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   (Anthropic/OpenAI/Google + platform/BYOK resolution), evaluator, document
   upload + extraction (unpdf/mammoth), per-offeror **Run evaluation**
   (synchronous, `maxDuration=300`), results view.
+  - **Structured findings (2026-06-30):** every result returns formatted
+    **strengths**, **weaknesses**, **compliance**, and **suggested changes**
+    (each with a rationale) alongside the score/determination. Schema +
+    instructions in `prompt.ts`; stored in `Result.ai_{strengths,weaknesses,
+    compliance,suggested_changes}`; rendered by `components/dara/ResultFindings.tsx`
+    in the Matrix tab cards. Populates on the **next** run (older results show only
+    the rationale until re-run).
 - **Settings** (`/app/settings`, company admin): AI config + encrypted BYOK keys.
   (Member/team management moved to the Team page; Settings links to it.)
 - **Team** (`/app/team`, company admin): departments/sub-teams with per-team roles.
@@ -338,6 +345,7 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 - Application Admin: `utils/dara/platform.ts` (resolve/guard/manage admins + user ban/delete), `app/app/admin/{page.tsx,ai-actions.ts,PlatformAISelect.tsx}`, `components/layout/{PlatformAdminSidebar,AccountDisabled}.tsx`; tables `dara_platform_admins` (RLS `prisma/security/2026-06-30_platform_admins_rls.sql`), `dara_platform_settings` (RLS `…/2026-06-30_platform_settings_rls.sql`)
 - Platform AI: `utils/dara/{platform-ai.ts (DB settings),ai-catalog.ts (client-safe MODEL_CATALOG)}`; `resolveCompanyAI(company, platform)` in `providers.ts`; evaluator fetches `getPlatformAI()`
 - Onboarding: `app/onboarding/{page.tsx,OnboardingWizard.tsx,actions.ts}`, `app/welcome/{page.tsx,actions.ts}`; gate in `app/app/layout.tsx`; flags `Company.onboardedAt` + `DaraUser.onboardedAt`
+- Evaluation findings: `utils/dara/prompt.ts` (schema + `parseResult`), `utils/dara/evaluator.ts` (persists `ai_strengths/weaknesses/compliance/suggested_changes`), `components/dara/ResultFindings.tsx` (Matrix-tab render)
 - Company settings: `app/app/company/page.tsx` (profile/address/CMMC); 19 cols on `dara_companies`
 - App shell: `app/app/layout.tsx` (admin-vs-company branch), `components/layout/{Sidebar (Organization group),PlatformAdminSidebar,ChromeGate}.tsx`
 - Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin,team,company}/…`
@@ -431,6 +439,11 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   `david@crucibleinsight.com`); david deactivated in-console → reverted to normal user
   (company "Proposal Foundry"); david's admin row kept (deactivated). `admin@crucibleinsight.com`
   is a DB admin.
+- **Structured evaluation findings** (commit `ae42c0c`, deployed): results now return
+  formatted strengths / weaknesses / compliance / suggested-changes-with-rationale.
+  `Result` gained `ai_compliance` + `ai_suggested_changes` (migration `20260630040000`,
+  no RLS change — existing table). Confirmed platform-mode (non-BYOK) evals already use
+  the admin-configured Platform AI key + model. **Populates on next run.**
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —

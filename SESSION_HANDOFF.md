@@ -10,11 +10,11 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `139368f` (Platform AI settings) is
-  **deployed to prod and pushed**. This session, in order: `4076ec7` (onboarding +
+- **Branch:** `main`, clean. Last commit `ae42c0c` (structured evaluation findings)
+  is **deployed to prod and pushed**. This session, in order: `4076ec7` (onboarding +
   Organization group + Company settings), `5ecc949` (Create Account), `8fd5ac3`
   (invite email-verification gate), `d322114` (Application Admin), `139368f`
-  (Platform AI).
+  (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings).
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -40,10 +40,14 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   (not empty!). To change it: `vercel env add PLATFORM_ADMIN_EMAILS <env> --value "…" --force --yes`
   (piping stdin does NOT work — the CLI runs non-interactive for agents).
 - **Platform AI keys + model live in the console** (`/app/admin#ai`,
-  `dara_platform_settings`). Platform-mode evaluations resolve from there; the
-  `PLATFORM_ANTHROPIC_KEY` env var is now only a **fallback** (shown as "from env").
-  Move the key into the console to finish the migration. Model catalog:
-  `utils/dara/ai-catalog.ts`.
+  `dara_platform_settings`). Platform-mode (non-BYOK) evaluations resolve their key +
+  model from there; the `PLATFORM_ANTHROPIC_KEY` env var is now only a **fallback**
+  (shown as "from env"). Move the key into the console to finish the migration. Model
+  catalog: `utils/dara/ai-catalog.ts`.
+- **Structured evaluation findings are live** (strengths / weaknesses / compliance /
+  suggested changes + rationale; `ResultFindings.tsx` in the Matrix tab). They
+  **populate on the next evaluation run** — results from before this deploy show only
+  the rationale until re-run.
 - **Onboarding gate is live.** A brand-new org creator (un-onboarded company +
   `company_admin`) is routed to `/onboarding`; an invited member to `/welcome`.
   Existing companies/users were **backfilled as onboarded**, so current users are
@@ -79,8 +83,9 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   `/onboarding`; existing accounts won't).
 - **Billing** page renders (prod has `STRIPE_PUBLISHABLE_KEY` but the client reads
   `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — confirm).
-- A real **multi-criteria evaluation** end-to-end (platform mode now uses the
-  console-configured model).
+- A real **multi-criteria evaluation** end-to-end — confirms both the platform
+  key/model path AND the new **structured findings** rendering (strengths /
+  weaknesses / compliance / suggested changes) in the Matrix tab.
 
 ### C. Feature backlog (security-adjacent)
 1. **Per-company admin audit-log viewer** — `dara_audit_log` is per-company; build a
