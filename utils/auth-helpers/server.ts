@@ -5,7 +5,11 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getURL, getErrorRedirect, getStatusRedirect } from 'utils/helpers';
 import { getAuthTypes } from 'utils/auth-helpers/settings';
-import { provisionNewUser, touchLastLogin } from '@/utils/dara/provision';
+import {
+  provisionNewUser,
+  touchLastLogin,
+  EmailVerificationRequiredError
+} from '@/utils/dara/provision';
 
 function isValidEmail(email: string) {
   var regex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
@@ -168,14 +172,32 @@ export async function signInWithPassword(formData: FormData) {
   } else if (data.user) {
     // Email+password sign-in does not pass through /auth/callback, so provision
     // the Dara company/user here too. provisionNewUser is idempotent.
-    await provisionNewUser(
-      data.user.id,
-      data.user.email ?? '',
-      data.user.user_metadata?.full_name ?? data.user.email ?? ''
-    );
-    await touchLastLogin(data.user.id);
-    cookieStore.set('preferredSignInView', 'password_signin', { path: '/' });
-    redirectPath = getStatusRedirect('/', 'Success!', 'You are now signed in.');
+    try {
+      await provisionNewUser(
+        data.user.id,
+        data.user.email ?? '',
+        data.user.user_metadata?.full_name ?? data.user.email ?? '',
+        // A password signer has proven email ownership only once Supabase has
+        // confirmed the address (email_confirmed_at set). Gates invite acceptance.
+        Boolean(data.user.email_confirmed_at)
+      );
+      await touchLastLogin(data.user.id);
+      cookieStore.set('preferredSignInView', 'password_signin', { path: '/' });
+      redirectPath = getStatusRedirect('/', 'Success!', 'You are now signed in.');
+    } catch (e) {
+      if (e instanceof EmailVerificationRequiredError) {
+        // Pending invite for an unverified address — refuse the join and drop the
+        // session so there's no authenticated-but-unprovisioned redirect loop.
+        await supabase.auth.signOut();
+        redirectPath = getErrorRedirect(
+          '/signin/password_signin',
+          'Verify your email first.',
+          'You have a pending invitation. Confirm your email address, then sign in to join your team.'
+        );
+      } else {
+        throw e;
+      }
+    }
   } else {
     redirectPath = getErrorRedirect(
       '/signin/password_signin',

@@ -1,14 +1,30 @@
+import type { Invitation } from '@prisma/client';
 import { prismaAdmin } from '@/utils/prisma';
 import { recordAudit } from '@/utils/dara/audit';
+
+// Thrown when a sign-in matches a pending invitation to another company but the
+// signer has not proven they own the email. Callers catch this and route the user
+// to "confirm your email" instead of provisioning. (See provisionNewUser.)
+export class EmailVerificationRequiredError extends Error {
+  constructor() {
+    super('email_verification_required');
+    this.name = 'EmailVerificationRequiredError';
+  }
+}
 
 // Cross-tenant bootstrap: provisioning runs BEFORE a tenant context exists (the
 // company is being created here), and getDaraUser is the per-request *source* of
 // companyId — it must resolve a user before any tenant GUC could be set. Both
 // therefore use prismaAdmin, never the RLS-scoped tenant client. (DARA-004)
+//
+// `emailVerified` MUST reflect that the signer has proven ownership of `email`
+// (Supabase `email_confirmed_at` is set — true for OAuth/magic-link, and for
+// password only once the address is confirmed). It gates invitation acceptance.
 export async function provisionNewUser(
   supabaseUserId: string,
   email: string,
-  name: string
+  name: string,
+  emailVerified: boolean
 ) {
   const existing = await prismaAdmin.daraUser.findUnique({
     where: { id: supabaseUserId },
@@ -19,10 +35,28 @@ export async function provisionNewUser(
 
   // Team invitations: if this email was invited to an existing company, attach the
   // new user there (with the invited role) instead of creating a fresh company.
-  // Runs on prismaAdmin because no tenant context exists yet (DARA-004). Matched
-  // case-insensitively against pending, unexpired invites; newest wins.
-  const invited = await acceptInvitationOnProvision(supabaseUserId, email, name);
-  if (invited) return invited;
+  // Matched case-insensitively against pending, unexpired invites; newest wins.
+  const normalizedEmail = email.trim().toLowerCase();
+  const invite = await prismaAdmin.invitation.findFirst({
+    where: {
+      email: normalizedEmail,
+      status: 'pending',
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (invite) {
+    // SECURITY (defense-in-depth): only let an invitation attach this account to
+    // another company's tenant once the signer has proven they own this email.
+    // OAuth and magic-link inherently prove ownership; password sign-up only does
+    // after the address is confirmed. Without this gate, a user who registers an
+    // address they do not control — when Supabase "Confirm email" is disabled —
+    // could claim a seat invited to that address and read that company's data.
+    // This does NOT rely on the Supabase setting being on.
+    if (!emailVerified) throw new EmailVerificationRequiredError();
+    return acceptInvitation(supabaseUserId, normalizedEmail, name, invite);
+  }
 
   const companyBase = name || email.split('@')[0];
   const slug =
@@ -91,33 +125,23 @@ export async function touchLastLogin(supabaseUserId: string) {
   }
 }
 
-// Attach a newly-signing-in user to a company they were invited to. Returns the
-// created DaraUser (with company) on success, or null if there is no usable invite
-// (caller then falls back to creating a new company). Cross-tenant by design — runs
-// before any tenant GUC is set — so it uses prismaAdmin (DARA-004).
-async function acceptInvitationOnProvision(
+// Attach a newly-signing-in user to a company they were invited to. The caller has
+// already confirmed the invite is pending+unexpired AND that the email is verified.
+// Cross-tenant by design — runs before any tenant GUC is set — so it uses prismaAdmin
+// (DARA-004).
+async function acceptInvitation(
   supabaseUserId: string,
-  email: string,
-  name: string
+  normalizedEmail: string,
+  name: string,
+  invite: Invitation
 ) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const invite = await prismaAdmin.invitation.findFirst({
-    where: {
-      email: normalizedEmail,
-      status: 'pending',
-      expiresAt: { gt: new Date() },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!invite) return null;
-
   const user = await prismaAdmin.$transaction(async (tx) => {
     const created = await tx.daraUser.create({
       data: {
         id: supabaseUserId,
         companyId: invite.companyId,
         email: normalizedEmail,
-        name: name || email,
+        name: name || normalizedEmail,
         // Company-level role mirrors the invited role; the company_admin gate is
         // what matters for company-wide screens, team role lives on TeamMember.
         role: invite.role,
