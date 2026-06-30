@@ -71,6 +71,15 @@ export function resolveCompanyAI(
   return { provider, model: company.activeModel, apiKey: decryptSecret(enc) };
 }
 
+// Per-provider output-token ceilings, so a caller's requested max_tokens never exceeds
+// what the API accepts (e.g. Google rejects > 8192). Keeps batched runs portable across
+// providers without the caller having to know each limit.
+function providerMaxOutput(provider: string): number {
+  if (provider === 'google') return 8192;
+  if (provider === 'openai') return 16384;
+  return 64000; // anthropic — effectively uncapped for our requests
+}
+
 /** Dispatch a completion to the configured provider. */
 export async function complete(
   provider: string,
@@ -83,9 +92,10 @@ export async function complete(
   if (!apiKey) {
     throw new Error(`No API key configured for provider "${provider}".`);
   }
-  if (provider === 'openai') return openaiComplete(system, user, model, apiKey, maxTokens);
-  if (provider === 'google') return googleComplete(system, user, model, apiKey, maxTokens);
-  return anthropicComplete(system, user, model, apiKey, maxTokens);
+  const capped = Math.max(256, Math.min(maxTokens, providerMaxOutput(provider)));
+  if (provider === 'openai') return openaiComplete(system, user, model, apiKey, capped);
+  if (provider === 'google') return googleComplete(system, user, model, apiKey, capped);
+  return anthropicComplete(system, user, model, apiKey, capped);
 }
 
 async function anthropicComplete(

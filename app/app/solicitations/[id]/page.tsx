@@ -684,9 +684,10 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     tx.review.update({ where: { id: reviewId }, data: { status: 'in_progress' } })
   );
 
-  // Time-box the run well under the 300s function limit; large reviews resume on the
-  // next click (runEvaluation skips requirements that already have a result).
-  const deadline = Date.now() + 240_000;
+  // Time-box the run under the 300s function limit, leaving generous headroom so even a
+  // slow single batch (large proposal + slower model) finishes before the hard kill.
+  // Large reviews resume on the next click (runEvaluation skips already-done requirements).
+  const deadline = Date.now() + 200_000;
   let totalResults = 0;
   let totalErrors = 0;
   let totalDone = 0;

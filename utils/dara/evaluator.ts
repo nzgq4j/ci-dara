@@ -57,12 +57,15 @@ export interface EvalSummary {
   error?: string;
 }
 
-// How many requirements to assess per LLM call. One-per-call does not scale (a
-// shredded RFP has 100+); batching by tier keeps a full review to a handful of calls.
-// Pass/fail compliance items are tiny (a determination), so batch many; scored factors
-// carry a full narrative, so batch few.
+// How many requirements to assess per LLM call. These are robustness DEFAULTS, not
+// values tuned to any one solicitation: correctness does not depend on them because the
+// run is resumable (skips done requirements) and the parser salvages complete items from
+// a truncated batch — so if a batch is too big for the model's output budget, the dropped
+// items simply retry on the next pass. Pass/fail compliance items are tiny (a single
+// determination) so batch many; scored factors carry a full narrative, so batch few and
+// stay under the smallest provider output ceiling (Google 8192).
 const BATCH_SIZE_COMPLIANCE = 40;
-const BATCH_SIZE_SCORED = 8;
+const BATCH_SIZE_SCORED = 6;
 const BATCH_MAX_TOKENS = 16000;
 
 // Adapt a Requirement row to the prompt builder's criterion shape. Scored Section M
