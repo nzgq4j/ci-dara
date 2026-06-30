@@ -33,7 +33,7 @@ export default async function DashboardPage() {
 
   const [
     solicitationCount,
-    offerorCount,
+    reviewCount,
     evaluationCount,
     activePersonaCount,
     recentSolicitations,
@@ -47,20 +47,20 @@ export default async function DashboardPage() {
     return Promise.all([
       // companyId filters kept as defense-in-depth alongside RLS (DARA-004).
       tx.solicitation.count({ where: solWhere }),
-      tx.response.count({ where: { companyId, solicitation: access } }),
+      tx.review.count({ where: { companyId, solicitation: access } }),
       tx.evaluation.count({ where: { companyId, solicitation: access } }),
       tx.persona.count({ where: { companyId, isActive: true } }),
       tx.solicitation.findMany({
         where: solWhere,
         orderBy: { createdAt: 'desc' },
         take: 5,
-        include: { _count: { select: { requirements: true, responses: true } } }
+        include: { _count: { select: { requirements: true, reviews: true } } }
       }),
       tx.evaluation.findMany({
         where: { companyId, solicitation: access },
         orderBy: { createdAt: 'desc' },
         take: 5,
-        include: { response: true }
+        include: { review: true }
       }),
       tx.persona.findMany({ where: { companyId }, select: { id: true, displayName: true } })
     ]);
@@ -79,7 +79,7 @@ export default async function DashboardPage() {
 
   const stats = [
     { label: 'Solicitations', value: solicitationCount, color: '#3b6ef0', sub: 'total packages' },
-    { label: 'Offerors', value: offerorCount, color: '#7c3aed', sub: 'across solicitations' },
+    { label: 'Reviews', value: reviewCount, color: '#7c3aed', sub: 'across solicitations' },
     { label: 'Evaluations', value: evaluationCount, color: '#f59e0b', sub: 'run to date' },
     { label: 'Active Personas', value: activePersonaCount, color: '#10b981', sub: 'evaluator panel' }
   ];
@@ -158,7 +158,7 @@ export default async function DashboardPage() {
                     Reqs
                   </th>
                   <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
-                    Offerors
+                    Reviews
                   </th>
                 </tr>
               </thead>
@@ -181,7 +181,7 @@ export default async function DashboardPage() {
                       {sol._count.requirements}
                     </td>
                     <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
-                      {sol._count.responses}
+                      {sol._count.reviews}
                     </td>
                   </tr>
                 ))}
@@ -208,7 +208,7 @@ export default async function DashboardPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[12px] font-semibold text-t2">
-                      {ev.response?.offerorName ?? '—'}
+                      {ev.review?.name ?? '—'}
                     </div>
                     <div className="truncate text-[10px] text-t5">
                       {personaMap.get(ev.personaId.toString()) ?? 'Persona'}

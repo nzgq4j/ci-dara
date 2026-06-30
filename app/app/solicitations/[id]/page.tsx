@@ -20,6 +20,7 @@ import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
+import { captureSnapshot } from '@/utils/dara/reviews';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import ResultCard from '@/components/dara/ResultCard';
@@ -69,6 +70,20 @@ const STATUS_PILL: Record<string, string> = {
   non_compliant: 'text-[#e07d7d]',
   not_applicable: 'text-t4'
 };
+
+// Color-team gates. The color is a label only — review behavior comes from the
+// chosen personas. `dot` drives the swatch; `text` tints the name.
+const COLOR_TEAMS: { value: string; label: string; dot: string; text: string }[] = [
+  { value: 'pink', label: 'Pink', dot: '#ec4899', text: 'text-[#ec4899]' },
+  { value: 'red', label: 'Red', dot: '#ef4444', text: 'text-[#ef4444]' },
+  { value: 'gold', label: 'Gold', dot: '#eab308', text: 'text-[#eab308]' },
+  { value: 'blue', label: 'Blue', dot: '#3b82f6', text: 'text-[#6f9bf5]' },
+  { value: 'green', label: 'Green', dot: '#22c55e', text: 'text-[#7de0a0]' },
+  { value: 'black', label: 'Black', dot: '#9ca3af', text: 'text-t3' },
+  { value: 'white', label: 'White', dot: '#e5e7eb', text: 'text-t2' }
+];
+const COLOR_TEAM_MAP: Record<string, { label: string; dot: string; text: string }> =
+  Object.fromEntries(COLOR_TEAMS.map((c) => [c.value, c]));
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -296,80 +311,145 @@ async function deleteRequirement(formData: FormData) {
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
-// ---- Response (offeror) actions ----
-async function addResponse(formData: FormData) {
+// ---- Color-team review actions ----
+const VALID_COLORS = new Set(COLOR_TEAMS.map((c) => c.value));
+
+async function createReview(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  const offerorName = String(formData.get('offerorName') ?? '').trim();
-  if (!offerorName) return;
-  const created = await withTenant(daraUser.companyId, (tx) =>
-    tx.response.create({
+  const name = String(formData.get('name') ?? '').trim();
+  if (!name) return;
+  const color = String(formData.get('colorTeam') ?? 'pink');
+  const personaIds = formData
+    .getAll('persona')
+    .map((v) => String(v))
+    .filter((v) => /^\d+$/.test(v))
+    .map((v) => BigInt(v));
+
+  const created = await withTenant(daraUser.companyId, async (tx) => {
+    const review = await tx.review.create({
       data: {
         companyId: daraUser.companyId,
         solicitationId: solId,
-        offerorName,
-        notes: String(formData.get('notes') ?? '').trim() || null
+        name,
+        colorTeam: (VALID_COLORS.has(color) ? color : 'pink') as any,
+        notes: String(formData.get('notes') ?? '').trim() || null,
+        createdBy: daraUser.id
       }
-    })
-  );
+    });
+    if (personaIds.length) {
+      // Keep only personas that belong to this company.
+      const valid = await tx.persona.findMany({
+        where: { id: { in: personaIds }, companyId: daraUser.companyId },
+        select: { id: true }
+      });
+      if (valid.length) {
+        await tx.reviewPersona.createMany({
+          data: valid.map((p) => ({ companyId: daraUser.companyId, reviewId: review.id, personaId: p.id }))
+        });
+      }
+    }
+    return review;
+  });
+  // Freeze the current proposal draft into the new review (no-op if none uploaded yet).
+  await captureSnapshot(created.id, daraUser.companyId);
   await recordAudit({
-    action: 'response.create',
+    action: 'review.create',
     companyId: daraUser.companyId,
     actorId: daraUser.id,
     actorEmail: daraUser.email,
-    entityType: 'response',
+    entityType: 'review',
     entityId: created.id,
-    metadata: { solicitationId: solId.toString(), offerorName }
+    metadata: { solicitationId: solId.toString(), name, colorTeam: color }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
-async function updateResponse(formData: FormData) {
+async function updateReview(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
-  const id = BigInt(String(formData.get('responseId')));
+  const id = BigInt(String(formData.get('reviewId')));
   const solId = BigInt(String(formData.get('solId')));
+  const color = String(formData.get('colorTeam') ?? '');
+  const personaIds = formData
+    .getAll('persona')
+    .map((v) => String(v))
+    .filter((v) => /^\d+$/.test(v))
+    .map((v) => BigInt(v));
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.response.findFirst({ where: { id, companyId: daraUser.companyId } });
+    const owned = await tx.review.findFirst({ where: { id, companyId: daraUser.companyId } });
     if (!owned) return false;
-    await tx.response.update({
+    await tx.review.update({
       where: { id },
       data: {
-        offerorName: String(formData.get('offerorName') ?? '').trim() || owned.offerorName,
+        name: String(formData.get('name') ?? '').trim() || owned.name,
+        colorTeam: (VALID_COLORS.has(color) ? color : owned.colorTeam) as any,
         notes: String(formData.get('notes') ?? '').trim() || null
       }
     });
+    // Replace the reviewer set.
+    await tx.reviewPersona.deleteMany({ where: { reviewId: id, companyId: daraUser.companyId } });
+    if (personaIds.length) {
+      const valid = await tx.persona.findMany({
+        where: { id: { in: personaIds }, companyId: daraUser.companyId },
+        select: { id: true }
+      });
+      if (valid.length) {
+        await tx.reviewPersona.createMany({
+          data: valid.map((p) => ({ companyId: daraUser.companyId, reviewId: id, personaId: p.id }))
+        });
+      }
+    }
     return true;
   });
   if (!ok) redirect('/app/solicitations');
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
-async function deleteResponse(formData: FormData) {
+async function deleteReview(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
-  const id = BigInt(String(formData.get('responseId')));
+  const id = BigInt(String(formData.get('reviewId')));
   const solId = BigInt(String(formData.get('solId')));
-  const owned = await withTenant(daraUser.companyId, (tx) =>
-    tx.response.findFirst({
-      where: { id, companyId: daraUser.companyId },
-      include: { files: true }
-    })
-  );
-  if (!owned) redirect('/app/solicitations');
-  // Storage I/O outside any transaction.
-  await removeStored(owned.files.map((f) => f.storedFilename));
-  await withTenant(daraUser.companyId, (tx) => tx.response.delete({ where: { id } }));
+  // Snapshots reference the proposal's shared stored files (owned by SolDocument), so
+  // deleting a review must NOT remove the blobs — just drop the rows (cascades docs +
+  // personas + evaluations).
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.review.findFirst({ where: { id, companyId: daraUser.companyId } });
+    if (!owned) return false;
+    await tx.review.delete({ where: { id } });
+    return true;
+  });
+  if (!ok) redirect('/app/solicitations');
   await recordAudit({
-    action: 'response.delete',
+    action: 'review.delete',
     companyId: daraUser.companyId,
     actorId: daraUser.id,
     actorEmail: daraUser.email,
-    entityType: 'response',
+    entityType: 'review',
+    entityId: id
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// Re-freeze the current proposal draft into a review.
+async function captureSnapshotAction(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('reviewId')));
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const summary = await captureSnapshot(id, daraUser.companyId);
+  await recordAudit({
+    action: 'review.snapshot',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'review',
     entityId: id,
-    metadata: { offerorName: owned.offerorName, files: owned.files.length }
+    metadata: { docs: summary.count }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -382,6 +462,8 @@ async function uploadSolDoc(formData: FormData) {
   await requireViewableSolicitation(solId, daraUser);
   const file = formData.get('file');
   if (!(file instanceof File) || file.size === 0) return;
+  // rfp = the solicitation itself; proposal = our working draft (reviews snapshot it).
+  const docType = String(formData.get('docType') ?? 'rfp') === 'proposal' ? 'proposal' : 'rfp';
   // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'sol', Date.now());
   const created = await withTenant(daraUser.companyId, (tx) =>
@@ -389,6 +471,7 @@ async function uploadSolDoc(formData: FormData) {
       data: {
         companyId: daraUser.companyId,
         solicitationId: solId,
+        docType,
         originalFilename: doc.originalFilename,
         storedFilename: doc.storedFilename,
         fileSize: doc.fileSize,
@@ -405,7 +488,7 @@ async function uploadSolDoc(formData: FormData) {
     actorEmail: daraUser.email,
     entityType: 'sol_document',
     entityId: created.id,
-    metadata: { solicitationId: solId.toString(), filename: doc.originalFilename }
+    metadata: { solicitationId: solId.toString(), filename: doc.originalFilename, docType }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -433,97 +516,47 @@ async function deleteSolDoc(formData: FormData) {
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
-async function uploadResponseFile(formData: FormData) {
+// ---- Run a color-team review ----
+// Run a color-team review: the chosen reviewer personas (or all active if none were
+// selected) each evaluate the review's frozen proposal snapshot against the
+// requirements. Returns a summary so the client RunPanel can show a completion notice.
+async function runReviewAction(formData: FormData): Promise<RunState> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
-  const responseId = BigInt(String(formData.get('responseId')));
-  const response = await withTenant(daraUser.companyId, (tx) =>
-    tx.response.findFirst({
-      where: { id: responseId, companyId: daraUser.companyId }
-    })
-  );
-  if (!response) return;
-  const file = formData.get('file');
-  if (!(file instanceof File) || file.size === 0) return;
-  // Upload + extraction (Storage + CPU) outside any transaction.
-  const doc = await uploadAndExtract(file, daraUser.companyId, 'response', Date.now());
-  const created = await withTenant(daraUser.companyId, (tx) =>
-    tx.responseFile.create({
-      data: {
-        companyId: daraUser.companyId,
-        responseId,
-        originalFilename: doc.originalFilename,
-        storedFilename: doc.storedFilename,
-        fileSize: doc.fileSize,
-        extractionStatus: doc.extractionStatus,
-        extractedText: doc.extractedText || null
-      }
-    })
-  );
-  await recordAudit({
-    action: 'responsefile.upload',
-    companyId: daraUser.companyId,
-    actorId: daraUser.id,
-    actorEmail: daraUser.email,
-    entityType: 'response_file',
-    entityId: created.id,
-    metadata: { responseId: responseId.toString(), filename: doc.originalFilename }
-  });
-  revalidatePath(`/app/solicitations/${solId}`);
-}
-
-async function deleteResponseFile(formData: FormData) {
-  'use server';
-  const daraUser = await authedUser();
-  const id = BigInt(String(formData.get('fileId')));
-  const solId = BigInt(String(formData.get('solId')));
-  const owned = await withTenant(daraUser.companyId, (tx) =>
-    tx.responseFile.findFirst({ where: { id, companyId: daraUser.companyId } })
-  );
-  if (!owned) return;
-  await removeStored([owned.storedFilename]);
-  await withTenant(daraUser.companyId, (tx) => tx.responseFile.delete({ where: { id } }));
-  await recordAudit({
-    action: 'responsefile.delete',
-    companyId: daraUser.companyId,
-    actorId: daraUser.id,
-    actorEmail: daraUser.email,
-    entityType: 'response_file',
-    entityId: id,
-    metadata: { filename: owned.originalFilename }
-  });
-  revalidatePath(`/app/solicitations/${solId}`);
-}
-
-// ---- Run evaluations ----
-// Returns a summary so the client RunPanel can show a completion notice.
-async function runEvaluationsAction(formData: FormData): Promise<RunState> {
-  'use server';
-  const daraUser = await authedUser();
-  const solId = BigInt(String(formData.get('solId')));
-  const responseId = BigInt(String(formData.get('responseId')));
+  const reviewId = BigInt(String(formData.get('reviewId')));
   await requireViewableSolicitation(solId, daraUser);
-  const activePersonas = await withTenant(daraUser.companyId, async (tx) => {
-    const response = await tx.response.findFirst({
-      where: { id: responseId, companyId: daraUser.companyId }
+  const personas = await withTenant(daraUser.companyId, async (tx) => {
+    const review = await tx.review.findFirst({
+      where: { id: reviewId, companyId: daraUser.companyId },
+      include: { reviewPersonas: true }
     });
-    if (!response) return null;
+    if (!review) return null;
+    const chosen = review.reviewPersonas.map((rp) => rp.personaId);
+    // Chosen reviewers if any (still gated to active); otherwise all active personas.
     return tx.persona.findMany({
-      where: { companyId: daraUser.companyId, isActive: true }
+      where: {
+        companyId: daraUser.companyId,
+        isActive: true,
+        ...(chosen.length ? { id: { in: chosen } } : {})
+      }
     });
   });
-  if (!activePersonas || activePersonas.length === 0) {
+  if (!personas || personas.length === 0) {
     return { ok: false, personas: 0, results: 0, errors: 0 };
   }
 
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.review.update({ where: { id: reviewId }, data: { status: 'in_progress' } })
+  );
+
   let totalResults = 0;
   let totalErrors = 0;
-  for (const persona of activePersonas) {
+  for (const persona of personas) {
     // Find-or-create the evaluation row in its own short burst...
     const evaluation = await withTenant(daraUser.companyId, async (tx) => {
       const existing = await tx.evaluation.findFirst({
-        where: { companyId: daraUser.companyId, responseId, personaId: persona.id }
+        where: { companyId: daraUser.companyId, reviewId, personaId: persona.id }
       });
       return (
         existing ??
@@ -531,7 +564,7 @@ async function runEvaluationsAction(formData: FormData): Promise<RunState> {
           data: {
             companyId: daraUser.companyId,
             solicitationId: solId,
-            responseId,
+            reviewId,
             personaId: persona.id,
             status: 'pending'
           }
@@ -544,17 +577,21 @@ async function runEvaluationsAction(formData: FormData): Promise<RunState> {
     totalResults += summary.results;
     totalErrors += summary.errors;
   }
+
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.review.update({ where: { id: reviewId }, data: { status: 'complete' } })
+  );
   await recordAudit({
-    action: 'evaluation.run',
+    action: 'review.run',
     companyId: daraUser.companyId,
     actorId: daraUser.id,
     actorEmail: daraUser.email,
-    entityType: 'response',
-    entityId: responseId,
+    entityType: 'review',
+    entityId: reviewId,
     // Record the CUI egress target for the data-boundary trail (DARA-007).
     metadata: {
       solicitationId: solId.toString(),
-      personas: activePersonas.length,
+      personas: personas.length,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
@@ -562,7 +599,7 @@ async function runEvaluationsAction(formData: FormData): Promise<RunState> {
   revalidatePath(`/app/solicitations/${solId}`);
   return {
     ok: totalResults > 0,
-    personas: activePersonas.length,
+    personas: personas.length,
     results: totalResults,
     errors: totalErrors
   };
@@ -632,14 +669,17 @@ export default async function SolicitationDetailPage({
         requirements: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
         solDocs: { orderBy: { uploadedAt: 'desc' } },
         departments: { include: { team: true } },
-        responses: {
+        reviews: {
           orderBy: { createdAt: 'desc' },
-          include: { files: { orderBy: { uploadedAt: 'desc' } } }
+          include: {
+            documents: { orderBy: { capturedAt: 'desc' } },
+            reviewPersonas: true
+          }
         },
         evaluations: {
           orderBy: { createdAt: 'desc' },
           include: {
-            response: true,
+            review: true,
             results: {
               include: {
                 requirement: true,
@@ -682,14 +722,17 @@ export default async function SolicitationDetailPage({
 
   const sid = solicitation.id.toString();
   const canEvaluate = activeCount > 0 && solicitation.requirements.length > 0;
+  const reviews = solicitation.reviews;
+  const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');
+  const proposalDocs = solicitation.solDocs.filter((d) => d.docType === 'proposal');
 
-  // ---- Build the score matrix (offerors × requirements) from evaluation results ----
-  // For each offeror/requirement pair, average the numeric AI scores across every
+  // ---- Build the score matrix (reviews × requirements) from evaluation results ----
+  // For each review/requirement pair, average the numeric AI scores across every
   // persona that scored it; fall back to the first determination otherwise.
   const cellMap = new Map<string, { scores: number[]; determinations: string[] }>();
   for (const ev of solicitation.evaluations) {
     for (const res of ev.results) {
-      const key = `${ev.responseId.toString()}:${res.requirementId.toString()}`;
+      const key = `${ev.reviewId.toString()}:${res.requirementId.toString()}`;
       const cell = cellMap.get(key) ?? { scores: [], determinations: [] };
       if (res.aiScore != null) cell.scores.push(Number(res.aiScore));
       else if (res.aiDetermination) cell.determinations.push(res.aiDetermination);
@@ -789,39 +832,63 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
+  const docList = (docs: typeof solicitation.solDocs, empty: string) =>
+    docs.length > 0 ? (
+      <ul className="mb-4 space-y-2">
+        {docs.map((d) => (
+          <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2.5">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
+              <span className="truncate text-[13px] text-t2">{d.originalFilename}</span>
+              <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(d.fileSize)}</span>
+              <StatusBadge status={d.extractionStatus} />
+            </span>
+            <form action={deleteSolDoc}>
+              <input type="hidden" name="solId" value={sid} />
+              <input type="hidden" name="docId" value={d.id.toString()} />
+              <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+            </form>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p className="mb-4 text-[13px] text-t5">{empty}</p>
+    );
+
   const documentsPanel = (
     <div className="space-y-4">
       <CuiBoundaryNotice
         provider={daraUser.company.activeProvider}
         mode={daraUser.company.aiKeyMode}
       />
+
       <div className={`${card} p-5`}>
-      {solicitation.solDocs.length > 0 ? (
-        <ul className="mb-4 space-y-2">
-          {solicitation.solDocs.map((d) => (
-            <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2.5">
-              <span className="flex min-w-0 items-center gap-2.5">
-                <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
-                <span className="truncate text-[13px] text-t2">{d.originalFilename}</span>
-                <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(d.fileSize)}</span>
-                <StatusBadge status={d.extractionStatus} />
-              </span>
-              <form action={deleteSolDoc}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="docId" value={d.id.toString()} />
-                <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
-              </form>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mb-4 text-[13px] text-t5">No solicitation documents uploaded yet.</p>
-      )}
-      <form action={uploadSolDoc} className="flex items-center gap-3">
-        <input type="hidden" name="solId" value={sid} />
-        <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
-        <button type="submit" className={btnPrimary}><Upload className="h-4 w-4" />Upload</button>
-      </form>
+        <h2 className={`mb-1 ${sectionTitle}`}>Solicitation (RFP)</h2>
+        <p className="mb-4 text-[13px] text-t4">
+          The solicitation itself — the compliance matrix is generated from these.
+        </p>
+        {docList(rfpDocs, 'No solicitation documents uploaded yet.')}
+        <form action={uploadSolDoc} className="flex items-center gap-3">
+          <input type="hidden" name="solId" value={sid} />
+          <input type="hidden" name="docType" value="rfp" />
+          <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
+          <button type="submit" className={btnPrimary}><Upload className="h-4 w-4" />Upload</button>
+        </form>
+      </div>
+
+      <div className={`${card} p-5`}>
+        <h2 className={`mb-1 ${sectionTitle}`}>Our proposal (working draft)</h2>
+        <p className="mb-4 text-[13px] text-t4">
+          The draft your color teams review. Each review freezes a snapshot of these at
+          the moment it is captured.
+        </p>
+        {docList(proposalDocs, 'No proposal documents uploaded yet.')}
+        <form action={uploadSolDoc} className="flex items-center gap-3">
+          <input type="hidden" name="solId" value={sid} />
+          <input type="hidden" name="docType" value="proposal" />
+          <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
+          <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />Upload</button>
+        </form>
       </div>
     </div>
   );
@@ -1012,7 +1079,33 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const offerorsPanel = (
+  const personaChips = (selected: Set<string>) => (
+    <div className="space-y-1.5">
+      <label className={labelClasses}>Reviewers (personas)</label>
+      {personas.length === 0 ? (
+        <p className="text-[12px] text-t5">
+          No personas yet — create them on the{' '}
+          <Link href="/app/personas" className="text-[#3b6ef0] hover:underline">Personas</Link> page.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {personas.map((p) => (
+            <label
+              key={p.id.toString()}
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-1.5 text-[13px] transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1 ${p.isActive ? 'text-t3' : 'text-t5'}`}
+            >
+              <input type="checkbox" name="persona" value={p.id.toString()} defaultChecked={selected.has(p.id.toString())} className="peer sr-only" />
+              <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
+              {p.icon ? `${p.icon} ` : ''}{p.displayName}{p.isActive ? '' : ' (inactive)'}
+            </label>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-t5">No reviewers selected → all active personas run.</p>
+    </div>
+  );
+
+  const colorTeamsPanel = (
     <div className="space-y-4">
       <CuiBoundaryNotice
         provider={daraUser.company.activeProvider}
@@ -1020,92 +1113,110 @@ export default async function SolicitationDetailPage({
       />
       {!canEvaluate && (
         <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
-          To run evaluations you need at least one criterion and one active persona
-          ({solicitation.requirements.length} criteria, {activeCount} active personas).
+          To run a review you need at least one requirement (Compliance tab) and one active
+          persona ({solicitation.requirements.length} requirements, {activeCount} active personas).
         </p>
       )}
-      {solicitation.responses.map((r) => (
-        <div key={r.id.toString()} className={`${card} p-4`}>
-          <form action={updateResponse} className="space-y-3">
-            <input type="hidden" name="solId" value={sid} />
-            <input type="hidden" name="responseId" value={r.id.toString()} />
-            <div className="grid gap-3 sm:grid-cols-12">
-              <div className="space-y-1.5 sm:col-span-5">
-                <label className={labelClasses}>Offeror name</label>
-                <input name="offerorName" type="text" defaultValue={r.offerorName} className={fieldClasses} />
+      {proposalDocs.length === 0 && (
+        <p className="rounded-lg border border-line bg-surf px-4 py-2.5 text-[12px] text-t4">
+          Upload your proposal working draft on the <span className="text-t2">Documents</span> tab,
+          then capture a snapshot for each review.
+        </p>
+      )}
+
+      {reviews.map((rv) => {
+        const ct = COLOR_TEAM_MAP[rv.colorTeam] ?? COLOR_TEAM_MAP.pink;
+        const sel = new Set(rv.reviewPersonas.map((rp) => rp.personaId.toString()));
+        const runCount = sel.size
+          ? personas.filter((p) => p.isActive && sel.has(p.id.toString())).length
+          : activeCount;
+        return (
+          <div key={rv.id.toString()} className={`${card} p-4`}>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ct.dot }} />
+              <span className={`text-[13px] font-semibold ${ct.text}`}>{ct.label} team</span>
+              <StatusBadge status={rv.status} />
+            </div>
+            <form action={updateReview} className="space-y-3">
+              <input type="hidden" name="solId" value={sid} />
+              <input type="hidden" name="reviewId" value={rv.id.toString()} />
+              <div className="grid gap-3 sm:grid-cols-12">
+                <div className="space-y-1.5 sm:col-span-8">
+                  <label className={labelClasses}>Review name</label>
+                  <input name="name" type="text" defaultValue={rv.name} className={fieldClasses} />
+                </div>
+                <div className="space-y-1.5 sm:col-span-4">
+                  <label className={labelClasses}>Color team</label>
+                  <select name="colorTeam" defaultValue={rv.colorTeam} className={fieldClasses}>
+                    {COLOR_TEAMS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+                  </select>
+                </div>
               </div>
-              <div className="space-y-1.5 sm:col-span-7">
+              <div className="space-y-1.5">
                 <label className={labelClasses}>Notes</label>
-                <input name="notes" type="text" defaultValue={r.notes ?? ''} className={fieldClasses} />
+                <input name="notes" type="text" defaultValue={rv.notes ?? ''} className={fieldClasses} />
               </div>
-            </div>
-            <div className="flex justify-end">
-              <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
-            </div>
-          </form>
-
-          {/* Proposal files */}
-          <div className="mt-3 border-t border-line pt-3">
-            <p className={labelClasses}>Proposal documents</p>
-            {r.files.length > 0 && (
-              <ul className="mt-2 space-y-1.5">
-                {r.files.map((f) => (
-                  <li key={f.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2">
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
-                      <span className="truncate text-[13px] text-t2">{f.originalFilename}</span>
-                      <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(f.fileSize)}</span>
-                      <StatusBadge status={f.extractionStatus} />
-                    </span>
-                    <form action={deleteResponseFile}>
-                      <input type="hidden" name="solId" value={sid} />
-                      <input type="hidden" name="fileId" value={f.id.toString()} />
-                      <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
-                    </form>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <form action={uploadResponseFile} className="mt-2 flex items-center gap-3">
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="responseId" value={r.id.toString()} />
-              <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
-              <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />Upload</button>
+              {personaChips(sel)}
+              <div className="flex justify-end">
+                <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
+              </div>
             </form>
-          </div>
 
-          <div className="mt-3 flex items-start justify-between gap-3 border-t border-line pt-3">
-            <RunPanel
-              action={runEvaluationsAction}
-              solId={sid}
-              responseId={r.id.toString()}
-              activeCount={activeCount}
-              disabled={!canEvaluate || r.files.length === 0}
-            />
-            <form action={deleteResponse}>
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="responseId" value={r.id.toString()} />
-              <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete offeror</button>
-            </form>
+            {/* Draft snapshot */}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+              <p className="text-[12px] text-t4">
+                {rv.snapshotAt
+                  ? `Draft snapshot: ${rv.documents.length} document(s), captured ${new Date(rv.snapshotAt).toLocaleDateString()}`
+                  : 'No draft captured yet.'}
+              </p>
+              <form action={captureSnapshotAction}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />{rv.snapshotAt ? 'Re-capture draft' : 'Capture draft'}</button>
+              </form>
+            </div>
+
+            <div className="mt-3 flex items-start justify-between gap-3 border-t border-line pt-3">
+              <RunPanel
+                action={runReviewAction}
+                solId={sid}
+                reviewId={rv.id.toString()}
+                activeCount={runCount}
+                disabled={!canEvaluate || rv.documents.length === 0}
+              />
+              <form action={deleteReview}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete review</button>
+              </form>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
+
       <div className={`${cardDashed} p-4`}>
-        <h3 className={`mb-3 ${sectionTitle}`}>Add offeror</h3>
-        <form action={addResponse} className="space-y-3">
+        <h3 className={`mb-3 ${sectionTitle}`}>New color-team review</h3>
+        <form action={createReview} className="space-y-3">
           <input type="hidden" name="solId" value={sid} />
           <div className="grid gap-3 sm:grid-cols-12">
-            <div className="space-y-1.5 sm:col-span-5">
-              <label className={labelClasses}>Offeror name <span className="text-[#3b6ef0]">*</span></label>
-              <input name="offerorName" type="text" required placeholder="e.g. Acme Corp" className={fieldClasses} />
+            <div className="space-y-1.5 sm:col-span-8">
+              <label className={labelClasses}>Review name <span className="text-[#3b6ef0]">*</span></label>
+              <input name="name" type="text" required placeholder="e.g. Pink — Vol II draft" className={fieldClasses} />
             </div>
-            <div className="space-y-1.5 sm:col-span-7">
-              <label className={labelClasses}>Notes</label>
-              <input name="notes" type="text" className={fieldClasses} />
+            <div className="space-y-1.5 sm:col-span-4">
+              <label className={labelClasses}>Color team</label>
+              <select name="colorTeam" defaultValue="pink" className={fieldClasses}>
+                {COLOR_TEAMS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+              </select>
             </div>
           </div>
+          <div className="space-y-1.5">
+            <label className={labelClasses}>Notes</label>
+            <input name="notes" type="text" className={fieldClasses} />
+          </div>
+          {personaChips(new Set(personas.filter((p) => p.isActive).map((p) => p.id.toString())))}
           <div className="flex justify-end">
-            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add offeror</button>
+            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Create review</button>
           </div>
         </form>
       </div>
@@ -1116,17 +1227,17 @@ export default async function SolicitationDetailPage({
     (e) => e.status === 'running' || e.status === 'pending'
   ).length;
 
-  const matrixPanel = (
+  const reviewPanel = (
     <div className="space-y-6">
       <RunningBanner count={runningCount} />
-      {/* Score matrix */}
-      {hasResults && solicitation.requirements.length > 0 && solicitation.responses.length > 0 ? (
+      {/* Score matrix: reviews × requirements */}
+      {hasResults && solicitation.requirements.length > 0 && reviews.length > 0 ? (
         <div className={`${card} overflow-x-auto`}>
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="bg-surf3">
                 <th className="sticky left-0 z-10 bg-surf3 px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
-                  Offeror
+                  Review
                 </th>
                 {solicitation.requirements.map((c) => (
                   <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
@@ -1136,10 +1247,15 @@ export default async function SolicitationDetailPage({
               </tr>
             </thead>
             <tbody>
-              {solicitation.responses.map((r) => (
+              {reviews.map((r) => {
+                const ct = COLOR_TEAM_MAP[r.colorTeam] ?? COLOR_TEAM_MAP.pink;
+                return (
                 <tr key={r.id.toString()} className="border-t border-line">
                   <td className="sticky left-0 z-10 bg-surf px-[18px] py-3 text-[13px] font-semibold text-t2">
-                    {r.offerorName}
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: ct.dot }} />
+                      {r.name}
+                    </span>
                   </td>
                   {solicitation.requirements.map((c) => {
                     const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
@@ -1163,7 +1279,8 @@ export default async function SolicitationDetailPage({
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1171,8 +1288,8 @@ export default async function SolicitationDetailPage({
         <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-12 text-center`}>
           <Inbox className="h-9 w-9 text-t5" />
           <p className="mt-3 text-[13px] text-t4">
-            No evaluation results yet. Build the compliance matrix and add offerors, upload
-            proposal documents, then run an evaluation from the Offerors tab.
+            No review results yet. Build the compliance matrix, upload your proposal draft,
+            then create a color-team review and run it from the Color Teams tab.
           </p>
         </div>
       )}
@@ -1189,9 +1306,15 @@ export default async function SolicitationDetailPage({
           {solicitation.evaluations.map((e) => (
             <div key={e.id.toString()} className={`${card} p-4`}>
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-[13px]">
+                <div className="flex items-center gap-2 text-[13px]">
+                  {e.review && (
+                    <span
+                      className="h-2 w-2 flex-shrink-0 rounded-full"
+                      style={{ backgroundColor: (COLOR_TEAM_MAP[e.review.colorTeam] ?? COLOR_TEAM_MAP.pink).dot }}
+                    />
+                  )}
                   <span className="font-semibold text-t1">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
-                  <span className="text-t4"> · {e.response?.offerorName ?? '—'}</span>
+                  <span className="text-t4"> · {e.review?.name ?? '—'}</span>
                 </div>
                 <StatusBadge status={e.status} />
               </div>
@@ -1247,8 +1370,8 @@ export default async function SolicitationDetailPage({
     { id: 'overview', label: 'Overview', content: overviewPanel },
     { id: 'documents', label: 'Documents', count: solicitation.solDocs.length, content: documentsPanel },
     { id: 'compliance', label: 'Compliance', count: solicitation.requirements.length, content: compliancePanel },
-    { id: 'offerors', label: 'Offerors', count: solicitation.responses.length, content: offerorsPanel },
-    { id: 'matrix', label: 'Matrix', count: solicitation.evaluations.length, content: matrixPanel }
+    { id: 'colorteams', label: 'Color Teams', count: reviews.length, content: colorTeamsPanel },
+    { id: 'review', label: 'Review', count: solicitation.evaluations.length, content: reviewPanel }
   ];
 
   return (

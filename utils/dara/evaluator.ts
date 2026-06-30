@@ -121,7 +121,7 @@ export async function runEvaluation(
             solDocs: true
           }
         },
-        response: { include: { files: true } }
+        review: { include: { documents: true } }
       }
     });
     if (!evaluation) return null;
@@ -152,15 +152,19 @@ export async function runEvaluation(
     return fail(evaluationId, companyId, `No API key configured for provider "${provider}".`);
   }
 
-  const documentText = concatDocs(evaluation.response.files);
+  const documentText = concatDocs(evaluation.review.documents);
   if (documentText.trim() === '') {
     return fail(
       evaluationId,
       companyId,
-      'No extracted proposal text. Upload offeror documents and ensure extraction completed.'
+      'No proposal snapshot for this review. Capture a draft snapshot and ensure extraction completed.'
     );
   }
-  const solText = concatDocs(evaluation.solicitation.solDocs);
+  // The RFP-typed solicitation docs are the authoritative reference; proposal-typed
+  // docs are the working draft (snapshotted into the review), so exclude them here.
+  const solText = concatDocs(
+    evaluation.solicitation.solDocs.filter((d) => d.docType === 'rfp')
+  );
 
   const requirements = evaluation.solicitation.requirements;
   if (requirements.length === 0) {
@@ -247,7 +251,7 @@ export async function regenerateResult(
     const evaluation = await tx.evaluation.findFirst({
       where: { id: result.evaluationId, companyId },
       include: {
-        response: { include: { files: true } },
+        review: { include: { documents: true } },
         solicitation: { include: { solDocs: true } }
       }
     });
@@ -260,11 +264,13 @@ export async function regenerateResult(
   }
   const { result, requirement, persona, evaluation, company } = loaded;
 
-  const documentText = concatDocs(evaluation.response.files);
+  const documentText = concatDocs(evaluation.review.documents);
   if (documentText.trim() === '') {
-    return { ok: false, error: 'No extracted proposal text to evaluate.' };
+    return { ok: false, error: 'No proposal snapshot for this review to evaluate.' };
   }
-  const solText = concatDocs(evaluation.solicitation.solDocs);
+  const solText = concatDocs(
+    evaluation.solicitation.solDocs.filter((d) => d.docType === 'rfp')
+  );
 
   const platform = company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
   const { provider, model, apiKey } = resolveCompanyAI(company, platform);

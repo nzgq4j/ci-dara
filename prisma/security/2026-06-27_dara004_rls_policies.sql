@@ -60,8 +60,8 @@ grant usage on schema public to dara_app, dara_admin;
 grant select, insert, update, delete on table
   public.dara_companies, public.dara_users, public.dara_solicitations,
   public.dara_sol_documents, public.dara_requirements, public.dara_personas,
-  public.dara_responses, public.dara_response_files, public.dara_evaluations,
-  public.dara_results, public.dara_job_queue
+  public.dara_reviews, public.dara_review_documents, public.dara_review_personas,
+  public.dara_evaluations, public.dara_results, public.dara_job_queue
 to dara_app, dara_admin;
 
 grant usage, select on all sequences in schema public to dara_app, dara_admin;
@@ -73,8 +73,9 @@ alter table public.dara_solicitations  enable row level security;
 alter table public.dara_sol_documents  enable row level security;
 alter table public.dara_requirements       enable row level security;
 alter table public.dara_personas       enable row level security;
-alter table public.dara_responses      enable row level security;
-alter table public.dara_response_files enable row level security;
+alter table public.dara_reviews          enable row level security;
+alter table public.dara_review_documents enable row level security;
+alter table public.dara_review_personas  enable row level security;
 alter table public.dara_evaluations    enable row level security;
 alter table public.dara_results        enable row level security;
 alter table public.dara_job_queue      enable row level security;
@@ -97,8 +98,8 @@ declare
   t text;
   tenant_tables text[] := array[
     'dara_users', 'dara_solicitations', 'dara_sol_documents', 'dara_requirements',
-    'dara_personas', 'dara_responses', 'dara_response_files', 'dara_evaluations',
-    'dara_results', 'dara_job_queue'];
+    'dara_personas', 'dara_reviews', 'dara_review_documents', 'dara_review_personas',
+    'dara_evaluations', 'dara_results', 'dara_job_queue'];
 begin
   foreach t in array tenant_tables loop
     execute format('drop policy if exists dara_tenant_isolation on public.%I', t);

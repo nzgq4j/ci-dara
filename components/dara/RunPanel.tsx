@@ -18,13 +18,13 @@ export type RunState = {
 export default function RunPanel({
   action,
   solId,
-  responseId,
+  reviewId,
   activeCount,
   disabled
 }: {
   action: (fd: FormData) => Promise<RunState>;
   solId: string;
-  responseId: string;
+  reviewId: string;
   activeCount: number;
   disabled: boolean;
 }) {
@@ -37,7 +37,7 @@ export default function RunPanel({
     startTransition(async () => {
       const fd = new FormData();
       fd.set('solId', solId);
-      fd.set('responseId', responseId);
+      fd.set('reviewId', reviewId);
       const res = await action(fd);
       setState(res);
       router.refresh();
@@ -78,7 +78,7 @@ export default function RunPanel({
             <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
           )}
           <span>
-            Evaluation complete — {state.results} criteria scored across{' '}
+            Review complete — {state.results} requirements scored across{' '}
             {state.personas} {state.personas === 1 ? 'persona' : 'personas'}
             {state.errors > 0 ? `, ${state.errors} error(s)` : ''}.
           </span>

@@ -31,7 +31,7 @@ export default async function SolicitationsPage() {
       },
       orderBy: { createdAt: 'desc' },
       include: {
-        _count: { select: { requirements: true, responses: true, evaluations: true } },
+        _count: { select: { requirements: true, reviews: true, evaluations: true } },
         departments: { include: { team: { select: { name: true } } } }
       }
     });
@@ -88,7 +88,7 @@ export default async function SolicitationsPage() {
                   Reqs
                 </th>
                 <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
-                  Offerors
+                  Reviews
                 </th>
                 <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                   Evaluations
@@ -135,7 +135,7 @@ export default async function SolicitationsPage() {
                     {sol._count.requirements}
                   </td>
                   <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
-                    {sol._count.responses}
+                    {sol._count.reviews}
                   </td>
                   <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.evaluations}

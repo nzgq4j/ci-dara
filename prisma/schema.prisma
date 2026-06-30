@@ -84,6 +84,33 @@ enum ComplianceStatus {
   not_applicable
 }
 
+// Color-team gate label for a review. A freeform label only — review behavior comes
+// from the chosen personas, not the color.
+enum ColorTeam {
+  pink
+  red
+  gold
+  blue
+  green
+  black
+  white
+}
+
+// Lifecycle of a color-team review.
+enum ReviewStatus {
+  draft
+  in_progress
+  complete
+}
+
+// What a solicitation document is: the RFP itself, an amendment to it, or our own
+// proposal working draft (which reviews snapshot).
+enum DocType {
+  rfp
+  amendment
+  proposal
+}
+
 enum JobStatus {
   pending
   running
@@ -295,7 +322,7 @@ model Solicitation {
   company      Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   solDocs      SolDocument[]
   requirements Requirement[]
-  responses    Response[]
+  reviews      Review[]
   evaluations  Evaluation[]
   departments  SolicitationDepartment[]
 
@@ -307,6 +334,9 @@ model SolDocument {
   id               BigInt           @id @default(autoincrement())
   companyId        BigInt           @map("company_id")
   solicitationId   BigInt           @map("solicitation_id")
+  // rfp = the solicitation itself, amendment = an amendment to it (Phase 3),
+  // proposal = our own working draft that reviews snapshot.
+  docType          DocType          @default(rfp) @map("doc_type")
   originalFilename String           @map("original_filename") @db.VarChar(500)
   storedFilename   String           @map("stored_filename") @db.VarChar(500)
   fileSize         Int              @default(0) @map("file_size")
@@ -360,53 +390,87 @@ model Persona {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  results Result[]
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  results        Result[]
+  reviewPersonas ReviewPersona[]
 
   @@index([companyId, isActive])
   @@map("dara_personas")
 }
 
-model Response {
-  id             BigInt   @id @default(autoincrement())
-  companyId      BigInt   @map("company_id")
-  solicitationId BigInt   @map("solicitation_id")
-  offerorName    String   @map("offeror_name") @db.VarChar(300)
+// A color-team gate review of the company's own proposal at a point in time
+// (evolved from the former Response/offeror model). `colorTeam` is a freeform label;
+// the review's behavior comes from its chosen personas (ReviewPersona). Each review
+// freezes the proposal working draft into ReviewDocument snapshots so the gate is
+// anchored to what it saw. The DB table/columns keep the old names where remapping
+// avoids churn (table dara_reviews ex dara_responses; name ex offeror_name).
+model Review {
+  id             BigInt       @id @default(autoincrement())
+  companyId      BigInt       @map("company_id")
+  solicitationId BigInt       @map("solicitation_id")
+  name           String       @map("offeror_name") @db.VarChar(300)
+  colorTeam      ColorTeam    @default(pink) @map("color_team")
+  status         ReviewStatus @default(draft)
   notes          String?
-  createdAt      DateTime @default(now()) @map("created_at")
+  snapshotAt     DateTime?    @map("snapshot_at")
+  createdBy      String?      @map("created_by") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at")
 
-  solicitation Solicitation   @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
-  files        ResponseFile[]
-  evaluations  Evaluation[]
+  solicitation   Solicitation     @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  documents      ReviewDocument[]
+  reviewPersonas ReviewPersona[]
+  evaluations    Evaluation[]
 
   @@index([solicitationId])
   @@index([companyId])
-  @@map("dara_responses")
+  @@map("dara_reviews")
 }
 
-model ResponseFile {
+// A frozen snapshot of one proposal-draft document captured for a review (evolved
+// from ResponseFile). Holds a copy of the extracted text at capture time so the
+// review reflects the draft as it was, even if the live proposal doc changes later.
+model ReviewDocument {
   id               BigInt           @id @default(autoincrement())
   companyId        BigInt           @map("company_id")
-  responseId       BigInt           @map("response_id")
+  reviewId         BigInt           @map("response_id")
   originalFilename String           @map("original_filename") @db.VarChar(500)
   storedFilename   String           @map("stored_filename") @db.VarChar(500)
   fileSize         Int              @default(0) @map("file_size")
   extractionStatus ExtractionStatus @default(pending) @map("extraction_status")
   extractedText    String?          @map("extracted_text")
-  uploadedAt       DateTime         @default(now()) @map("uploaded_at")
+  capturedAt       DateTime         @default(now()) @map("uploaded_at")
 
-  response Response @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
-  @@index([responseId])
+  @@index([reviewId])
   @@index([companyId])
-  @@map("dara_response_files")
+  @@map("dara_review_documents")
+}
+
+// Which personas (reviewers) run in a review. Freeform selection; if a review has
+// none, the run falls back to all active personas.
+model ReviewPersona {
+  id        BigInt @id @default(autoincrement())
+  companyId BigInt @map("company_id")
+  reviewId  BigInt @map("review_id")
+  personaId BigInt @map("persona_id")
+
+  review  Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, personaId])
+  @@index([companyId])
+  @@index([reviewId])
+  @@map("dara_review_personas")
 }
 
 model Evaluation {
   id             BigInt           @id @default(autoincrement())
   companyId      BigInt           @map("company_id")
   solicitationId BigInt           @map("solicitation_id")
-  responseId     BigInt           @map("response_id")
+  // Column stays `response_id` (no DB rename); the relation now points at Review.
+  reviewId       BigInt           @map("response_id")
   personaId      BigInt           @map("persona_id")
   status         EvaluationStatus @default(pending)
   errorMessage   String?          @map("error_message") @db.VarChar(500)
@@ -416,7 +480,7 @@ model Evaluation {
 
   company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
-  response     Response     @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  review       Review       @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   results      Result[]
 
   @@index([companyId])

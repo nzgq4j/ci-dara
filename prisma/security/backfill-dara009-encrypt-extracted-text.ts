@@ -40,13 +40,13 @@ async function main() {
     }
   }
 
-  const responseFiles = await prismaAdmin.responseFile.findMany({
+  const reviewDocs = await prismaAdmin.reviewDocument.findMany({
     where: { NOT: { extractedText: null } },
     select: { id: true, extractedText: true }
   });
-  for (const f of responseFiles) {
+  for (const f of reviewDocs) {
     if (f.extractedText && !f.extractedText.startsWith('v1:')) {
-      await prismaAdmin.responseFile.update({
+      await prismaAdmin.reviewDocument.update({
         where: { id: f.id },
         data: { extractedText: encryptField(f.extractedText) }
       });
@@ -55,7 +55,7 @@ async function main() {
   }
 
   console.log(
-    `Encrypted ${sol} solicitation document(s) and ${files} response file(s). ` +
+    `Encrypted ${sol} solicitation document(s) and ${files} review snapshot(s). ` +
       `(Rows already encrypted were skipped.)`
   );
   await prismaAdmin.$disconnect();
