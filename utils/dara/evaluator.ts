@@ -10,6 +10,12 @@ import {
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
+// Output-token budget for a single criterion's structured result. The response now
+// carries the review summary + rationale + strengths/weaknesses/compliance/suggested
+// changes; the old 4096 default truncated the JSON mid-object (parse fails → the
+// criterion errors), so give it generous headroom (safe across Anthropic/OpenAI/Google).
+const EVAL_MAX_TOKENS = 8000;
+
 // Convert a read-side JSON value (or null) into Prisma's write input.
 function jsonIn(
   v: Prisma.JsonValue | null | undefined
@@ -151,7 +157,7 @@ export async function runEvaluation(
 
     try {
       // LLM call OUTSIDE any transaction — this is the slow network hop.
-      const ai = await complete(provider, system, user, model, apiKey);
+      const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
       const parsed = parseResult(ai.text, criterion.criterionType);
       if (!parsed) {
         errors++;
@@ -249,7 +255,7 @@ export async function regenerateResult(
 
   let ai;
   try {
-    ai = await complete(provider, system, user, model, apiKey);
+    ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'AI request failed.' };
   }
