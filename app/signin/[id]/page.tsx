@@ -26,7 +26,7 @@ const COPY: Record<string, { title: string; subtitle: string }> = {
   email_signin: { title: 'Sign in to DARA', subtitle: 'We’ll email you a magic link' },
   forgot_password: { title: 'Reset password', subtitle: 'We’ll email you a reset link' },
   update_password: { title: 'Update password', subtitle: 'Choose a new password' },
-  signup: { title: 'Request access', subtitle: 'Create your DARA workspace' }
+  signup: { title: 'Create account', subtitle: 'Start your free 14-day trial' }
 };
 
 export default async function SignIn({
@@ -115,9 +115,22 @@ export default async function SignIn({
           </div>
           <div className="mb-7 text-[13px] text-t4">{copy.subtitle}</div>
 
-          {viewProp !== 'update_password' && viewProp !== 'signup' && allowOauth && (
+          {viewProp !== 'update_password' && allowOauth && (
             <div className="mb-2">
               <OauthSignIn />
+            </div>
+          )}
+
+          {/* On the create-account view, separate the Google button from the
+              email form. Google sign-up flows straight into onboarding with the
+              user's name/avatar prefilled. */}
+          {viewProp === 'signup' && allowOauth && (
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-line" />
+              <span className="text-[11px] uppercase tracking-[0.06em] text-t5">
+                or sign up with email
+              </span>
+              <div className="h-px flex-1 bg-line" />
             </div>
           )}
 

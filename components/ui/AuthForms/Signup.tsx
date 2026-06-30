@@ -1,82 +1,93 @@
 'use client';
 
-import Button from '@/components/ui/Button';
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { signUp } from '@/utils/auth-helpers/server';
 import { handleRequest } from '@/utils/auth-helpers/client';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 
-// Define prop type with allowEmail boolean
 interface SignUpProps {
   allowEmail: boolean;
   redirectMethod: string;
 }
+
+const inputCls =
+  'w-full rounded-lg border border-line bg-surf2 px-3.5 py-2.5 text-t1 outline-none transition-colors focus:border-[#3b6ef0]';
+const labelCls =
+  'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.04em] text-t4';
 
 export default function SignUp({ allowEmail, redirectMethod }: SignUpProps) {
   const router = redirectMethod === 'client' ? useRouter() : null;
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    setIsSubmitting(true); // Disable the button while the request is being handled
+    setIsSubmitting(true);
     await handleRequest(e, signUp, router);
     setIsSubmitting(false);
   };
 
   return (
-    <div className="my-8">
-      <form
-        noValidate={true}
-        className="mb-4"
-        onSubmit={(e) => handleSubmit(e)}
-      >
-        <div className="grid gap-2">
-          <div className="grid gap-1">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              placeholder="name@example.com"
-              type="email"
-              name="email"
-              autoCapitalize="none"
-              autoComplete="email"
-              autoCorrect="off"
-              className="w-full p-3 rounded-md bg-zinc-800"
-            />
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              placeholder="Password"
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              className="w-full p-3 rounded-md bg-zinc-800"
-            />
-          </div>
-          <Button
-            variant="slim"
-            type="submit"
-            className="mt-1"
-            loading={isSubmitting}
-          >
-            Sign up
-          </Button>
+    <div>
+      <form noValidate onSubmit={(e) => handleSubmit(e)} className="space-y-3.5">
+        <div>
+          <label htmlFor="email" className={labelCls}>
+            Email
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@agency.gov"
+            autoCapitalize="none"
+            autoComplete="email"
+            autoCorrect="off"
+            className={inputCls}
+          />
         </div>
+        <div>
+          <label htmlFor="password" className={labelCls}>
+            Password
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            placeholder="••••••••••••"
+            autoComplete="new-password"
+            className={inputCls}
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded-lg bg-[#3b6ef0] py-3 text-[14px] font-bold tracking-tight text-white transition-colors hover:bg-[#2f5fd6] disabled:opacity-60"
+        >
+          {isSubmitting ? 'Creating account…' : 'Create Account'}
+        </button>
       </form>
-      <p>Already have an account?</p>
-      <p>
-        <Link href="/signin/password_signin" className="font-light text-sm">
-          Sign in with email and password
-        </Link>
+
+      <p className="mt-3 text-center text-[12px] text-t5">
+        Free 14-day trial · you&apos;ll set up your workspace next.
       </p>
-      {allowEmail && (
-        <p>
-          <Link href="/signin/email_signin" className="font-light text-sm">
-            Sign in via magic link
+
+      <div className="mt-6 space-y-2 text-center text-[12px] text-t4">
+        <div>
+          Already have an account?{' '}
+          <Link
+            href="/signin/password_signin"
+            className="font-semibold text-[#3b6ef0]"
+          >
+            Sign in →
           </Link>
-        </p>
-      )}
+        </div>
+        {allowEmail && (
+          <div>
+            <Link href="/signin/email_signin" className="text-[#3b6ef0]">
+              Sign in via magic link
+            </Link>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

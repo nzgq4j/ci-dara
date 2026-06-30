@@ -113,7 +113,7 @@ export default function PasswordSignIn({
             href="/signin/signup"
             className="font-semibold text-[#3b6ef0]"
           >
-            Request access →
+            Create Account →
           </Link>
         </div>
       </div>
