@@ -10,6 +10,8 @@ export type RunState = {
   personas: number;
   results: number;
   errors: number;
+  done?: number; // requirements assessed (this persona-set), incl. prior runs
+  total?: number; // total active requirements
 } | null;
 
 // Run-evaluation control with a live in-progress indicator + completion notice.
@@ -64,26 +66,32 @@ export default function RunPanel({
           : `Run evaluation${activeCount > 0 ? ` (${activeCount} ${plural})` : ''}`}
       </button>
 
-      {state && !pending && (
-        <div
-          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-[12px] leading-relaxed ${
-            state.errors > 0
-              ? 'border-[#5a4a1f]/60 bg-[#5a4a1f]/10 text-[#e0c97d]'
-              : 'border-[#1f5a31]/50 bg-[#1f5a31]/15 text-[#7de0a0]'
-          }`}
-        >
-          {state.errors > 0 ? (
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-          ) : (
-            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-          )}
-          <span>
-            Review complete — {state.results} requirements scored across{' '}
-            {state.personas} {state.personas === 1 ? 'persona' : 'personas'}
-            {state.errors > 0 ? `, ${state.errors} error(s)` : ''}.
-          </span>
-        </div>
-      )}
+      {state && !pending && (() => {
+        const incomplete = state.total != null && state.total > 0 && (state.done ?? 0) < state.total;
+        const warn = incomplete || state.errors > 0;
+        return (
+          <div
+            className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-[12px] leading-relaxed ${
+              warn
+                ? 'border-[#5a4a1f]/60 bg-[#5a4a1f]/10 text-[#e0c97d]'
+                : 'border-[#1f5a31]/50 bg-[#1f5a31]/15 text-[#7de0a0]'
+            }`}
+          >
+            {warn ? (
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            )}
+            <span>
+              {incomplete
+                ? `Assessed ${state.done} of ${state.total} — large review, click Run again to continue.`
+                : `Review complete — ${state.done ?? state.results} assessments across ${state.personas} ${state.personas === 1 ? 'persona' : 'personas'}`}
+              {!incomplete && state.errors > 0 ? `, ${state.errors} error(s)` : ''}
+              {incomplete ? '' : '.'}
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }

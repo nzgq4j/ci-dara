@@ -252,6 +252,166 @@ function schemaFor(type: string): string {
   return `{${REVIEW_SCHEMA}, "determination": "<compliant|non_compliant|unable_to_determine>", "rationale": "<overall summary, citing specific requirements/tasks>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
 }
 
+// ===================== Batched evaluation (many requirements per call) ============
+//
+// One LLM call per requirement per persona does not scale — a shredded RFP has 100+
+// requirements, so a review is hundreds of sequential calls that blow past the 300s
+// function limit. Instead, assess many requirements in a single call with concise
+// per-item output. Deep, verbose analysis of any one requirement is still available
+// on demand via the per-section Regenerate (which uses the single-item prompt above).
+
+export interface BatchRequirement {
+  id: string;
+  name: string;
+  description: string | null;
+  isScored: boolean;
+  farReference: string;
+}
+
+export interface BatchResultItem extends ParsedResult {
+  requirementId: string;
+}
+
+/** Persona system prompt for a batch pass (solicitation-level vars; no single criterion). */
+export function buildBatchSystemPrompt(
+  persona: PromptPersona,
+  solicitation: PromptSolicitation
+): string {
+  const replacements: Record<string, string> = {
+    '{{CRITERION_NAME}}': 'each listed requirement',
+    '{{CRITERION_DESCRIPTION}}': '',
+    '{{SOLICITATION_TITLE}}': solicitation.title,
+    '{{REFERENCE_NUMBER}}': solicitation.solNumber ?? '',
+    '{{FAR_REFERENCE}}': ''
+  };
+  let prompt = persona.systemPrompt;
+  for (const [key, value] of Object.entries(replacements)) {
+    prompt = prompt.split(key).join(value);
+  }
+  return (
+    prompt.trimEnd() +
+    '\n\nYou assess the proposal against a numbered list of requirements in a single pass. ' +
+    'Be concise but evidence-based. Respond only in the JSON format specified.'
+  );
+}
+
+const BATCH_ITEM_SCHEMA =
+  '{"id": "<the requirement id, exactly as given>", ' +
+  '"score": <integer 0-100 — ONLY for a SCORED requirement, else omit>, ' +
+  '"determination": "<compliant|non_compliant|unable_to_determine — ONLY for a non-scored requirement, else omit>", ' +
+  '"rating": "<Outstanding|Good|Acceptable|Marginal|Unacceptable — scored only, else omit>", ' +
+  '"rationale": "<2-3 sentence assessment citing evidence from the proposal>", ' +
+  '"strengths": ["<brief>"], "weaknesses": ["<brief>"], ' +
+  '"compliance": "<one-line compliance note>", ' +
+  '"suggested_changes": [{"change": "<brief>", "rationale": "<brief>"}], ' +
+  '"confidence": <float 0.0-1.0>}';
+
+// Lean schema for pass/fail (administrative / compliance) requirements — a Go/No-Go
+// determination with a one-line note, no scored narrative. This is where the payload
+// savings come from: most shredded requirements are compliance checks, not factors.
+const COMPLIANCE_ITEM_SCHEMA =
+  '{"id": "<the requirement id, exactly as given>", ' +
+  '"determination": "<compliant|non_compliant|unable_to_determine>", ' +
+  '"rationale": "<one sentence: is it satisfied, with a proposal/solicitation section cite>", ' +
+  '"compliance": "<short note, or empty>"}';
+
+/**
+ * User prompt assessing the proposal against a batch of requirements at once.
+ * `lean` (pass/fail compliance items) yields a determination-only schema; otherwise
+ * (scored Section M factors) the full scored-assessment schema.
+ */
+export function buildBatchUserPrompt(
+  requirements: BatchRequirement[],
+  documentText: string,
+  solText = '',
+  lean = false
+): string {
+  const token = randomBytes(9).toString('hex');
+  const docBlock = fenceUntrusted('PROPOSAL', truncate(documentText), token);
+
+  let solSection = '';
+  if (solText.trim() !== '') {
+    solSection = `## Solicitation Document (RFP/RFI/SOW)\n\n${fenceUntrusted('SOLICITATION', truncate(solText, 4000), token)}\n\n`;
+  }
+
+  const list = requirements
+    .map(
+      (r) =>
+        `#${r.id} ${r.name}` +
+        `${r.description ? ' — ' + r.description.slice(0, 500) : ''}` +
+        `${r.farReference ? ` (FAR ${r.farReference})` : ''}`
+    )
+    .join('\n');
+
+  const reviewSchema =
+    '"review": {"method": "<how you reviewed>", "reviewed": "<what proposal content>", "measured_against": "<the requirements/tasks/factors, cited>"}';
+
+  if (lean) {
+    return (
+      `${solSection}## Proposal Document\n\n${docBlock}\n\n## Pass/fail compliance requirements\n\n${list}\n\n` +
+      `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+      'These are administrative / pass-fail compliance requirements (Section L instructions, FAR/DFARS clauses, ' +
+      'format/page/font rules, required forms, "shall" statements). For EACH, make a brief Go/No-Go determination of ' +
+      'whether the proposal satisfies it — NOT a scored narrative. Use "unable_to_determine" when it cannot be verified ' +
+      'from the extracted text (e.g. exact fonts/margins). One sentence per requirement. ' +
+      'Respond ONLY with a valid JSON object of this exact shape:\n\n' +
+      `{${reviewSchema}, "results": [${COMPLIANCE_ITEM_SCHEMA}, ...]}\n\n` +
+      'Exactly one results entry per requirement id. Do not include any text outside the JSON object.'
+    );
+  }
+
+  return (
+    `${solSection}## Proposal Document\n\n${docBlock}\n\n## Scored evaluation factors\n\n${list}\n\n` +
+    `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    'These are scored evaluation factors. Assess the proposal against EACH and give a "score" (0-100) and "rating". ' +
+    'Keep each "rationale" to 2-3 sentences and each findings array to a few brief, evidence-based bullets; ' +
+    'cite specific proposal/solicitation sections. Whenever you note a weakness or gap, include a corresponding ' +
+    'suggested_change. ' +
+    'Respond ONLY with a valid JSON object of this exact shape:\n\n' +
+    `{${reviewSchema}, "results": [${BATCH_ITEM_SCHEMA}, ...]}\n\n` +
+    'Exactly one results entry per requirement id. Do not include any text outside the JSON object.'
+  );
+}
+
+function mapBatchItem(it: any): BatchResultItem | null {
+  const id = it?.id != null && /^\d+$/.test(String(it.id)) ? String(it.id) : null;
+  if (!id) return null;
+  const findings = parseFindings(it);
+  const hasScore = it.score != null && String(it.score).trim() !== '' && !isNaN(Number(it.score));
+  const confidence = Math.min(1, Math.max(0, Number(it.confidence ?? 0.5) || 0));
+  return {
+    requirementId: id,
+    resultType: hasScore ? 'scoring' : 'determination',
+    aiDetermination: hasScore ? null : String(it.determination ?? 'unable_to_determine'),
+    aiScore: hasScore ? Math.min(100, Math.max(0, Number(it.score) || 0)) : null,
+    aiRationale: String(it.rationale ?? ''),
+    aiConfidence: confidence,
+    rating: it.rating ? String(it.rating) : null,
+    review: null,
+    ...findings
+  };
+}
+
+/** Parse a batch response into a shared review summary + per-requirement items. */
+export function parseBatchResults(text: string): { review: ReviewSummary | null; items: BatchResultItem[] } {
+  const cleaned = stripFences(text);
+  let review: ReviewSummary | null = null;
+  let arr: any[] = [];
+  try {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    const data = JSON.parse(m ? m[0] : cleaned);
+    review = parseReview(data?.review);
+    if (Array.isArray(data?.results)) arr = data.results;
+  } catch {
+    /* fall through to salvage */
+  }
+  if (arr.length === 0) arr = extractArrayObjects(cleaned, 'results');
+  const items = arr
+    .map(mapBatchItem)
+    .filter((it: BatchResultItem | null): it is BatchResultItem => it !== null);
+  return { review, items };
+}
+
 // ===================== Requirements shred (compliance matrix) =====================
 
 // The requirement sources the shred classifies into — mirror the RequirementSource

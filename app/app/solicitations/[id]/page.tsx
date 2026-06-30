@@ -677,15 +677,22 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     });
   });
   if (!personas || personas.length === 0) {
-    return { ok: false, personas: 0, results: 0, errors: 0 };
+    return { ok: false, personas: 0, results: 0, errors: 0, done: 0, total: 0 };
   }
 
   await withTenant(daraUser.companyId, (tx) =>
     tx.review.update({ where: { id: reviewId }, data: { status: 'in_progress' } })
   );
 
+  // Time-box the run well under the 300s function limit; large reviews resume on the
+  // next click (runEvaluation skips requirements that already have a result).
+  const deadline = Date.now() + 240_000;
   let totalResults = 0;
   let totalErrors = 0;
+  let totalDone = 0;
+  let totalReqs = 0;
+  let allComplete = true;
+
   for (const persona of personas) {
     // Find-or-create the evaluation row in its own short burst...
     const evaluation = await withTenant(daraUser.companyId, async (tx) => {
@@ -705,15 +712,35 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
         })
       );
     });
+    if (evaluation.status === 'complete') {
+      // Already done from a prior run — count it and move on.
+      totalDone += await withTenant(daraUser.companyId, (tx) =>
+        tx.result.count({ where: { evaluationId: evaluation.id, companyId: daraUser.companyId } })
+      );
+      totalReqs += await withTenant(daraUser.companyId, (tx) =>
+        tx.requirement.count({ where: { solicitationId: solId, companyId: daraUser.companyId, removedAt: null } })
+      );
+      continue;
+    }
+    if (Date.now() > deadline) {
+      allComplete = false;
+      break;
+    }
     // ...then run it OUTSIDE any transaction — runEvaluation manages its own
     // withTenant bursts around the slow LLM calls (do not nest transactions).
-    const summary = await runEvaluation(evaluation.id, daraUser.companyId);
+    const summary = await runEvaluation(evaluation.id, daraUser.companyId, deadline);
     totalResults += summary.results;
     totalErrors += summary.errors;
+    totalDone += summary.done ?? 0;
+    totalReqs += summary.total ?? 0;
+    if ((summary.done ?? 0) < (summary.total ?? 0)) allComplete = false;
   }
 
   await withTenant(daraUser.companyId, (tx) =>
-    tx.review.update({ where: { id: reviewId }, data: { status: 'complete' } })
+    tx.review.update({
+      where: { id: reviewId },
+      data: { status: allComplete ? 'complete' : 'in_progress' }
+    })
   );
   await recordAudit({
     action: 'review.run',
@@ -726,16 +753,20 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     metadata: {
       solicitationId: solId.toString(),
       personas: personas.length,
+      results: totalResults,
+      complete: allComplete,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
   return {
-    ok: totalResults > 0,
+    ok: totalResults > 0 || allComplete,
     personas: personas.length,
     results: totalResults,
-    errors: totalErrors
+    errors: totalErrors,
+    done: totalDone,
+    total: totalReqs
   };
 }
 
@@ -1417,8 +1448,11 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
+  // Only 'running' = actively processing in a live request. 'pending' now means a
+  // time-boxed run paused mid-way (resume by clicking Run again), so it must NOT spin
+  // the live banner.
   const runningCount = solicitation.evaluations.filter(
-    (e) => e.status === 'running' || e.status === 'pending'
+    (e) => e.status === 'running'
   ).length;
 
   const reviewPanel = (

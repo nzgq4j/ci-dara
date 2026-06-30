@@ -5,6 +5,9 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   parseResult,
+  buildBatchSystemPrompt,
+  buildBatchUserPrompt,
+  parseBatchResults,
   type ParsedResult,
   type PromptCriterion
 } from '@/utils/dara/prompt';
@@ -49,8 +52,18 @@ export interface EvalSummary {
   ok: boolean;
   results: number;
   errors: number;
+  done?: number; // requirements with a result after this run (incl. prior)
+  total?: number; // total active requirements
   error?: string;
 }
+
+// How many requirements to assess per LLM call. One-per-call does not scale (a
+// shredded RFP has 100+); batching by tier keeps a full review to a handful of calls.
+// Pass/fail compliance items are tiny (a determination), so batch many; scored factors
+// carry a full narrative, so batch few.
+const BATCH_SIZE_COMPLIANCE = 40;
+const BATCH_SIZE_SCORED = 8;
+const BATCH_MAX_TOKENS = 16000;
 
 // Adapt a Requirement row to the prompt builder's criterion shape. Scored Section M
 // factors use the 0-100 scoring schema; everything else uses the determination
@@ -101,16 +114,20 @@ async function fail(
 }
 
 /**
- * Run a single evaluation (one response × one persona) across all of the
- * solicitation's criteria. Calls the company's configured AI provider for each
- * criterion and writes/updates Result rows. Updates the evaluation status.
+ * Run a single evaluation (one review × one persona) across the solicitation's active
+ * requirements. Requirements are assessed in batches by tier — lean Go/No-Go for
+ * pass/fail compliance items, full scored narrative for evaluation factors — so a
+ * 100+ requirement review is a handful of LLM calls, not hundreds. The run is
+ * time-boxed (deadlineMs) and resumable: it skips requirements that already have a
+ * result, so a large review finishes over a few "Run" clicks without ever exceeding
+ * the function limit. Returns done/total progress.
  */
 export async function runEvaluation(
   evaluationId: bigint,
-  companyId: bigint
+  companyId: bigint,
+  deadlineMs = Infinity
 ): Promise<EvalSummary> {
-  // Burst A: load everything and mark the run started, in one tenant transaction.
-  // No LLM calls happen inside withTenant — those run between bursts (below).
+  // Burst A: load everything, the already-done requirements, and mark the run started.
   const loaded = await withTenant(companyId, async (tx) => {
     const evaluation = await tx.evaluation.findFirst({
       where: { id: evaluationId, companyId },
@@ -128,32 +145,29 @@ export async function runEvaluation(
       }
     });
     if (!evaluation) return null;
-
-    await tx.evaluation.update({
-      where: { id: evaluationId },
-      data: { status: 'running' }
-    });
-
-    const persona = await tx.persona.findFirst({
-      where: { id: evaluation.personaId, companyId }
-    });
+    await tx.evaluation.update({ where: { id: evaluationId }, data: { status: 'running' } });
+    const persona = await tx.persona.findFirst({ where: { id: evaluation.personaId, companyId } });
     const company = await tx.company.findUnique({ where: { id: companyId } });
-    return { evaluation, persona, company };
+    const existing = await tx.result.findMany({
+      where: { evaluationId, companyId },
+      select: { requirementId: true }
+    });
+    return {
+      evaluation,
+      persona,
+      company,
+      doneIds: new Set(existing.map((e) => e.requirementId.toString()))
+    };
   });
 
-  if (!loaded) {
-    return { ok: false, results: 0, errors: 0, error: 'Evaluation not found.' };
-  }
-  const { evaluation, persona, company } = loaded;
+  if (!loaded) return { ok: false, results: 0, errors: 0, error: 'Evaluation not found.' };
+  const { evaluation, persona, company, doneIds } = loaded;
   if (!persona) return fail(evaluationId, companyId, 'Persona not found.');
   if (!company) return fail(evaluationId, companyId, 'Company not found.');
 
-  // Platform mode draws keys + provider/model from the central platform config.
   const platform = company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
   const { provider, model, apiKey } = resolveCompanyAI(company, platform);
-  if (!apiKey) {
-    return fail(evaluationId, companyId, `No API key configured for provider "${provider}".`);
-  }
+  if (!apiKey) return fail(evaluationId, companyId, `No API key configured for provider "${provider}".`);
 
   const documentText = concatDocs(evaluation.review.documents);
   if (documentText.trim() === '') {
@@ -163,73 +177,94 @@ export async function runEvaluation(
       'No proposal snapshot for this review. Capture a draft snapshot and ensure extraction completed.'
     );
   }
-  // The RFP-typed solicitation docs are the authoritative reference; proposal-typed
-  // docs are the working draft (snapshotted into the review), so exclude them here.
-  const solText = concatDocs(
-    evaluation.solicitation.solDocs.filter((d) => d.docType === 'rfp')
-  );
+  // RFP-typed docs are the authoritative reference; proposal docs are the working draft.
+  const solText = concatDocs(evaluation.solicitation.solDocs.filter((d) => d.docType === 'rfp'));
 
   const requirements = evaluation.solicitation.requirements;
-  if (requirements.length === 0) {
-    return fail(evaluationId, companyId, 'No requirements defined for this solicitation.');
-  }
+  const total = requirements.length;
+  if (total === 0) return fail(evaluationId, companyId, 'No requirements defined for this solicitation.');
 
-  let results = 0;
+  const todo = requirements.filter((r) => !doneIds.has(r.id.toString()));
+  const system = buildBatchSystemPrompt(persona, evaluation.solicitation);
+
+  let newResults = 0;
   let errors = 0;
+  let done = doneIds.size;
 
-  for (const requirement of requirements) {
-    const pc = toPromptCriterion(requirement);
-    const system = buildSystemPrompt(persona, pc, evaluation.solicitation);
-    const user = buildUserPrompt(pc, documentText, solText);
-
-    try {
-      // LLM call OUTSIDE any transaction — this is the slow network hop.
-      const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
-      const parsed = parseResult(ai.text, pc.criterionType);
-      if (!parsed) {
-        errors++;
-        continue;
-      }
-      // Persist this requirement's result in its own short tenant burst, so partial
-      // progress survives a later requirement failing.
-      await withTenant(companyId, (tx) =>
-        tx.result.upsert({
-          where: {
-            evaluationId_requirementId_personaId: {
-              evaluationId,
-              requirementId: requirement.id,
-              personaId: persona.id
-            }
-          },
-          create: {
-            evaluationId,
-            companyId,
-            requirementId: requirement.id,
-            personaId: persona.id,
-            ...aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
-          },
-          update: aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
-        })
+  // Assess one tier in batches, honoring the deadline. LLM calls run OUTSIDE any
+  // transaction; each batch's results persist in their own short burst.
+  const runTier = async (reqs: typeof requirements, lean: boolean, size: number) => {
+    for (let i = 0; i < reqs.length; i += size) {
+      if (Date.now() > deadlineMs) return;
+      const batch = reqs.slice(i, i + size);
+      const user = buildBatchUserPrompt(
+        batch.map((r) => ({
+          id: r.id.toString(),
+          name: r.name,
+          description: r.description,
+          isScored: r.isScored,
+          farReference: r.farReference
+        })),
+        documentText,
+        solText,
+        lean
       );
-      results++;
-    } catch {
-      errors++;
+      try {
+        const ai = await complete(provider, system, user, model, apiKey, BATCH_MAX_TOKENS);
+        const { review, items } = parseBatchResults(ai.text);
+        const byId = new Map(items.map((it) => [it.requirementId, it]));
+        await withTenant(companyId, async (tx) => {
+          for (const r of batch) {
+            const it = byId.get(r.id.toString());
+            if (!it) {
+              errors++;
+              continue;
+            }
+            it.review = review; // shared per-batch review summary
+            await tx.result.upsert({
+              where: {
+                evaluationId_requirementId_personaId: {
+                  evaluationId,
+                  requirementId: r.id,
+                  personaId: persona.id
+                }
+              },
+              create: {
+                evaluationId,
+                companyId,
+                requirementId: r.id,
+                personaId: persona.id,
+                ...aiFields(it, model, ai.tokenIn, ai.tokenOut)
+              },
+              update: aiFields(it, model, ai.tokenIn, ai.tokenOut)
+            });
+            newResults++;
+            done++;
+          }
+        });
+      } catch {
+        errors += batch.length;
+      }
     }
-  }
+  };
 
-  // Burst C: final status, its own tenant transaction.
+  // Scored factors first (fewer, higher value), then the lean pass/fail compliance bulk.
+  await runTier(todo.filter((r) => r.isScored), false, BATCH_SIZE_SCORED);
+  await runTier(todo.filter((r) => !r.isScored), true, BATCH_SIZE_COMPLIANCE);
+
+  const allDone = done >= total;
   await withTenant(companyId, (tx) =>
     tx.evaluation.update({
       where: { id: evaluationId },
       data: {
-        status: results > 0 ? 'complete' : 'failed',
-        completedAt: new Date(),
-        errorMessage: results === 0 ? 'All criteria failed to evaluate.' : null
+        status: allDone ? 'complete' : 'pending',
+        completedAt: allDone ? new Date() : null,
+        errorMessage: allDone ? null : `Paused — ${done}/${total} assessed; run again to continue.`
       }
     })
   );
 
-  return { ok: results > 0, results, errors };
+  return { ok: newResults > 0 || allDone, results: newResults, errors, done, total };
 }
 
 /**
