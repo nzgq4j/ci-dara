@@ -17,7 +17,7 @@ import { withTenant } from '@/utils/prisma';
 import { userTeamIds, canViewSolicitation, canManageDepartments } from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
-import { runEvaluation, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
+import { runEvaluation, runComplianceSweep, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
@@ -733,12 +733,14 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
       );
     });
     if (evaluation.status === 'complete') {
-      // Already done from a prior run — count it and move on.
+      // Already done from a prior run — count it (evaluation factors only) and move on.
       totalDone += await withTenant(daraUser.companyId, (tx) =>
         tx.result.count({ where: { evaluationId: evaluation.id, companyId: daraUser.companyId } })
       );
       totalReqs += await withTenant(daraUser.companyId, (tx) =>
-        tx.requirement.count({ where: { solicitationId: solId, companyId: daraUser.companyId, removedAt: null } })
+        tx.requirement.count({
+          where: { solicitationId: solId, companyId: daraUser.companyId, removedAt: null, isScored: true }
+        })
       );
       continue;
     }
@@ -754,6 +756,16 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     totalDone += summary.done ?? 0;
     totalReqs += summary.total ?? 0;
     if ((summary.done ?? 0) < (summary.total ?? 0)) allComplete = false;
+  }
+
+  // Bundled compliance matrix: sweep the pass/fail administrative requirements against
+  // this review's snapshot (objective, persona-independent — run once per run).
+  let complianceChecked = 0;
+  if (Date.now() < deadline) {
+    const sweep = await runComplianceSweep(reviewId, daraUser.companyId, deadline);
+    complianceChecked = sweep.checked;
+  } else {
+    allComplete = false;
   }
 
   await withTenant(daraUser.companyId, (tx) =>
@@ -774,6 +786,7 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
       solicitationId: solId.toString(),
       personas: personas.length,
       results: totalResults,
+      complianceChecked,
       complete: allComplete,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
@@ -786,7 +799,8 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     results: totalResults,
     errors: totalErrors,
     done: totalDone,
-    total: totalReqs
+    total: totalReqs,
+    complianceChecked
   };
 }
 

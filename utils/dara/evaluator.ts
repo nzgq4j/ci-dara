@@ -5,7 +5,6 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   parseResult,
-  buildBatchSystemPrompt,
   buildBatchUserPrompt,
   parseBatchResults,
   type ParsedResult,
@@ -52,20 +51,21 @@ export interface EvalSummary {
   ok: boolean;
   results: number;
   errors: number;
-  done?: number; // requirements with a result after this run (incl. prior)
-  total?: number; // total active requirements
+  done?: number; // evaluation factors with a result after this run (incl. prior)
+  total?: number; // total evaluation factors (scored requirements)
   error?: string;
 }
 
-// How many requirements to assess per LLM call. These are robustness DEFAULTS, not
-// values tuned to any one solicitation: correctness does not depend on them because the
-// run is resumable (skips done requirements) and the parser salvages complete items from
-// a truncated batch — so if a batch is too big for the model's output budget, the dropped
-// items simply retry on the next pass. Pass/fail compliance items are tiny (a single
-// determination) so batch many; scored factors carry a full narrative, so batch few and
-// stay under the smallest provider output ceiling (Google 8192).
+export interface SweepSummary {
+  ok: boolean;
+  checked: number;
+  error?: string;
+}
+
+// The pass/fail compliance sweep checks the administrative requirements (the bulk) in
+// big batches — each item is a one-line determination, so they pack cheaply. The
+// holistic review (below) runs one rich call per evaluation factor, not batched.
 const BATCH_SIZE_COMPLIANCE = 40;
-const BATCH_SIZE_SCORED = 6;
 const BATCH_MAX_TOKENS = 16000;
 
 // Adapt a Requirement row to the prompt builder's criterion shape. Scored Section M
@@ -117,28 +117,30 @@ async function fail(
 }
 
 /**
- * Run a single evaluation (one review × one persona) across the solicitation's active
- * requirements. Requirements are assessed in batches by tier — lean Go/No-Go for
- * pass/fail compliance items, full scored narrative for evaluation factors — so a
- * 100+ requirement review is a handful of LLM calls, not hundreds. The run is
- * time-boxed (deadlineMs) and resumable: it skips requirements that already have a
- * result, so a large review finishes over a few "Run" clicks without ever exceeding
- * the function limit. Returns done/total progress.
+ * Run a single evaluation (one review × one persona): a HOLISTIC review of the
+ * proposal against the solicitation's EVALUATION FACTORS (the scored requirements).
+ * Each factor gets the full structured assessment — review summary (how/what/measured
+ * against), rationale, strengths, weaknesses, compliance commentary, suggested changes,
+ * and a score/rating — from this persona's perspective. The administrative / pass-fail
+ * requirements are NOT scored here; they go through runComplianceSweep into the matrix.
+ * Time-boxed (deadlineMs) and resumable (skips factors that already have a result).
  */
 export async function runEvaluation(
   evaluationId: bigint,
   companyId: bigint,
   deadlineMs = Infinity
 ): Promise<EvalSummary> {
-  // Burst A: load everything, the already-done requirements, and mark the run started.
+  // Burst A: load everything (evaluation factors only), the already-done factors, and
+  // mark the run started. No LLM calls inside the transaction.
   const loaded = await withTenant(companyId, async (tx) => {
     const evaluation = await tx.evaluation.findFirst({
       where: { id: evaluationId, companyId },
       include: {
         solicitation: {
           include: {
+            // Holistic review covers the scored evaluation factors only.
             requirements: {
-              where: { removedAt: null },
+              where: { removedAt: null, isScored: true },
               orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
             },
             solDocs: true
@@ -183,77 +185,65 @@ export async function runEvaluation(
   // RFP-typed docs are the authoritative reference; proposal docs are the working draft.
   const solText = concatDocs(evaluation.solicitation.solDocs.filter((d) => d.docType === 'rfp'));
 
-  const requirements = evaluation.solicitation.requirements;
-  const total = requirements.length;
-  if (total === 0) return fail(evaluationId, companyId, 'No requirements defined for this solicitation.');
+  const factors = evaluation.solicitation.requirements;
+  const total = factors.length;
 
-  const todo = requirements.filter((r) => !doneIds.has(r.id.toString()));
-  const system = buildBatchSystemPrompt(persona, evaluation.solicitation);
+  // No scored evaluation factors — the review is purely a compliance matter (handled by
+  // the sweep). Nothing to assess richly here; complete cleanly.
+  if (total === 0) {
+    await withTenant(companyId, (tx) =>
+      tx.evaluation.update({
+        where: { id: evaluationId },
+        data: { status: 'complete', completedAt: new Date(), errorMessage: null }
+      })
+    );
+    return { ok: true, results: 0, errors: 0, done: 0, total: 0 };
+  }
 
+  const todo = factors.filter((r) => !doneIds.has(r.id.toString()));
   let newResults = 0;
   let errors = 0;
   let done = doneIds.size;
 
-  // Assess one tier in batches, honoring the deadline. LLM calls run OUTSIDE any
-  // transaction; each batch's results persist in their own short burst.
-  const runTier = async (reqs: typeof requirements, lean: boolean, size: number) => {
-    for (let i = 0; i < reqs.length; i += size) {
-      if (Date.now() > deadlineMs) return;
-      const batch = reqs.slice(i, i + size);
-      const user = buildBatchUserPrompt(
-        batch.map((r) => ({
-          id: r.id.toString(),
-          name: r.name,
-          description: r.description,
-          isScored: r.isScored,
-          farReference: r.farReference
-        })),
-        documentText,
-        solText,
-        lean
-      );
-      try {
-        const ai = await complete(provider, system, user, model, apiKey, BATCH_MAX_TOKENS);
-        const { review, items } = parseBatchResults(ai.text);
-        const byId = new Map(items.map((it) => [it.requirementId, it]));
-        await withTenant(companyId, async (tx) => {
-          for (const r of batch) {
-            const it = byId.get(r.id.toString());
-            if (!it) {
-              errors++;
-              continue;
-            }
-            it.review = review; // shared per-batch review summary
-            await tx.result.upsert({
-              where: {
-                evaluationId_requirementId_personaId: {
-                  evaluationId,
-                  requirementId: r.id,
-                  personaId: persona.id
-                }
-              },
-              create: {
-                evaluationId,
-                companyId,
-                requirementId: r.id,
-                personaId: persona.id,
-                ...aiFields(it, model, ai.tokenIn, ai.tokenOut)
-              },
-              update: aiFields(it, model, ai.tokenIn, ai.tokenOut)
-            });
-            newResults++;
-            done++;
-          }
-        });
-      } catch {
-        errors += batch.length;
+  // One rich call per evaluation factor — the holistic, structured assessment.
+  for (const factor of todo) {
+    if (Date.now() > deadlineMs) break;
+    const pc = toPromptCriterion(factor); // isScored → scored_factor schema
+    const system = buildSystemPrompt(persona, pc, evaluation.solicitation);
+    const user = buildUserPrompt(pc, documentText, solText);
+    try {
+      // LLM call OUTSIDE any transaction — the slow network hop.
+      const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
+      const parsed = parseResult(ai.text, pc.criterionType);
+      if (!parsed) {
+        errors++;
+        continue;
       }
+      await withTenant(companyId, (tx) =>
+        tx.result.upsert({
+          where: {
+            evaluationId_requirementId_personaId: {
+              evaluationId,
+              requirementId: factor.id,
+              personaId: persona.id
+            }
+          },
+          create: {
+            evaluationId,
+            companyId,
+            requirementId: factor.id,
+            personaId: persona.id,
+            ...aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
+          },
+          update: aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
+        })
+      );
+      newResults++;
+      done++;
+    } catch {
+      errors++;
     }
-  };
-
-  // Scored factors first (fewer, higher value), then the lean pass/fail compliance bulk.
-  await runTier(todo.filter((r) => r.isScored), false, BATCH_SIZE_SCORED);
-  await runTier(todo.filter((r) => !r.isScored), true, BATCH_SIZE_COMPLIANCE);
+  }
 
   const allDone = done >= total;
   await withTenant(companyId, (tx) =>
@@ -262,12 +252,105 @@ export async function runEvaluation(
       data: {
         status: allDone ? 'complete' : 'pending',
         completedAt: allDone ? new Date() : null,
-        errorMessage: allDone ? null : `Paused — ${done}/${total} assessed; run again to continue.`
+        errorMessage: allDone ? null : `Paused — ${done}/${total} factors assessed; run again to continue.`
       }
     })
   );
 
   return { ok: newResults > 0 || allDone, results: newResults, errors, done, total };
+}
+
+// Objective compliance check — no persona lens; the proposal either satisfies the
+// administrative requirement or it does not.
+const COMPLIANCE_SYSTEM =
+  'You are a government-contracting compliance analyst. You check a proposal against ' +
+  'administrative and pass/fail solicitation requirements and return a brief Go/No-Go ' +
+  'determination for each. Respond only in the JSON format specified.';
+
+function mapDetermination(d: string | null): 'compliant' | 'partial' | 'non_compliant' | 'not_assessed' {
+  if (d === 'compliant') return 'compliant';
+  if (d === 'non_compliant') return 'non_compliant';
+  if (d === 'unable_to_determine') return 'partial';
+  return 'not_assessed';
+}
+
+/**
+ * Lean pass/fail sweep of the administrative requirements (the non-scored bulk) against
+ * a review's frozen proposal snapshot, setting each requirement's complianceStatus — the
+ * compliance matrix. Big batches (cheap determinations); time-boxed; idempotent (a
+ * re-run overwrites the statuses to reflect the current draft).
+ */
+export async function runComplianceSweep(
+  reviewId: bigint,
+  companyId: bigint,
+  deadlineMs = Infinity
+): Promise<SweepSummary> {
+  const loaded = await withTenant(companyId, async (tx) => {
+    const review = await tx.review.findFirst({
+      where: { id: reviewId, companyId },
+      include: { documents: true }
+    });
+    if (!review) return null;
+    const company = await tx.company.findUnique({ where: { id: companyId } });
+    const requirements = await tx.requirement.findMany({
+      where: { solicitationId: review.solicitationId, companyId, removedAt: null, isScored: false },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+    });
+    const solDocs = await tx.solDocument.findMany({
+      where: { solicitationId: review.solicitationId, companyId }
+    });
+    return { review, company, requirements, solDocs };
+  });
+
+  if (!loaded?.review) return { ok: false, checked: 0, error: 'Review not found.' };
+  if (!loaded.company) return { ok: false, checked: 0, error: 'Company not found.' };
+  if (loaded.requirements.length === 0) return { ok: true, checked: 0 };
+
+  const documentText = concatDocs(loaded.review.documents);
+  if (documentText.trim() === '') return { ok: false, checked: 0, error: 'No proposal snapshot.' };
+  const solText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'rfp'));
+
+  const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
+  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
+
+  let checked = 0;
+  for (let i = 0; i < loaded.requirements.length; i += BATCH_SIZE_COMPLIANCE) {
+    if (Date.now() > deadlineMs) break;
+    const batch = loaded.requirements.slice(i, i + BATCH_SIZE_COMPLIANCE);
+    const user = buildBatchUserPrompt(
+      batch.map((r) => ({
+        id: r.id.toString(),
+        name: r.name,
+        description: r.description,
+        isScored: false,
+        farReference: r.farReference
+      })),
+      documentText,
+      solText,
+      true // lean determination schema
+    );
+    try {
+      const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
+      const { items } = parseBatchResults(ai.text);
+      const byId = new Map(items.map((it) => [it.requirementId, it]));
+      await withTenant(companyId, async (tx) => {
+        for (const r of batch) {
+          const it = byId.get(r.id.toString());
+          if (!it) continue;
+          await tx.requirement.update({
+            where: { id: r.id },
+            data: { complianceStatus: mapDetermination(it.aiDetermination) }
+          });
+          checked++;
+        }
+      });
+    } catch {
+      /* skip a failed batch — a re-run re-sweeps */
+    }
+  }
+
+  return { ok: true, checked };
 }
 
 /**

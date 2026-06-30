@@ -10,8 +10,9 @@ export type RunState = {
   personas: number;
   results: number;
   errors: number;
-  done?: number; // requirements assessed (this persona-set), incl. prior runs
-  total?: number; // total active requirements
+  done?: number; // evaluation factors assessed (this persona-set), incl. prior runs
+  total?: number; // total evaluation factors
+  complianceChecked?: number; // pass/fail requirements swept into the matrix
 } | null;
 
 // Run-evaluation control with a live in-progress indicator + completion notice.
@@ -84,8 +85,9 @@ export default function RunPanel({
             )}
             <span>
               {incomplete
-                ? `Assessed ${state.done} of ${state.total} — large review, click Run again to continue.`
-                : `Review complete — ${state.done ?? state.results} assessments across ${state.personas} ${state.personas === 1 ? 'persona' : 'personas'}`}
+                ? `Assessed ${state.done} of ${state.total} evaluation factors — click Run again to continue.`
+                : `Review complete — ${state.done ?? state.results} factor assessment${(state.done ?? state.results) === 1 ? '' : 's'} across ${state.personas} ${state.personas === 1 ? 'persona' : 'personas'}`}
+              {!incomplete && state.complianceChecked ? `, ${state.complianceChecked} compliance checks` : ''}
               {!incomplete && state.errors > 0 ? `, ${state.errors} error(s)` : ''}
               {incomplete ? '' : '.'}
             </span>
