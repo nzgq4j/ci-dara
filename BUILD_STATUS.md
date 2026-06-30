@@ -29,7 +29,7 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 | **PDF extraction** | `unpdf` (not `pdf-parse`) | `pdf-parse` v2 works locally but fails in Vercel's serverless runtime (pdfjs worker/asset tracing). `unpdf` ships a worker-free serverless pdfjs build. DOCX still uses `mammoth`. |
 | **Auth provisioning** | Call `provisionNewUser` on email+password sign-in too | Provisioning previously only ran in `/auth/callback` (OAuth/magic-link), so password users had "no account information". |
 | **Admin model** | **Application Admin** = company-less platform operator (`dara_platform_admins`), DB-backed and bootstrapped from `PLATFORM_ADMIN_EMAILS`; company admin via `UserRole = company_admin` | Formalized 2026-06-30. Separation of duties (CMMC AC-5/AC-6): an app admin manages accounts/users/platform settings but has **no tenant context → no CUI**, by construction. Env-listed emails are auto-provisioned and can't be removed in-app (bootstrap root). **Behavior change:** an email in `PLATFORM_ADMIN_EMAILS` no longer gets a company workspace — use a separate account for company/CUI access. |
-| **Platform AI config** | Platform LLM keys (encrypted) + central provider/model live in a singleton `dara_platform_settings`, edited **only** in the Application Admin console; platform-mode evaluations resolve from it (a console key overrides the `PLATFORM_*_KEY` env fallback) | 2026-06-30. One place to manage platform keys + model; `resolveCompanyAI(company, platform)` uses the central provider/model/key in platform mode. Company provider/model selectors apply to **BYOK only**. Env keys remain a transition fallback until moved into the console. |
+| **Platform AI config** | Platform LLM keys (encrypted) + central provider/model live in a singleton `dara_platform_settings`, edited **only** in the Application Admin console; platform-mode evaluations resolve from it (a console key overrides the `PLATFORM_*_KEY` env fallback) | 2026-06-30. One place to manage platform keys + model; `resolveCompanyAI(company, platform)` uses the central provider/model/key in platform mode. **Non-BYOK (platform) accounts have NO per-account key/model choice** — the company Settings AI form hides the provider/model/key inputs on platform mode and shows the admin-set model read-only; those inputs appear only in BYOK mode (`app/app/settings/CompanyAIConfig.tsx`). Env keys remain a transition fallback until moved into the console. |
 | **Onboarding** | New `Company.onboardedAt` + `DaraUser.onboardedAt` gate. Org creator (un-onboarded company + `company_admin`) → 6-step wizard `/onboarding` (prefilled from Google OAuth); other un-onboarded users → one-screen `/welcome`. Existing rows backfilled as onboarded | 2026-06-30. New sign-ups set up their workspace before the dashboard; invited members get a light welcome once. Gate lives in `app/app/layout.tsx`; wizard/welcome live outside the `/app` shell. |
 | **API keys at rest** | AES-256-GCM (`utils/dara/crypto.ts`) keyed off `APP_KEY` | BYOK keys must be encrypted; the WP `Crypto` class was not portable. |
 | **Stripe checkout** | Custom plan cards → Stripe Checkout Session (promotion codes enabled) | User chose custom cards over the hosted pricing table; coupon support needed for testing. |
@@ -240,11 +240,14 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     retire `PLATFORM_ANTHROPIC_KEY` from Vercel. (Optional model-catalog tweak:
     `utils/dara/ai-catalog.ts`.)
 15. **`PLATFORM_ADMIN_EMAILS` is now `islanista@gmail.com` (2026-06-30).** `david@crucibleinsight.com`
-    was removed from the env allow-list and **deactivated** in the console, reverting it to
-    a normal user (company **"Proposal Foundry"**, `company_admin`). Its `dara_platform_admins`
-    row was kept (deactivated) per request. Current admins: `islanista@gmail.com` (env-pinned)
-    + `admin@crucibleinsight.com` (DB). NOTE: `PLATFORM_ADMIN_EMAILS` is stored **Sensitive**,
-    so `vercel env pull` shows it blank — use `vercel env add … --value … --force` to set it.
+    was removed from the env allow-list and its `dara_platform_admins` row **deleted**, reverting it
+    to a normal user (company **"Proposal Foundry"**, `company_admin`). Current admins:
+    `islanista@gmail.com` (env-pinned) + `admin@crucibleinsight.com` (DB). NOTE: `PLATFORM_ADMIN_EMAILS`
+    is stored **Sensitive**, so `vercel env pull` shows it blank — use `vercel env add … --value … --force`.
+    **Gotcha that bit us:** the in-console **Deactivate** is blocked while an admin is still env-pinned,
+    so david's row stayed `active=true`; and `resolvePlatformAdmin` treats an **active row as admin
+    regardless of the env list** — so removing from env alone is not enough. To fully demote: remove
+    from `PLATFORM_ADMIN_EMAILS` **and** delete (or deactivate) the `dara_platform_admins` row.
 11. **Open security findings** (full detail + status on `/app/security`). **None
     open.** DARA-007 (CUI→LLM) is **Risk accepted** with controls. Latest closures:
     **DARA-017 (migration history) Remediated 2026-06-29** (prod baselined to
@@ -444,6 +447,15 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   `Result` gained `ai_compliance` + `ai_suggested_changes` (migration `20260630040000`,
   no RLS change — existing table). Confirmed platform-mode (non-BYOK) evals already use
   the admin-configured Platform AI key + model. **Populates on next run.**
+- **Non-BYOK accounts lose the key/model choice in the UI** (commit `1bfb044`, deployed):
+  company Settings AI config is now a client component (`CompanyAIConfig.tsx`) — platform
+  mode shows only the key-mode toggle + read-only platform model; provider/model + BYOK key
+  fields appear only in BYOK mode. Aligns the UI with the runtime (which already forces the
+  admin key+model for non-BYOK).
+- **Fixed `david@crucibleinsight.com` still showing as platform admin** (same deploy): root
+  cause was his `dara_platform_admins` row was `active=true` (the portal Deactivate hadn't
+  persisted — it's blocked while env-pinned), and an active row = admin regardless of the env
+  list. Deleted the row; he's back to a normal `company_admin` (Proposal Foundry). See gap #15.
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —

@@ -10,11 +10,12 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `ae42c0c` (structured evaluation findings)
+- **Branch:** `main`, clean. Last commit `1bfb044` (non-BYOK AI lockdown + david fix)
   is **deployed to prod and pushed**. This session, in order: `4076ec7` (onboarding +
   Organization group + Company settings), `5ecc949` (Create Account), `8fd5ac3`
   (invite email-verification gate), `d322114` (Application Admin), `139368f`
-  (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings).
+  (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings), `e5a5bc7` (docs),
+  `1bfb044` (non-BYOK AI lockdown + david demotion).
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -43,7 +44,15 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   `dara_platform_settings`). Platform-mode (non-BYOK) evaluations resolve their key +
   model from there; the `PLATFORM_ANTHROPIC_KEY` env var is now only a **fallback**
   (shown as "from env"). Move the key into the console to finish the migration. Model
-  catalog: `utils/dara/ai-catalog.ts`.
+  catalog: `utils/dara/ai-catalog.ts`. **Non-BYOK company accounts have no key/model
+  choice** — Settings hides the provider/model/key inputs on platform mode (they appear
+  only in BYOK mode; `app/app/settings/CompanyAIConfig.tsx`).
+- **Demoting a platform admin takes two steps.** Removing the email from
+  `PLATFORM_ADMIN_EMAILS` is NOT enough: `resolvePlatformAdmin` treats an active
+  `dara_platform_admins` row as admin regardless of the env list, and the console
+  **Deactivate** is blocked while the email is still env-pinned. To fully demote: remove
+  from env **and** delete/deactivate the row. (`david@crucibleinsight.com` was demoted
+  this way — row deleted; now a normal `company_admin` of "Proposal Foundry".)
 - **Structured evaluation findings are live** (strengths / weaknesses / compliance /
   suggested changes + rationale; `ResultFindings.tsx` in the Matrix tab). They
   **populate on the next evaluation run** — results from before this deploy show only
