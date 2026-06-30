@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
-import { isPlatformAdmin } from '@/utils/dara/admin';
+import { resolvePlatformAdmin } from '@/utils/dara/platform';
 import Sidebar from '@/components/layout/Sidebar';
+import PlatformAdminSidebar from '@/components/layout/PlatformAdminSidebar';
+import AccountDisabled from '@/components/layout/AccountDisabled';
 
 export default async function AppLayout({
   children
@@ -16,8 +18,26 @@ export default async function AppLayout({
 
   if (!user) redirect('/signin');
 
+  // Application admins: company-less operator shell, no CUI surface.
+  const admin = await resolvePlatformAdmin(user.email);
+  if (admin) {
+    return (
+      <div className="flex h-screen overflow-hidden bg-bg text-t1">
+        <PlatformAdminSidebar
+          admin={{ name: admin.name, email: admin.email }}
+        />
+        <main className="flex-1 overflow-y-auto px-8 py-7">{children}</main>
+      </div>
+    );
+  }
+
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
+
+  // Banned/deactivated by a platform admin — terminal screen (no redirect loop).
+  if (!daraUser.isActive) {
+    return <AccountDisabled email={daraUser.email} />;
+  }
 
   // Onboarding gate. A brand-new org creator (un-onboarded company, company_admin)
   // runs the full setup wizard; any other un-onboarded user (an invited member
@@ -31,7 +51,7 @@ export default async function AppLayout({
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-t1">
       <Sidebar
-        isAdmin={isPlatformAdmin(user.email)}
+        isAdmin={false}
         company={{ name: daraUser.company.name, plan: daraUser.company.plan }}
         user={{
           name: daraUser.name,

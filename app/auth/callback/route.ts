@@ -5,6 +5,10 @@ import {
   touchLastLogin,
   EmailVerificationRequiredError
 } from '@/utils/dara/provision';
+import {
+  resolvePlatformAdmin,
+  recordPlatformAdminLogin
+} from '@/utils/dara/platform';
 import { recordAudit } from '@/utils/dara/audit';
 
 // DARA-018: only allow same-origin, single-slash-rooted relative paths as the
@@ -35,6 +39,22 @@ export async function GET(request: Request) {
       } = await supabase.auth.getUser();
 
       if (user) {
+        // Application admins are company-less operators — never provision a tenant
+        // for them; route to the admin console.
+        const admin = await resolvePlatformAdmin(user.email);
+        if (admin) {
+          await recordPlatformAdminLogin(user.email ?? '', user.id);
+          await recordAudit({
+            action: 'platform.signin',
+            actorId: user.id,
+            actorEmail: admin.email,
+            entityType: 'platform_admin',
+            entityId: admin.id,
+            metadata: { provider: user.app_metadata?.provider ?? 'oauth' }
+          });
+          return NextResponse.redirect(`${origin}/app/admin`);
+        }
+
         try {
           const daraUser = await provisionNewUser(
             user.id,

@@ -1,11 +1,9 @@
-import { redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
-
-// DARA-010: platform (super) admins are configured ONLY via the
+// DARA-010: the platform-admin allow-list is configured ONLY via the
 // PLATFORM_ADMIN_EMAILS env var (comma-separated). No source-embedded fallback —
-// if the var is unset there are zero platform admins (fail-closed), and a warning
-// is logged. Admin actions are audited (DARA-013) and email verification is
-// enforced by Supabase sign-in.
+// if the var is unset there are zero env-pinned admins (fail-closed), and a warning
+// is logged. This list is the bootstrap root for Application Admins: env-listed
+// emails are auto-provisioned into dara_platform_admins and cannot be removed
+// in-app. The DB-aware resolver + guard live in utils/dara/platform.ts.
 export function platformAdminEmails(): string[] {
   const list = (process.env.PLATFORM_ADMIN_EMAILS ?? '')
     .split(',')
@@ -22,15 +20,4 @@ export function platformAdminEmails(): string[] {
 export function isPlatformAdmin(email: string | null | undefined): boolean {
   if (!email) return false;
   return platformAdminEmails().includes(email.toLowerCase());
-}
-
-/** Server-side guard: returns the user's email or redirects non-admins away. */
-export async function requirePlatformAdmin(): Promise<string> {
-  const supabase = createClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-  if (!user) redirect('/signin');
-  if (!isPlatformAdmin(user.email)) redirect('/app/dashboard');
-  return user.email!;
 }

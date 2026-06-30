@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { updateSession } from '@/utils/supabase/middleware';
 import { createClient } from '@/utils/supabase/server';
+import { isPlatformAdmin } from '@/utils/dara/admin';
 
 export async function middleware(request: NextRequest) {
   // Forward a stray OAuth/magic-link `code` that landed on the root (Supabase's
@@ -25,6 +26,17 @@ export async function middleware(request: NextRequest) {
 
     if (!user) {
       return NextResponse.redirect(new URL('/signin', request.url));
+    }
+
+    // Application admins are company-less: keep them inside the /app/admin console
+    // and out of every company (CUI) route. Env-pinned admins are recognized here
+    // synchronously; DB-only admins are kept in by the admin sidebar (no company
+    // links) and the root redirect, so no per-request DB lookup is needed here.
+    if (
+      isPlatformAdmin(user.email) &&
+      !request.nextUrl.pathname.startsWith('/app/admin')
+    ) {
+      return NextResponse.redirect(new URL('/app/admin', request.url));
     }
   }
 

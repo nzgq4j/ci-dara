@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
+import { resolvePlatformAdmin } from '@/utils/dara/platform';
 
 export default async function HomePage({
   searchParams
@@ -24,7 +25,11 @@ export default async function HomePage({
   } = await supabase.auth.getUser();
 
   if (user) {
-    redirect('/app/dashboard');
+    // Application admins have no company — send them to the admin console. This is
+    // also the loop terminator: company pages redirect a no-tenant admin to /signin,
+    // which bounces here, which lands them on /app/admin.
+    const admin = await resolvePlatformAdmin(user.email);
+    redirect(admin ? '/app/admin' : '/app/dashboard');
   }
 
   redirect('/signin');

@@ -149,6 +149,24 @@ model DaraUser {
   @@map("dara_users")
 }
 
+// Application (platform) admins: company-less operators who manage backend/platform
+// settings and users but have NO access to company CUI. Keyed by email so an admin
+// can be granted before they first sign in; userId is filled on first sign-in.
+// Accessed only via prismaAdmin (dara_admin); the tenant runtime role has no grant.
+model PlatformAdmin {
+  id          BigInt    @id @default(autoincrement())
+  email       String    @unique @db.VarChar(255)
+  name        String    @default("") @db.VarChar(255)
+  isActive    Boolean   @default(true) @map("is_active")
+  userId      String?   @map("user_id") @db.Uuid
+  addedBy     String?   @map("added_by") @db.VarChar(255)
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("dara_platform_admins")
+}
+
 model Team {
   id          BigInt   @id @default(autoincrement())
   companyId   BigInt   @map("company_id")

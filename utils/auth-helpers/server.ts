@@ -10,6 +10,10 @@ import {
   touchLastLogin,
   EmailVerificationRequiredError
 } from '@/utils/dara/provision';
+import {
+  resolvePlatformAdmin,
+  recordPlatformAdminLogin
+} from '@/utils/dara/platform';
 
 function isValidEmail(email: string) {
   var regex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
@@ -170,6 +174,14 @@ export async function signInWithPassword(formData: FormData) {
       error.message
     );
   } else if (data.user) {
+    // Application admins are company-less operators — skip tenant provisioning and
+    // route to the admin console.
+    const admin = await resolvePlatformAdmin(data.user.email);
+    if (admin) {
+      await recordPlatformAdminLogin(data.user.email ?? '', data.user.id);
+      cookieStore.set('preferredSignInView', 'password_signin', { path: '/' });
+      return getStatusRedirect('/app/admin', 'Success!', 'You are now signed in.');
+    }
     // Email+password sign-in does not pass through /auth/callback, so provision
     // the Dara company/user here too. provisionNewUser is idempotent.
     try {
