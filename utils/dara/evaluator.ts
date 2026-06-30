@@ -1,9 +1,42 @@
 import { Prisma } from '@prisma/client';
 import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
-import { buildSystemPrompt, buildUserPrompt, parseResult } from '@/utils/dara/prompt';
+import {
+  buildSystemPrompt,
+  buildUserPrompt,
+  parseResult,
+  type ParsedResult
+} from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+
+// Convert a read-side JSON value (or null) into Prisma's write input.
+function jsonIn(
+  v: Prisma.JsonValue | null | undefined
+): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  return v == null ? Prisma.JsonNull : (v as Prisma.InputJsonValue);
+}
+
+// The AI-derived columns shared by create / update / regenerate. JSON columns are
+// cast for Prisma's input type; a null review becomes a SQL NULL.
+function aiFields(parsed: ParsedResult, model: string, tokenIn: number, tokenOut: number) {
+  return {
+    aiDetermination: parsed.aiDetermination,
+    aiScore: parsed.aiScore,
+    aiRationale: parsed.aiRationale,
+    aiConfidence: parsed.aiConfidence,
+    aiStrengths: parsed.strengths as unknown as Prisma.InputJsonValue,
+    aiWeaknesses: parsed.weaknesses as unknown as Prisma.InputJsonValue,
+    aiCompliance: parsed.compliance,
+    aiSuggestedChanges: parsed.suggestedChanges as unknown as Prisma.InputJsonValue,
+    aiReview: parsed.review
+      ? (parsed.review as unknown as Prisma.InputJsonValue)
+      : Prisma.JsonNull,
+    modelId: model,
+    tokenIn,
+    tokenOut
+  };
+}
 
 export interface EvalSummary {
   ok: boolean;
@@ -140,31 +173,9 @@ export async function runEvaluation(
             companyId,
             criterionId: criterion.id,
             personaId: persona.id,
-            aiDetermination: parsed.aiDetermination,
-            aiScore: parsed.aiScore,
-            aiRationale: parsed.aiRationale,
-            aiConfidence: parsed.aiConfidence,
-            aiStrengths: parsed.strengths,
-            aiWeaknesses: parsed.weaknesses,
-            aiCompliance: parsed.compliance,
-            aiSuggestedChanges: parsed.suggestedChanges as unknown as Prisma.InputJsonValue,
-            modelId: model,
-            tokenIn: ai.tokenIn,
-            tokenOut: ai.tokenOut
+            ...aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
           },
-          update: {
-            aiDetermination: parsed.aiDetermination,
-            aiScore: parsed.aiScore,
-            aiRationale: parsed.aiRationale,
-            aiConfidence: parsed.aiConfidence,
-            aiStrengths: parsed.strengths,
-            aiWeaknesses: parsed.weaknesses,
-            aiCompliance: parsed.compliance,
-            aiSuggestedChanges: parsed.suggestedChanges as unknown as Prisma.InputJsonValue,
-            modelId: model,
-            tokenIn: ai.tokenIn,
-            tokenOut: ai.tokenOut
-          }
+          update: aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
         })
       );
       results++;
@@ -186,4 +197,103 @@ export async function runEvaluation(
   );
 
   return { ok: results > 0, results, errors };
+}
+
+/**
+ * Regenerate a single result (one criterion of one offeror×persona evaluation).
+ * Snapshots the current values into the prior-version log, re-runs the criterion,
+ * and updates the result in place (incrementing regenCount). The slow LLM call runs
+ * outside any transaction.
+ */
+export async function regenerateResult(
+  resultId: bigint,
+  companyId: bigint
+): Promise<{ ok: boolean; error?: string }> {
+  const loaded = await withTenant(companyId, async (tx) => {
+    const result = await tx.result.findFirst({ where: { id: resultId, companyId } });
+    if (!result) return null;
+    const criterion = await tx.criterion.findFirst({
+      where: { id: result.criterionId, companyId }
+    });
+    const persona = await tx.persona.findFirst({
+      where: { id: result.personaId, companyId }
+    });
+    const evaluation = await tx.evaluation.findFirst({
+      where: { id: result.evaluationId, companyId },
+      include: {
+        response: { include: { files: true } },
+        solicitation: { include: { solDocs: true } }
+      }
+    });
+    const company = await tx.company.findUnique({ where: { id: companyId } });
+    return { result, criterion, persona, evaluation, company };
+  });
+
+  if (!loaded?.result || !loaded.criterion || !loaded.persona || !loaded.evaluation || !loaded.company) {
+    return { ok: false, error: 'Result or related data not found.' };
+  }
+  const { result, criterion, persona, evaluation, company } = loaded;
+
+  const documentText = concatDocs(evaluation.response.files);
+  if (documentText.trim() === '') {
+    return { ok: false, error: 'No extracted proposal text to evaluate.' };
+  }
+  const solText = concatDocs(evaluation.solicitation.solDocs);
+
+  const platform = company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
+  const { provider, model, apiKey } = resolveCompanyAI(company, platform);
+  if (!apiKey) return { ok: false, error: `No API key configured for provider "${provider}".` };
+
+  const system = buildSystemPrompt(persona, criterion, evaluation.solicitation);
+  const user = buildUserPrompt(criterion, documentText, solText);
+
+  let ai;
+  try {
+    ai = await complete(provider, system, user, model, apiKey);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'AI request failed.' };
+  }
+  const parsed = parseResult(ai.text, criterion.criterionType);
+  if (!parsed) return { ok: false, error: 'Could not parse the AI response.' };
+
+  await withTenant(companyId, async (tx) => {
+    // Snapshot the soon-to-be-replaced values into the prior-version log.
+    await tx.resultVersion.create({
+      data: {
+        companyId,
+        resultId: result.id,
+        version: result.regenCount + 1,
+        aiDetermination: result.aiDetermination,
+        aiScore: result.aiScore,
+        aiRationale: result.aiRationale,
+        aiConfidence: result.aiConfidence,
+        aiStrengths: jsonIn(result.aiStrengths),
+        aiWeaknesses: jsonIn(result.aiWeaknesses),
+        aiCompliance: result.aiCompliance,
+        aiSuggestedChanges: jsonIn(result.aiSuggestedChanges),
+        aiReview: jsonIn(result.aiReview),
+        modelId: result.modelId
+      }
+    });
+    await tx.result.update({
+      where: { id: result.id },
+      data: { ...aiFields(parsed, model, ai.tokenIn, ai.tokenOut), regenCount: result.regenCount + 1 }
+    });
+  });
+
+  return { ok: true };
+}
+
+/** Archive (hide, retain) or restore a single result. Archived results are never deleted. */
+export async function setResultArchived(
+  resultId: bigint,
+  companyId: bigint,
+  archived: boolean
+): Promise<void> {
+  await withTenant(companyId, (tx) =>
+    tx.result.updateMany({
+      where: { id: resultId, companyId },
+      data: { archivedAt: archived ? new Date() : null }
+    })
+  );
 }

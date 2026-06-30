@@ -35,6 +35,12 @@ export interface SuggestedChange {
   rationale: string;
 }
 
+export interface ReviewSummary {
+  method: string; // how the review was conducted
+  reviewed: string; // what proposal content was examined
+  measuredAgainst: string; // the requirements/factors/tasks evaluated against
+}
+
 export interface ParsedResult {
   resultType: string;
   aiDetermination: string | null;
@@ -42,6 +48,7 @@ export interface ParsedResult {
   aiRationale: string;
   aiConfidence: number;
   rating: string | null;
+  review: ReviewSummary | null;
   strengths: string[];
   weaknesses: string[];
   compliance: string | null;
@@ -128,6 +135,7 @@ export function parseResult(text: string, criterionType: string): ParsedResult |
 
   const confidence = Math.min(1, Math.max(0, Number(data.confidence ?? 0.5) || 0));
 
+  const review = parseReview(data.review);
   const findings = parseFindings(data);
 
   if (criterionType === 'scored_factor') {
@@ -138,6 +146,7 @@ export function parseResult(text: string, criterionType: string): ParsedResult |
       aiRationale: String(data.rationale ?? ''),
       aiConfidence: confidence,
       rating: data.rating ? String(data.rating) : null,
+      review,
       ...findings
     };
   }
@@ -149,8 +158,19 @@ export function parseResult(text: string, criterionType: string): ParsedResult |
     aiRationale: String(data.rationale ?? ''),
     aiConfidence: confidence,
     rating: null,
+    review,
     ...findings
   };
+}
+
+// Extract the "how the review was made" summary. Returns null if absent/empty.
+function parseReview(v: any): ReviewSummary | null {
+  if (!v || typeof v !== 'object') return null;
+  const method = String(v.method ?? '').trim();
+  const reviewed = String(v.reviewed ?? '').trim();
+  const measuredAgainst = String(v.measured_against ?? v.measuredAgainst ?? '').trim();
+  if (!method && !reviewed && !measuredAgainst) return null;
+  return { method, reviewed, measuredAgainst };
 }
 
 // Extract the structured findings (strengths / weaknesses / compliance /
@@ -195,6 +215,15 @@ function parseFindings(data: any): {
   };
 }
 
+// "How the review was made" summary, placed first in every schema so the UI can
+// open each result with a clear methodology before the rationale + findings.
+const REVIEW_SCHEMA =
+  '"review": {' +
+  '"method": "<how you conducted this review — the analytical approach and standard applied>", ' +
+  '"reviewed": "<what proposal content you examined — which volumes/sections/documents>", ' +
+  '"measured_against": "<the specific solicitation requirements, tasks (e.g. PWS/SOW task numbers), and evaluation factors you measured the proposal against, cited explicitly>"' +
+  '}';
+
 // Shared structured-findings fields appended to every schema. The model returns
 // these in addition to the score/determination so the UI can present formatted
 // strengths, weaknesses, compliance, and suggested changes with rationale.
@@ -205,7 +234,9 @@ const FINDINGS_SCHEMA =
   '"suggested_changes": [{"change": "<specific change the offeror could make to improve>", "rationale": "<why this change helps / which requirement it addresses>"}]';
 
 const FINDINGS_INSTRUCTIONS =
-  'In addition to the rationale, populate the structured findings: ' +
+  'Open with "review": a clear summation of HOW the review was made ("method"), WHAT was reviewed ("reviewed"), and the specific requirements/tasks/factors it was MEASURED AGAINST ("measured_against") — cite specific tasks and requirements from the source materials (e.g. PWS/SOW task numbers, Section L/M items, FAR references). ' +
+  'Throughout the rationale and findings, cite specific tasks, requirements, and quoted/paraphrased evidence from the source materials. ' +
+  'Also populate the structured findings: ' +
   '"strengths" and "weaknesses" as arrays of concise, evidence-based bullet points; ' +
   '"compliance" as a short assessment of compliance with the criterion\'s requirements; ' +
   'and "suggested_changes" as an array of concrete, actionable changes the offeror could make, each with a "rationale" explaining why. ' +
@@ -213,12 +244,12 @@ const FINDINGS_INSTRUCTIONS =
 
 function schemaFor(type: string): string {
   if (type === 'scored_factor') {
-    return `{"score": <integer 0-100>, "rating": "<Outstanding|Good|Acceptable|Marginal|Unacceptable>", "rationale": "<overall summary>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
+    return `{${REVIEW_SCHEMA}, "score": <integer 0-100>, "rating": "<Outstanding|Good|Acceptable|Marginal|Unacceptable>", "rationale": "<overall summary, citing specific requirements/tasks>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
   }
   if (type === 'administrative') {
-    return `{"determination": "<compliant|non_compliant|unable_to_determine>", "violations": ["<specific violation 1>", "<specific violation 2>"], "rationale": "<numbered per-requirement findings>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
+    return `{${REVIEW_SCHEMA}, "determination": "<compliant|non_compliant|unable_to_determine>", "violations": ["<specific violation 1>", "<specific violation 2>"], "rationale": "<numbered per-requirement findings, citing the solicitation section>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
   }
-  return `{"determination": "<compliant|non_compliant|unable_to_determine>", "rationale": "<overall summary>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
+  return `{${REVIEW_SCHEMA}, "determination": "<compliant|non_compliant|unable_to_determine>", "rationale": "<overall summary, citing specific requirements/tasks>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
 }
 
 /**

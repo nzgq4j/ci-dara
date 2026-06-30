@@ -7,7 +7,6 @@ import {
   Trash2,
   Save,
   Upload,
-  Play,
   FileText,
   Inbox
 } from 'lucide-react';
@@ -17,10 +16,12 @@ import { withTenant } from '@/utils/prisma';
 import { userTeamIds, canViewSolicitation, canManageDepartments } from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
-import { runEvaluation } from '@/utils/dara/evaluator';
+import { runEvaluation, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
-import ResultFindings from '@/components/dara/ResultFindings';
+import ResultCard from '@/components/dara/ResultCard';
+import RunPanel, { type RunState } from '@/components/dara/RunPanel';
+import RunningBanner from '@/components/dara/RunningBanner';
 import {
   card,
   cardDashed,
@@ -434,7 +435,8 @@ async function deleteResponseFile(formData: FormData) {
 }
 
 // ---- Run evaluations ----
-async function runEvaluations(formData: FormData) {
+// Returns a summary so the client RunPanel can show a completion notice.
+async function runEvaluationsAction(formData: FormData): Promise<RunState> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
@@ -449,8 +451,12 @@ async function runEvaluations(formData: FormData) {
       where: { companyId: daraUser.companyId, isActive: true }
     });
   });
-  if (!activePersonas) return;
+  if (!activePersonas || activePersonas.length === 0) {
+    return { ok: false, personas: 0, results: 0, errors: 0 };
+  }
 
+  let totalResults = 0;
+  let totalErrors = 0;
   for (const persona of activePersonas) {
     // Find-or-create the evaluation row in its own short burst...
     const evaluation = await withTenant(daraUser.companyId, async (tx) => {
@@ -472,7 +478,9 @@ async function runEvaluations(formData: FormData) {
     });
     // ...then run it OUTSIDE any transaction — runEvaluation manages its own
     // withTenant bursts around the slow LLM calls (do not nest transactions).
-    await runEvaluation(evaluation.id, daraUser.companyId);
+    const summary = await runEvaluation(evaluation.id, daraUser.companyId);
+    totalResults += summary.results;
+    totalErrors += summary.errors;
   }
   await recordAudit({
     action: 'evaluation.run',
@@ -488,6 +496,51 @@ async function runEvaluations(formData: FormData) {
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+  return {
+    ok: totalResults > 0,
+    personas: activePersonas.length,
+    results: totalResults,
+    errors: totalErrors
+  };
+}
+
+// ---- Regenerate / archive a single result (section) ----
+async function regenerateResultAction(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  const resultId = BigInt(String(formData.get('resultId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const res = await regenerateResult(resultId, daraUser.companyId);
+  await recordAudit({
+    action: 'evaluation.result.regenerate',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'result',
+    entityId: resultId,
+    metadata: { ok: res.ok, error: res.error ?? null }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+async function archiveResultAction(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  const resultId = BigInt(String(formData.get('resultId')));
+  const archived = String(formData.get('archived') ?? '') === '1';
+  await requireViewableSolicitation(solId, daraUser);
+  await setResultArchived(resultId, daraUser.companyId, archived);
+  await recordAudit({
+    action: archived ? 'evaluation.result.archive' : 'evaluation.result.restore',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'result',
+    entityId: resultId
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -526,7 +579,11 @@ export default async function SolicitationDetailPage({
           include: {
             response: true,
             results: {
-              include: { criterion: true, persona: true },
+              include: {
+                criterion: true,
+                persona: true,
+                versions: { orderBy: { version: 'desc' } }
+              },
               orderBy: { criterionId: 'asc' }
             }
           }
@@ -853,15 +910,14 @@ export default async function SolicitationDetailPage({
             </form>
           </div>
 
-          <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
-            <form action={runEvaluations}>
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="responseId" value={r.id.toString()} />
-              <button type="submit" disabled={!canEvaluate || r.files.length === 0} className={btnPrimary}>
-                <Play className="h-4 w-4" />
-                Run evaluation{activeCount > 0 ? ` (${activeCount} personas)` : ''}
-              </button>
-            </form>
+          <div className="mt-3 flex items-start justify-between gap-3 border-t border-line pt-3">
+            <RunPanel
+              action={runEvaluationsAction}
+              solId={sid}
+              responseId={r.id.toString()}
+              activeCount={activeCount}
+              disabled={!canEvaluate || r.files.length === 0}
+            />
             <form action={deleteResponse}>
               <input type="hidden" name="solId" value={sid} />
               <input type="hidden" name="responseId" value={r.id.toString()} />
@@ -892,8 +948,13 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
+  const runningCount = solicitation.evaluations.filter(
+    (e) => e.status === 'running' || e.status === 'pending'
+  ).length;
+
   const matrixPanel = (
     <div className="space-y-6">
+      <RunningBanner count={runningCount} />
       {/* Score matrix */}
       {hasResults && solicitation.criteria.length > 0 && solicitation.responses.length > 0 ? (
         <div className={`${card} overflow-x-auto`}>
@@ -975,38 +1036,42 @@ export default async function SolicitationDetailPage({
                   {e.errorMessage}
                 </p>
               )}
-              {e.results.length > 0 && (
-                <div className="space-y-2">
-                  {e.results.map((res) => (
-                    <div key={res.id.toString()} className="rounded-lg border border-line bg-bg p-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[13px] font-semibold text-t1">{res.criterion.name}</span>
-                        <span className="text-[13px] text-[#6f9bf5]">
-                          {res.aiScore != null
-                            ? `${Number(res.aiScore)}/100`
-                            : res.aiDetermination ?? '—'}
-                          {res.aiConfidence != null && (
-                            <span className="ml-2 text-[11px] text-t5">
-                              {Math.round(Number(res.aiConfidence) * 100)}% conf.
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      {res.aiRationale && (
-                        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-t3">
-                          {res.aiRationale}
-                        </p>
+              {e.results.length > 0 &&
+                (() => {
+                  const active = e.results.filter((res) => !res.archivedAt);
+                  const archived = e.results.filter((res) => res.archivedAt);
+                  return (
+                    <div className="space-y-2">
+                      {active.map((res) => (
+                        <ResultCard
+                          key={res.id.toString()}
+                          res={res}
+                          solId={sid}
+                          regenerateAction={regenerateResultAction}
+                          archiveAction={archiveResultAction}
+                        />
+                      ))}
+                      {archived.length > 0 && (
+                        <details className="rounded-lg border border-dashed border-line p-2">
+                          <summary className="cursor-pointer list-none px-1 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                            Archived sections ({archived.length})
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {archived.map((res) => (
+                              <ResultCard
+                                key={res.id.toString()}
+                                res={res}
+                                solId={sid}
+                                regenerateAction={regenerateResultAction}
+                                archiveAction={archiveResultAction}
+                              />
+                            ))}
+                          </div>
+                        </details>
                       )}
-                      <ResultFindings
-                        strengths={res.aiStrengths}
-                        weaknesses={res.aiWeaknesses}
-                        compliance={res.aiCompliance}
-                        suggestedChanges={res.aiSuggestedChanges}
-                      />
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                })()}
             </div>
           ))}
         </div>
