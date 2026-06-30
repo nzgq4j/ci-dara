@@ -7,6 +7,7 @@ import {
   FileText,
   Users,
   UsersRound,
+  Building2,
   Settings,
   ShieldCheck,
   ShieldAlert,
@@ -67,12 +68,22 @@ export default function Sidebar({
       items: [{ href: '/app/personas', label: 'Personas', icon: Users }]
     },
     {
+      // Organization renders only when the viewer can access something in it
+      // (empty sections are filtered out below). Company + Team are company-admin only.
+      label: 'Organization',
+      items: [
+        ...(user.role === 'company_admin'
+          ? [
+              { href: '/app/company', label: 'Company', icon: Building2 },
+              { href: '/app/team', label: 'Team', icon: UsersRound }
+            ]
+          : [])
+      ]
+    },
+    {
       label: 'Account',
       items: [
         { href: '/app/billing', label: 'Billing', icon: CreditCard },
-        ...(user.role === 'company_admin'
-          ? [{ href: '/app/team', label: 'Team', icon: UsersRound }]
-          : []),
         { href: '/app/settings', label: 'Settings', icon: Settings },
         ...(isAdmin
           ? [{ href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
@@ -80,7 +91,7 @@ export default function Sidebar({
         { href: '/app/security', label: 'Security', icon: ShieldAlert }
       ]
     }
-  ];
+  ].filter((section) => section.items.length > 0);
 
   const initials = (user.name || user.email || '?').slice(0, 2).toUpperCase();
   const planLabel = PLAN_LABELS[company.plan] ?? company.plan;

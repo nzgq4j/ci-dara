@@ -1,0 +1,21 @@
+-- Company profile + CMMC/C3PAO assessment fields (all nullable, no backfill).
+ALTER TABLE "dara_companies"
+    ADD COLUMN "legal_name" VARCHAR(255),
+    ADD COLUMN "website" VARCHAR(255),
+    ADD COLUMN "phone" VARCHAR(50),
+    ADD COLUMN "cage_code" VARCHAR(20),
+    ADD COLUMN "uei_code" VARCHAR(20),
+    ADD COLUMN "address_line1" VARCHAR(255),
+    ADD COLUMN "address_line2" VARCHAR(255),
+    ADD COLUMN "city" VARCHAR(120),
+    ADD COLUMN "state" VARCHAR(120),
+    ADD COLUMN "postal_code" VARCHAR(20),
+    ADD COLUMN "country" VARCHAR(120),
+    ADD COLUMN "cmmc_target_level" VARCHAR(20),
+    ADD COLUMN "cmmc_status" VARCHAR(40),
+    ADD COLUMN "c3pao_name" VARCHAR(255),
+    ADD COLUMN "c3pao_contact" VARCHAR(255),
+    ADD COLUMN "c3pao_email" VARCHAR(255),
+    ADD COLUMN "c3pao_phone" VARCHAR(50),
+    ADD COLUMN "assessment_date" TIMESTAMP(3),
+    ADD COLUMN "cert_expires_at" TIMESTAMP(3);

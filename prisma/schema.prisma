@@ -87,6 +87,31 @@ model Company {
   anthropicKeyEnc  String?    @map("anthropic_key_enc")
   openaiKeyEnc     String?    @map("openai_key_enc")
   googleKeyEnc     String?    @map("google_key_enc")
+  onboardedAt      DateTime?  @map("onboarded_at")
+
+  // Company profile (editable on /app/company by company admins)
+  legalName        String?    @map("legal_name") @db.VarChar(255)
+  website          String?    @db.VarChar(255)
+  phone            String?    @db.VarChar(50)
+  cageCode         String?    @map("cage_code") @db.VarChar(20)
+  ueiCode          String?    @map("uei_code") @db.VarChar(20)
+  addressLine1     String?    @map("address_line1") @db.VarChar(255)
+  addressLine2     String?    @map("address_line2") @db.VarChar(255)
+  city             String?    @db.VarChar(120)
+  state            String?    @db.VarChar(120)
+  postalCode       String?    @map("postal_code") @db.VarChar(20)
+  country          String?    @db.VarChar(120)
+
+  // CMMC assessment + C3PAO (auditor) information
+  cmmcTargetLevel  String?    @map("cmmc_target_level") @db.VarChar(20)
+  cmmcStatus       String?    @map("cmmc_status") @db.VarChar(40)
+  c3paoName        String?    @map("c3pao_name") @db.VarChar(255)
+  c3paoContact     String?    @map("c3pao_contact") @db.VarChar(255)
+  c3paoEmail       String?    @map("c3pao_email") @db.VarChar(255)
+  c3paoPhone       String?    @map("c3pao_phone") @db.VarChar(50)
+  assessmentDate   DateTime?  @map("assessment_date")
+  certExpiresAt    DateTime?  @map("cert_expires_at")
+
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 
@@ -113,6 +138,7 @@ model DaraUser {
   role        UserRole  @default(company_admin)
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at")
+  onboardedAt DateTime? @map("onboarded_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 

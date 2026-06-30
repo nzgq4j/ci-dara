@@ -19,6 +19,15 @@ export default async function AppLayout({
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
 
+  // Onboarding gate. A brand-new org creator (un-onboarded company, company_admin)
+  // runs the full setup wizard; any other un-onboarded user (an invited member
+  // joining an already-set-up company) gets the one-screen welcome. Existing
+  // accounts were backfilled as onboarded, so neither fires for them.
+  if (!daraUser.company.onboardedAt && daraUser.role === 'company_admin') {
+    redirect('/onboarding');
+  }
+  if (!daraUser.onboardedAt) redirect('/welcome');
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-t1">
       <Sidebar
