@@ -21,6 +21,7 @@ import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
+import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import ResultCard from '@/components/dara/ResultCard';
@@ -462,8 +463,23 @@ async function uploadSolDoc(formData: FormData) {
   await requireViewableSolicitation(solId, daraUser);
   const file = formData.get('file');
   if (!(file instanceof File) || file.size === 0) return;
-  // rfp = the solicitation itself; proposal = our working draft (reviews snapshot it).
-  const docType = String(formData.get('docType') ?? 'rfp') === 'proposal' ? 'proposal' : 'rfp';
+  // rfp = the solicitation; proposal = our working draft; amendment = an amendment doc.
+  const rawType = String(formData.get('docType') ?? 'rfp');
+  const docType = (['rfp', 'proposal', 'amendment'].includes(rawType) ? rawType : 'rfp') as
+    | 'rfp'
+    | 'proposal'
+    | 'amendment';
+  const amendmentRaw = String(formData.get('amendmentId') ?? '');
+  // Verify the amendment belongs to this solicitation before attributing the file.
+  const amendmentId =
+    docType === 'amendment' && /^\d+$/.test(amendmentRaw)
+      ? (await withTenant(daraUser.companyId, (tx) =>
+          tx.amendment.findFirst({
+            where: { id: BigInt(amendmentRaw), companyId: daraUser.companyId, solicitationId: solId },
+            select: { id: true }
+          })
+        ))?.id ?? null
+      : null;
   // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'sol', Date.now());
   const created = await withTenant(daraUser.companyId, (tx) =>
@@ -472,6 +488,7 @@ async function uploadSolDoc(formData: FormData) {
         companyId: daraUser.companyId,
         solicitationId: solId,
         docType,
+        amendmentId,
         originalFilename: doc.originalFilename,
         storedFilename: doc.storedFilename,
         fileSize: doc.fileSize,
@@ -512,6 +529,114 @@ async function deleteSolDoc(formData: FormData) {
     entityType: 'sol_document',
     entityId: id,
     metadata: { filename: owned.originalFilename }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// ---- Amendment actions ----
+async function createAmendment(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const number = String(formData.get('number') ?? '').trim();
+  const title = String(formData.get('title') ?? '').trim();
+  if (!number && !title) return;
+  const effRaw = String(formData.get('effectiveDate') ?? '').trim();
+  const effectiveDate = effRaw ? new Date(effRaw) : null;
+  const created = await withTenant(daraUser.companyId, (tx) =>
+    tx.amendment.create({
+      data: {
+        companyId: daraUser.companyId,
+        solicitationId: solId,
+        number,
+        title,
+        effectiveDate: effectiveDate && !isNaN(effectiveDate.getTime()) ? effectiveDate : null,
+        createdBy: daraUser.id
+      }
+    })
+  );
+  await recordAudit({
+    action: 'amendment.create',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'amendment',
+    entityId: created.id,
+    metadata: { solicitationId: solId.toString(), number }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+async function deleteAmendment(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('amendmentId')));
+  const solId = BigInt(String(formData.get('solId')));
+  // Amendment cascade removes its changes + attributed documents. Remove the stored
+  // blobs for those documents (Storage I/O outside any transaction).
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.amendment.findFirst({
+      where: { id, companyId: daraUser.companyId },
+      include: { documents: true }
+    })
+  );
+  if (!owned) redirect('/app/solicitations');
+  await removeStored(owned.documents.map((d) => d.storedFilename));
+  await withTenant(daraUser.companyId, (tx) => tx.amendment.delete({ where: { id } }));
+  await recordAudit({
+    action: 'amendment.delete',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'amendment',
+    entityId: id
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// AI-diff the amendment against the current compliance matrix → proposed changes.
+async function reconcileAmendmentAction(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('amendmentId')));
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const summary = await reconcileAmendment(id, daraUser.companyId);
+  await recordAudit({
+    action: 'amendment.reconcile',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'amendment',
+    entityId: id,
+    metadata: {
+      ok: summary.ok,
+      changes: summary.changes,
+      error: summary.error ?? null,
+      provider: daraUser.company.activeProvider,
+      mode: daraUser.company.aiKeyMode
+    }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+async function applyChangeAction(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const changeId = BigInt(String(formData.get('changeId')));
+  const solId = BigInt(String(formData.get('solId')));
+  const accept = String(formData.get('accept') ?? '') === '1';
+  await requireViewableSolicitation(solId, daraUser);
+  const res = await applyAmendmentChange(changeId, daraUser.companyId, accept);
+  await recordAudit({
+    action: accept ? 'amendment.change.accept' : 'amendment.change.reject',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'amendment_change',
+    entityId: changeId,
+    metadata: { ok: res.ok, error: res.error ?? null }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -669,6 +794,16 @@ export default async function SolicitationDetailPage({
         requirements: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
         solDocs: { orderBy: { uploadedAt: 'desc' } },
         departments: { include: { team: true } },
+        amendments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            documents: { orderBy: { uploadedAt: 'desc' } },
+            changes: {
+              orderBy: { id: 'asc' },
+              include: { requirement: { select: { name: true } } }
+            }
+          }
+        },
         reviews: {
           orderBy: { createdAt: 'desc' },
           include: {
@@ -721,10 +856,22 @@ export default async function SolicitationDetailPage({
   const canManageDepts = canManageDepartments(daraUser.id, daraUser.role, solicitation.createdBy);
 
   const sid = solicitation.id.toString();
-  const canEvaluate = activeCount > 0 && solicitation.requirements.length > 0;
+  // Active matrix excludes requirements struck by an amendment (retained, not deleted).
+  const activeRequirements = solicitation.requirements.filter((r) => !r.removedAt);
+  const removedRequirements = solicitation.requirements.filter((r) => r.removedAt);
+  const canEvaluate = activeCount > 0 && activeRequirements.length > 0;
   const reviews = solicitation.reviews;
+  const amendments = solicitation.amendments;
   const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');
   const proposalDocs = solicitation.solDocs.filter((d) => d.docType === 'proposal');
+  // Latest moment the matrix was changed by an applied amendment — a review snapshotted
+  // before this saw an outdated matrix (flagged stale in the Color Teams / Review tabs).
+  const latestAmendmentAt = amendments
+    .map((a) => a.appliedAt)
+    .filter((d): d is Date => !!d)
+    .reduce<Date | null>((max, d) => (!max || d > max ? d : max), null);
+  const isStale = (rv: { snapshotAt: Date | null; createdAt: Date }) =>
+    !!latestAmendmentAt && (rv.snapshotAt ?? rv.createdAt) < latestAmendmentAt;
 
   // ---- Build the score matrix (reviews × requirements) from evaluation results ----
   // For each review/requirement pair, average the numeric AI scores across every
@@ -893,7 +1040,7 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const requirements = solicitation.requirements;
+  const requirements = activeRequirements;
   const statusCounts = COMPLIANCE_STATUSES.map((s) => ({
     ...s,
     n: requirements.filter((r) => r.complianceStatus === s.value).length
@@ -968,6 +1115,20 @@ export default async function SolicitationDetailPage({
               </h3>
               {group.map((r) => (
                 <div key={r.id.toString()} className={`${card} p-4`}>
+                  {(r.addedByAmendmentId || r.changedByAmendmentId) && (
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {r.addedByAmendmentId && (
+                        <span className="rounded bg-[#1f5a31]/25 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#7de0a0]">
+                          added by amendment
+                        </span>
+                      )}
+                      {r.changedByAmendmentId && (
+                        <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+                          amended · v{r.version}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <form action={updateRequirement} className="space-y-3">
                     <input type="hidden" name="solId" value={sid} />
                     <input type="hidden" name="requirementId" value={r.id.toString()} />
@@ -1029,6 +1190,23 @@ export default async function SolicitationDetailPage({
             </div>
           );
         })
+      )}
+
+      {/* Removed by amendment (retained, excluded from the active matrix) */}
+      {removedRequirements.length > 0 && (
+        <details className="rounded-lg border border-dashed border-line p-3">
+          <summary className="cursor-pointer list-none font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+            Removed by amendment ({removedRequirements.length})
+          </summary>
+          <div className="mt-2 space-y-1.5">
+            {removedRequirements.map((r) => (
+              <div key={r.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t4 line-through">
+                <span className="truncate">{r.name}</span>
+                <span className="flex-shrink-0 font-mono text-[10px] uppercase tracking-wide text-t5">{SOURCE_LABEL[r.source]}</span>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       {/* Add requirement */}
@@ -1114,7 +1292,7 @@ export default async function SolicitationDetailPage({
       {!canEvaluate && (
         <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
           To run a review you need at least one requirement (Compliance tab) and one active
-          persona ({solicitation.requirements.length} requirements, {activeCount} active personas).
+          persona ({activeRequirements.length} requirements, {activeCount} active personas).
         </p>
       )}
       {proposalDocs.length === 0 && (
@@ -1132,10 +1310,15 @@ export default async function SolicitationDetailPage({
           : activeCount;
         return (
           <div key={rv.id.toString()} className={`${card} p-4`}>
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ct.dot }} />
               <span className={`text-[13px] font-semibold ${ct.text}`}>{ct.label} team</span>
               <StatusBadge status={rv.status} />
+              {isStale(rv) && (
+                <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+                  pre-amendment — re-capture &amp; re-run
+                </span>
+              )}
             </div>
             <form action={updateReview} className="space-y-3">
               <input type="hidden" name="solId" value={sid} />
@@ -1231,7 +1414,7 @@ export default async function SolicitationDetailPage({
     <div className="space-y-6">
       <RunningBanner count={runningCount} />
       {/* Score matrix: reviews × requirements */}
-      {hasResults && solicitation.requirements.length > 0 && reviews.length > 0 ? (
+      {hasResults && activeRequirements.length > 0 && reviews.length > 0 ? (
         <div className={`${card} overflow-x-auto`}>
           <table className="w-full border-collapse text-left">
             <thead>
@@ -1239,7 +1422,7 @@ export default async function SolicitationDetailPage({
                 <th className="sticky left-0 z-10 bg-surf3 px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Review
                 </th>
-                {solicitation.requirements.map((c) => (
+                {activeRequirements.map((c) => (
                   <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     {c.name}
                   </th>
@@ -1257,7 +1440,7 @@ export default async function SolicitationDetailPage({
                       {r.name}
                     </span>
                   </td>
-                  {solicitation.requirements.map((c) => {
+                  {activeRequirements.map((c) => {
                     const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
                     let label = '—';
                     let color = 'text-t5';
@@ -1315,6 +1498,11 @@ export default async function SolicitationDetailPage({
                   )}
                   <span className="font-semibold text-t1">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
                   <span className="text-t4"> · {e.review?.name ?? '—'}</span>
+                  {e.review && isStale(e.review) && (
+                    <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+                      pre-amendment
+                    </span>
+                  )}
                 </div>
                 <StatusBadge status={e.status} />
               </div>
@@ -1366,10 +1554,204 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
+  const CHANGE_BADGE: Record<string, string> = {
+    add: 'bg-[#1f5a31]/25 text-[#7de0a0]',
+    modify: 'bg-[#5a4a1f]/30 text-[#e0c97d]',
+    remove: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
+  };
+
+  const amendmentsPanel = (
+    <div className="space-y-4">
+      <CuiBoundaryNotice
+        provider={daraUser.company.activeProvider}
+        mode={daraUser.company.aiKeyMode}
+      />
+      <p className="text-[13px] text-t4">
+        Upload an amendment, then reconcile it with AI: it diffs the amendment against the
+        current compliance matrix and proposes additions, modifications, and removals for
+        your approval. Accepted changes fold into the matrix (modified requirements are
+        versioned; removed ones are retained but struck).
+      </p>
+
+      {amendments.map((a) => {
+        const proposedChanges = a.changes.filter((c) => c.status === 'proposed');
+        const resolved = a.changes.filter((c) => c.status !== 'proposed');
+        return (
+          <div key={a.id.toString()} className={`${card} p-4`}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-[13px]">
+                <span className="font-semibold text-t1">
+                  Amendment {a.number || '—'}
+                </span>
+                {a.title && <span className="text-t4">· {a.title}</span>}
+                {a.effectiveDate && (
+                  <span className="font-mono text-[10px] uppercase tracking-wide text-t5">
+                    eff. {new Date(a.effectiveDate).toLocaleDateString()}
+                  </span>
+                )}
+                <StatusBadge status={a.reconciliationStatus} />
+              </div>
+              <form action={deleteAmendment}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="amendmentId" value={a.id.toString()} />
+                <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+              </form>
+            </div>
+
+            {/* Amendment documents */}
+            {a.documents.length > 0 && (
+              <ul className="mb-2 space-y-1.5">
+                {a.documents.map((d) => (
+                  <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2">
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
+                      <span className="truncate text-[13px] text-t2">{d.originalFilename}</span>
+                      <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(d.fileSize)}</span>
+                      <StatusBadge status={d.extractionStatus} />
+                    </span>
+                    <form action={deleteSolDoc}>
+                      <input type="hidden" name="solId" value={sid} />
+                      <input type="hidden" name="docId" value={d.id.toString()} />
+                      <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form action={uploadSolDoc} className="flex items-center gap-3">
+              <input type="hidden" name="solId" value={sid} />
+              <input type="hidden" name="docType" value="amendment" />
+              <input type="hidden" name="amendmentId" value={a.id.toString()} />
+              <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
+              <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />Upload</button>
+            </form>
+
+            {/* Reconcile */}
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
+              <form action={reconcileAmendmentAction}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="amendmentId" value={a.id.toString()} />
+                <SubmitButton
+                  className={btnPrimary}
+                  disabled={a.documents.length === 0}
+                  pending={(<><Loader2 className="h-4 w-4 animate-spin" />Reconciling…</>)}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
+                </SubmitButton>
+              </form>
+            </div>
+
+            {a.aiSummary && (
+              <p className="mt-3 rounded-lg border border-line bg-bg px-3 py-2 text-[12px] leading-relaxed text-t3">
+                {a.aiSummary}
+              </p>
+            )}
+
+            {/* Proposed changes */}
+            {proposedChanges.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <h4 className="font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                  Proposed changes ({proposedChanges.length})
+                </h4>
+                {proposedChanges.map((c) => {
+                  const p = (c.proposed ?? {}) as any;
+                  return (
+                    <div key={c.id.toString()} className="rounded-lg border border-line bg-bg p-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${CHANGE_BADGE[c.changeType]}`}>
+                          {c.changeType}
+                        </span>
+                        <span className="text-[13px] font-semibold text-t2">
+                          {c.changeType === 'remove' ? (c.requirement?.name ?? 'Requirement') : (p.name ?? 'Requirement')}
+                        </span>
+                      </div>
+                      {c.changeType === 'modify' && c.requirement && (
+                        <p className="mt-1 text-[11px] text-t5">Replaces: {c.requirement.name}</p>
+                      )}
+                      {c.changeType !== 'remove' && p.description && (
+                        <p className="mt-1 whitespace-pre-wrap text-[12px] text-t3">{p.description}</p>
+                      )}
+                      {c.rationale && (
+                        <p className="mt-1 text-[11px] italic text-t4">{c.rationale}</p>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <form action={applyChangeAction}>
+                          <input type="hidden" name="solId" value={sid} />
+                          <input type="hidden" name="changeId" value={c.id.toString()} />
+                          <input type="hidden" name="accept" value="1" />
+                          <button type="submit" className={`${btnGhost} !py-1.5 !text-[12px]`}>Accept</button>
+                        </form>
+                        <form action={applyChangeAction}>
+                          <input type="hidden" name="solId" value={sid} />
+                          <input type="hidden" name="changeId" value={c.id.toString()} />
+                          <input type="hidden" name="accept" value="0" />
+                          <button type="submit" className={`${btnGhost} !py-1.5 !text-[12px]`}>Reject</button>
+                        </form>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {resolved.length > 0 && (
+              <details className="mt-3 rounded-lg border border-dashed border-line p-2">
+                <summary className="cursor-pointer list-none px-1 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                  Resolved ({resolved.length})
+                </summary>
+                <div className="mt-2 space-y-1.5">
+                  {resolved.map((c) => {
+                    const p = (c.proposed ?? {}) as any;
+                    return (
+                      <div key={c.id.toString()} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-bg px-3 py-1.5 text-[12px]">
+                        <span className="flex items-center gap-2">
+                          <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${CHANGE_BADGE[c.changeType]}`}>{c.changeType}</span>
+                          <span className="truncate text-t3">{c.changeType === 'remove' ? (c.requirement?.name ?? '—') : (p.name ?? '—')}</span>
+                        </span>
+                        <span className={`font-mono text-[10px] uppercase tracking-wide ${c.status === 'accepted' ? 'text-[#7de0a0]' : 'text-[#e07d7d]'}`}>{c.status}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })}
+
+      {/* New amendment */}
+      <div className={`${cardDashed} p-4`}>
+        <h3 className={`mb-3 ${sectionTitle}`}>New amendment</h3>
+        <form action={createAmendment} className="space-y-3">
+          <input type="hidden" name="solId" value={sid} />
+          <div className="grid gap-3 sm:grid-cols-12">
+            <div className="space-y-1.5 sm:col-span-3">
+              <label className={labelClasses}>Number</label>
+              <input name="number" type="text" placeholder="e.g. 0001" className={fieldClasses} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-6">
+              <label className={labelClasses}>Title</label>
+              <input name="title" type="text" placeholder="e.g. Revised SOW + due date" className={fieldClasses} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-3">
+              <label className={labelClasses}>Effective date</label>
+              <input name="effectiveDate" type="date" className={fieldClasses} />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add amendment</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
   const tabs: TabDef[] = [
     { id: 'overview', label: 'Overview', content: overviewPanel },
     { id: 'documents', label: 'Documents', count: solicitation.solDocs.length, content: documentsPanel },
-    { id: 'compliance', label: 'Compliance', count: solicitation.requirements.length, content: compliancePanel },
+    { id: 'compliance', label: 'Compliance', count: activeRequirements.length, content: compliancePanel },
+    { id: 'amendments', label: 'Amendments', count: amendments.length, content: amendmentsPanel },
     { id: 'colorteams', label: 'Color Teams', count: reviews.length, content: colorTeamsPanel },
     { id: 'review', label: 'Review', count: solicitation.evaluations.length, content: reviewPanel }
   ];

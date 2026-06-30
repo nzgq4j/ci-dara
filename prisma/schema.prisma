@@ -111,6 +111,26 @@ enum DocType {
   proposal
 }
 
+// Lifecycle of an amendment's AI reconciliation against the compliance matrix.
+enum ReconciliationStatus {
+  pending  // uploaded, not yet reconciled
+  proposed // AI has proposed changes awaiting review
+  applied  // changes resolved (accepted/rejected) and folded into the matrix
+}
+
+// A proposed compliance-matrix change derived from an amendment.
+enum ChangeType {
+  add
+  modify
+  remove
+}
+
+enum ChangeStatus {
+  proposed
+  accepted
+  rejected
+}
+
 enum JobStatus {
   pending
   running
@@ -325,6 +345,7 @@ model Solicitation {
   reviews      Review[]
   evaluations  Evaluation[]
   departments  SolicitationDepartment[]
+  amendments   Amendment[]
 
   @@index([companyId])
   @@map("dara_solicitations")
@@ -334,9 +355,11 @@ model SolDocument {
   id               BigInt           @id @default(autoincrement())
   companyId        BigInt           @map("company_id")
   solicitationId   BigInt           @map("solicitation_id")
-  // rfp = the solicitation itself, amendment = an amendment to it (Phase 3),
+  // rfp = the solicitation itself, amendment = an amendment to it,
   // proposal = our own working draft that reviews snapshot.
   docType          DocType          @default(rfp) @map("doc_type")
+  // When docType = amendment, the amendment this file belongs to.
+  amendmentId      BigInt?          @map("amendment_id")
   originalFilename String           @map("original_filename") @db.VarChar(500)
   storedFilename   String           @map("stored_filename") @db.VarChar(500)
   fileSize         Int              @default(0) @map("file_size")
@@ -346,9 +369,11 @@ model SolDocument {
   uploadedAt       DateTime         @default(now()) @map("uploaded_at")
 
   solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  amendment    Amendment?   @relation(fields: [amendmentId], references: [id], onDelete: Cascade)
 
   @@index([solicitationId])
   @@index([companyId])
+  @@index([amendmentId])
   @@map("dara_sol_documents")
 }
 
@@ -371,12 +396,95 @@ model Requirement {
   proposalRef      String            @default("") @map("proposal_ref") @db.VarChar(300)
   sortOrder        Int               @default(0) @map("sort_order")
 
-  solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
-  results      Result[]
+  // Amendment provenance (Phase 3). removedAt marks a requirement struck by an
+  // amendment — retained, never deleted (excluded from the active matrix).
+  version              Int       @default(0)
+  addedByAmendmentId   BigInt?   @map("added_by_amendment_id")
+  changedByAmendmentId BigInt?   @map("changed_by_amendment_id")
+  removedByAmendmentId BigInt?   @map("removed_by_amendment_id")
+  removedAt            DateTime? @map("removed_at")
+
+  solicitation     Solicitation         @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  results          Result[]
+  versions         RequirementVersion[]
+  amendmentChanges AmendmentChange[]
 
   @@index([solicitationId])
   @@index([companyId])
   @@map("dara_requirements")
+}
+
+// Snapshot of a Requirement taken just before an amendment modifies it — the
+// prior-version log (mirrors ResultVersion). Append-only; company_id-keyed for RLS.
+model RequirementVersion {
+  id               BigInt            @id @default(autoincrement())
+  companyId        BigInt            @map("company_id")
+  requirementId    BigInt            @map("requirement_id")
+  version          Int
+  name             String            @db.VarChar(300)
+  description      String?
+  source           RequirementSource
+  isScored         Boolean
+  farReference     String            @db.VarChar(100)
+  weight           Int
+  complianceStatus ComplianceStatus
+  proposalRef      String            @db.VarChar(300)
+  amendmentId      BigInt?           @map("amendment_id")
+  createdAt        DateTime          @default(now()) @map("created_at")
+
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([requirementId])
+  @@map("dara_requirement_versions")
+}
+
+// An amendment to a solicitation. Its documents (SolDocument docType=amendment) are
+// AI-diffed against the current compliance matrix to propose changes (AmendmentChange)
+// that, once accepted, fold into the matrix and version any modified requirements.
+model Amendment {
+  id                   BigInt               @id @default(autoincrement())
+  companyId            BigInt               @map("company_id")
+  solicitationId       BigInt               @map("solicitation_id")
+  number               String               @default("") @db.VarChar(50)
+  title                String               @default("") @db.VarChar(300)
+  effectiveDate        DateTime?            @map("effective_date")
+  reconciliationStatus ReconciliationStatus @default(pending) @map("reconciliation_status")
+  aiSummary            String?              @map("ai_summary")
+  appliedAt            DateTime?            @map("applied_at")
+  createdBy            String?              @map("created_by") @db.Uuid
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @default(now()) @updatedAt @map("updated_at")
+
+  solicitation Solicitation      @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  documents    SolDocument[]
+  changes      AmendmentChange[]
+
+  @@index([solicitationId])
+  @@index([companyId])
+  @@map("dara_amendments")
+}
+
+// One proposed compliance-matrix change derived from an amendment, awaiting review.
+// proposed = the new requirement fields (add/modify); requirementId targets the
+// existing requirement for modify/remove (null for add).
+model AmendmentChange {
+  id            BigInt       @id @default(autoincrement())
+  companyId     BigInt       @map("company_id")
+  amendmentId   BigInt       @map("amendment_id")
+  requirementId BigInt?      @map("requirement_id")
+  changeType    ChangeType   @map("change_type")
+  proposed      Json?
+  rationale     String?
+  status        ChangeStatus @default(proposed)
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  amendment   Amendment    @relation(fields: [amendmentId], references: [id], onDelete: Cascade)
+  requirement Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([amendmentId])
+  @@map("dara_amendment_changes")
 }
 
 model Persona {

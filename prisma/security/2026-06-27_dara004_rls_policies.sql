@@ -61,6 +61,7 @@ grant select, insert, update, delete on table
   public.dara_companies, public.dara_users, public.dara_solicitations,
   public.dara_sol_documents, public.dara_requirements, public.dara_personas,
   public.dara_reviews, public.dara_review_documents, public.dara_review_personas,
+  public.dara_amendments, public.dara_amendment_changes, public.dara_requirement_versions,
   public.dara_evaluations, public.dara_results, public.dara_job_queue
 to dara_app, dara_admin;
 
@@ -76,6 +77,9 @@ alter table public.dara_personas       enable row level security;
 alter table public.dara_reviews          enable row level security;
 alter table public.dara_review_documents enable row level security;
 alter table public.dara_review_personas  enable row level security;
+alter table public.dara_amendments          enable row level security;
+alter table public.dara_amendment_changes   enable row level security;
+alter table public.dara_requirement_versions enable row level security;
 alter table public.dara_evaluations    enable row level security;
 alter table public.dara_results        enable row level security;
 alter table public.dara_job_queue      enable row level security;
@@ -99,6 +103,7 @@ declare
   tenant_tables text[] := array[
     'dara_users', 'dara_solicitations', 'dara_sol_documents', 'dara_requirements',
     'dara_personas', 'dara_reviews', 'dara_review_documents', 'dara_review_personas',
+    'dara_amendments', 'dara_amendment_changes', 'dara_requirement_versions',
     'dara_evaluations', 'dara_results', 'dara_job_queue'];
 begin
   foreach t in array tenant_tables loop

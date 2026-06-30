@@ -117,7 +117,10 @@ export async function runEvaluation(
       include: {
         solicitation: {
           include: {
-            requirements: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
+            requirements: {
+              where: { removedAt: null },
+              orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+            },
             solDocs: true
           }
         },

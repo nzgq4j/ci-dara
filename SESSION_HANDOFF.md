@@ -10,9 +10,10 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `d1836dc` (**color-team reframing Phase 1 —
-  Requirements + Compliance matrix**) is **migrated, deployed to prod, and pushed**.
-  Earlier this session, in order:
+- **Branch:** `main`, clean. The **color-team reframing is complete** — Phase 1
+  (Requirements/Compliance), Phase 2 (Color-team reviews), Phase 3 (Amendments + AI
+  reconciliation) all **migrated, deployed to prod, and pushed** this session. Earlier
+  commits this session, in order:
   `4076ec7` (onboarding + Organization group + Company settings), `5ecc949` (Create
   Account), `8fd5ac3` (invite email-verification gate), `d322114` (Application Admin),
   `139368f` (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings),
@@ -33,19 +34,28 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ### Watch-outs (don't trip on these)
 
-- **Product is being reframed: offerors → color-team gate reviews** (review *our own*
-  proposal as it matures, not score competitors). The methodology is **never named** in
-  UI/prompts/code/docs — use "color team review", gate names (Pink/Red/Gold/Blue/Green/
-  Black/White), "review gate". **Phase 1 (Requirements + Compliance) is SHIPPED**; Phase 2
-  (Reviews/color teams: `Response`→`Review`, draft snapshots, persona selection, Color
-  Teams + Review tabs) is next; Phase 3 is amendments (AI reconciliation). See BUILD_STATUS
-  §2 for the four design decisions.
-- **`Criterion` is now `Requirement`** (`dara_requirements`). The old Criteria tab is the
-  **Compliance** tab: AI shred ("Generate from solicitation", `utils/dara/requirements.ts`)
-  + per-source grouping + compliance status + proposal reference. Evaluations run per
-  requirement. `dara_results.criterion_id` column was kept (Prisma field `requirementId`),
-  so the FK/unique index are unchanged. If a long RFP truncates the shred JSON, raise
-  `SHRED_MAX_TOKENS` in `utils/dara/requirements.ts`.
+- **Product reframed: offerors → color-team gate reviews** (review *our own* proposal as
+  it matures, not score competitors). The methodology is **never named** in UI/prompts/
+  code/docs — use "color team review", gate names (Pink/Red/Gold/Blue/Green/Black/White),
+  "review gate". All three phases SHIPPED. Solicitation tabs: **Overview · Documents ·
+  Compliance · Amendments · Color Teams · Review**.
+- **`Criterion`→`Requirement`** (`dara_requirements`). **Compliance** tab = AI shred
+  ("Generate from solicitation", `utils/dara/requirements.ts`) + per-source grouping +
+  compliance status + proposal ref. `dara_results.criterion_id` column kept (Prisma field
+  `requirementId`). Long-RFP shred truncation → raise `SHRED_MAX_TOKENS`.
+- **`Response`→`Review`** (`dara_reviews`). The proposal working draft lives on the
+  solicitation (**Documents** tab, `doc_type=proposal`); each **Color Teams** review freezes
+  a snapshot (`captureSnapshot`) and runs its chosen personas (fallback all active) vs that
+  snapshot. Results in the **Review** tab. Engine reads `doc_type=rfp` for the RFP reference.
+- **Amendments** (`dara_amendments`): upload an amendment doc → "Reconcile with AI"
+  (`utils/dara/amendments.ts`) diffs it vs the matrix → accept/reject proposed add/modify/
+  remove. Accept folds into the matrix (modify versions prior values into
+  `dara_requirement_versions`; remove sets `removed_at`, retained/struck). Reviews
+  snapshotted before an applied amendment show a **pre-amendment** flag (re-capture & re-run).
+  Diff truncation → raise `DIFF_MAX_TOKENS` in `utils/dara/amendments.ts`.
+- **Three new RLS files this session** (`2026-07-01_{requirements,reviews,amendments}_rls.sql`)
+  + DARA-004/005 source files updated for the renames/new tables. New `dara_*` tables are
+  fail-closed until granted, so apply-sql must run before each code deploy.
 
 - **Application Admin is a company-less operator role** (`/app/admin`). An email in
   `PLATFORM_ADMIN_EMAILS` (or an active `dara_platform_admins` row) gets the admin

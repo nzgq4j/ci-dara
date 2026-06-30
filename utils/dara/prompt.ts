@@ -353,6 +353,141 @@ export function parseShred(text: string): ShreddedRequirement[] {
     .filter((r: ShreddedRequirement) => r.description || r.name);
 }
 
+// ===================== Amendment reconciliation (compliance matrix diff) ==========
+
+export interface DiffRequirement {
+  id: string;
+  name: string;
+  description: string | null;
+  source: string;
+}
+
+export interface ProposedRequirement {
+  name: string;
+  description: string;
+  source: RequirementSourceValue;
+  isScored: boolean;
+  farReference: string;
+  weight: number;
+}
+
+export interface ParsedChange {
+  action: 'add' | 'modify' | 'remove';
+  requirementId: string | null; // target for modify/remove
+  proposed: ProposedRequirement | null; // new fields for add/modify
+  rationale: string;
+}
+
+export interface ParsedAmendmentDiff {
+  summary: string;
+  changes: ParsedChange[];
+}
+
+const DIFF_SCHEMA =
+  '{"summary": "<2-4 sentence overview of what this amendment changes>", ' +
+  '"changes": [{' +
+  '"action": "<add | modify | remove>", ' +
+  '"requirement_id": "<the id of the existing requirement to modify/remove; omit or null for add>", ' +
+  '"name": "<short handle (add/modify); omit for remove>", ' +
+  '"description": "<the new/updated requirement text (add/modify); omit for remove>", ' +
+  '"source": "<instruction | evaluation_factor | sow_pws | far_clause | other>", ' +
+  '"is_scored": <true only for scored Section M factors>, ' +
+  '"far_reference": "<FAR/DFARS ref if stated, else empty>", ' +
+  '"weight": <integer 0-100, else 0>, ' +
+  '"rationale": "<why the amendment requires this change, citing the amendment>"' +
+  '}]}';
+
+/**
+ * Build the prompt that diffs an amendment against the current compliance matrix.
+ * `current` is the active requirement list (with ids); `amendmentText` is the
+ * concatenated amendment document text.
+ */
+export function buildAmendmentDiffPrompt(
+  current: DiffRequirement[],
+  amendmentText: string
+): { system: string; user: string } {
+  const token = randomBytes(9).toString('hex');
+  const amendBlock = fenceUntrusted('AMENDMENT', truncate(amendmentText, 40000), token);
+  const matrix = JSON.stringify(
+    current.map((r) => ({
+      id: r.id,
+      name: r.name,
+      source: r.source,
+      description: (r.description ?? '').slice(0, 400)
+    }))
+  );
+
+  const system =
+    'You are a government-contracting proposal analyst. You reconcile a solicitation ' +
+    'amendment against an existing compliance-requirements matrix, proposing the minimal ' +
+    'set of additions, modifications, and removals needed to bring the matrix in line ' +
+    'with the amendment. Respond only in the JSON format specified.';
+
+  const user =
+    `## Current compliance matrix (JSON)\n\n${matrix}\n\n## Amendment Document\n\n${amendBlock}\n\n` +
+    `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    'Compare the amendment against the current matrix and propose changes:\n' +
+    '- "add" — a new requirement the amendment introduces (no requirement_id).\n' +
+    '- "modify" — an existing requirement the amendment changes (set requirement_id to its id; provide the full updated fields).\n' +
+    '- "remove" — an existing requirement the amendment deletes or supersedes (set requirement_id; no new fields).\n\n' +
+    'Only propose a change where the amendment actually warrants it — do not restate unchanged requirements. ' +
+    'Every change MUST include a "rationale" citing the relevant part of the amendment. ' +
+    `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${DIFF_SCHEMA}\n\n` +
+    'Do not include any text outside the JSON object.';
+
+  return { system, user };
+}
+
+/** Parse an amendment-diff response. Returns { summary:'', changes:[] } if unparseable. */
+export function parseAmendmentDiff(text: string): ParsedAmendmentDiff {
+  let cleaned = text
+    .replace(/^```(?:json)?\s*/gm, '')
+    .replace(/```\s*$/gm, '')
+    .trim();
+  const match = cleaned.match(/\{[\s\S]+\}/);
+  if (!match) return { summary: '', changes: [] };
+
+  let data: any;
+  try {
+    data = JSON.parse(match[0]);
+  } catch {
+    return { summary: '', changes: [] };
+  }
+
+  const list = Array.isArray(data?.changes) ? data.changes : [];
+  const changes: ParsedChange[] = list
+    .map((c: any): ParsedChange | null => {
+      const action = String(c?.action ?? '').trim();
+      if (action !== 'add' && action !== 'modify' && action !== 'remove') return null;
+      const rawId = c?.requirement_id;
+      const requirementId =
+        rawId != null && /^\d+$/.test(String(rawId)) ? String(rawId) : null;
+      if ((action === 'modify' || action === 'remove') && !requirementId) return null;
+
+      let proposed: ProposedRequirement | null = null;
+      if (action === 'add' || action === 'modify') {
+        const rawSource = String(c?.source ?? 'other').trim();
+        const source = (REQUIREMENT_SOURCES as readonly string[]).includes(rawSource)
+          ? (rawSource as RequirementSourceValue)
+          : 'other';
+        const description = String(c?.description ?? '').trim();
+        const name = String(c?.name ?? '').trim().slice(0, 300) || description.slice(0, 120) || 'Requirement';
+        proposed = {
+          name,
+          description,
+          source,
+          isScored: c?.is_scored === true && source === 'evaluation_factor',
+          farReference: String(c?.far_reference ?? '').trim().slice(0, 100),
+          weight: Math.max(0, Math.min(100, Math.round(Number(c?.weight ?? 0) || 0)))
+        };
+      }
+      return { action, requirementId, proposed, rationale: String(c?.rationale ?? '').trim() };
+    })
+    .filter((c: ParsedChange | null): c is ParsedChange => c !== null);
+
+  return { summary: String(data?.summary ?? '').trim(), changes };
+}
+
 /**
  * Truncate document text to stay within context limits.
  * Default: 60,000 words (~80K tokens) — safe for Claude (200K) and GPT-4o (128K).
