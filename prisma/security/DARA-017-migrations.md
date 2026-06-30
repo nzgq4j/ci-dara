@@ -64,6 +64,14 @@ DARA's schema is owned in **two tracked, complementary layers**. Neither is
    | 2 | `2026-06-27_dara004_rls_policies.sql` | Per-tenant RLS policies + least-privilege roles (DARA-003/004) | Yes |
    | 3 | `2026-06-28_dara013_audit_log.sql` | Append-only audit-log triggers (DARA-013) | Yes |
    | — | `2026-06-28_personas_icon.sql` | `icon` column — **structural**, now folded into `0_init` | No (already in baseline) |
+   | + | `2026-07-01_requirements_rls.sql` | RLS for `dara_requirements` (renamed from `dara_criteria` in `20260701000000_requirements_compliance`) | Yes |
+
+   > **Rename note (2026-07-01):** the `20260701000000_requirements_compliance`
+   > migration renames `dara_criteria` → `dara_requirements`. PostgreSQL preserves
+   > grants + RLS policies through a table RENAME, so no owner-SQL needs re-running on
+   > the live DB. Files 1 (`lock_dara_tables`) and 2 (`dara004_rls_policies`) were
+   > updated to the new name so a from-scratch rebuild (which runs migrations first,
+   > then these files) references the table that then exists.
 
    The three security files are independent of `0_init` and are layered **after**
    the tables exist. (Roles created by file 2 are rotated via

@@ -5,7 +5,8 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   parseResult,
-  type ParsedResult
+  type ParsedResult,
+  type PromptCriterion
 } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
@@ -49,6 +50,24 @@ export interface EvalSummary {
   results: number;
   errors: number;
   error?: string;
+}
+
+// Adapt a Requirement row to the prompt builder's criterion shape. Scored Section M
+// factors use the 0-100 scoring schema; everything else uses the determination
+// schema. The string also drives parseResult's branch.
+interface PromptReq {
+  name: string;
+  description: string | null;
+  isScored: boolean;
+  farReference: string;
+}
+function toPromptCriterion(r: PromptReq): PromptCriterion {
+  return {
+    name: r.name,
+    description: r.description,
+    criterionType: r.isScored ? 'scored_factor' : 'requirement',
+    farReference: r.farReference
+  };
 }
 
 interface DocFile {
@@ -98,7 +117,7 @@ export async function runEvaluation(
       include: {
         solicitation: {
           include: {
-            criteria: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
+            requirements: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
             solDocs: true
           }
         },
@@ -143,41 +162,42 @@ export async function runEvaluation(
   }
   const solText = concatDocs(evaluation.solicitation.solDocs);
 
-  const criteria = evaluation.solicitation.criteria;
-  if (criteria.length === 0) {
-    return fail(evaluationId, companyId, 'No criteria defined for this solicitation.');
+  const requirements = evaluation.solicitation.requirements;
+  if (requirements.length === 0) {
+    return fail(evaluationId, companyId, 'No requirements defined for this solicitation.');
   }
 
   let results = 0;
   let errors = 0;
 
-  for (const criterion of criteria) {
-    const system = buildSystemPrompt(persona, criterion, evaluation.solicitation);
-    const user = buildUserPrompt(criterion, documentText, solText);
+  for (const requirement of requirements) {
+    const pc = toPromptCriterion(requirement);
+    const system = buildSystemPrompt(persona, pc, evaluation.solicitation);
+    const user = buildUserPrompt(pc, documentText, solText);
 
     try {
       // LLM call OUTSIDE any transaction — this is the slow network hop.
       const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
-      const parsed = parseResult(ai.text, criterion.criterionType);
+      const parsed = parseResult(ai.text, pc.criterionType);
       if (!parsed) {
         errors++;
         continue;
       }
-      // Persist this criterion's result in its own short tenant burst, so partial
-      // progress survives a later criterion failing.
+      // Persist this requirement's result in its own short tenant burst, so partial
+      // progress survives a later requirement failing.
       await withTenant(companyId, (tx) =>
         tx.result.upsert({
           where: {
-            evaluationId_criterionId_personaId: {
+            evaluationId_requirementId_personaId: {
               evaluationId,
-              criterionId: criterion.id,
+              requirementId: requirement.id,
               personaId: persona.id
             }
           },
           create: {
             evaluationId,
             companyId,
-            criterionId: criterion.id,
+            requirementId: requirement.id,
             personaId: persona.id,
             ...aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
           },
@@ -218,8 +238,8 @@ export async function regenerateResult(
   const loaded = await withTenant(companyId, async (tx) => {
     const result = await tx.result.findFirst({ where: { id: resultId, companyId } });
     if (!result) return null;
-    const criterion = await tx.criterion.findFirst({
-      where: { id: result.criterionId, companyId }
+    const requirement = await tx.requirement.findFirst({
+      where: { id: result.requirementId, companyId }
     });
     const persona = await tx.persona.findFirst({
       where: { id: result.personaId, companyId }
@@ -232,13 +252,13 @@ export async function regenerateResult(
       }
     });
     const company = await tx.company.findUnique({ where: { id: companyId } });
-    return { result, criterion, persona, evaluation, company };
+    return { result, requirement, persona, evaluation, company };
   });
 
-  if (!loaded?.result || !loaded.criterion || !loaded.persona || !loaded.evaluation || !loaded.company) {
+  if (!loaded?.result || !loaded.requirement || !loaded.persona || !loaded.evaluation || !loaded.company) {
     return { ok: false, error: 'Result or related data not found.' };
   }
-  const { result, criterion, persona, evaluation, company } = loaded;
+  const { result, requirement, persona, evaluation, company } = loaded;
 
   const documentText = concatDocs(evaluation.response.files);
   if (documentText.trim() === '') {
@@ -250,8 +270,9 @@ export async function regenerateResult(
   const { provider, model, apiKey } = resolveCompanyAI(company, platform);
   if (!apiKey) return { ok: false, error: `No API key configured for provider "${provider}".` };
 
-  const system = buildSystemPrompt(persona, criterion, evaluation.solicitation);
-  const user = buildUserPrompt(criterion, documentText, solText);
+  const pc = toPromptCriterion(requirement);
+  const system = buildSystemPrompt(persona, pc, evaluation.solicitation);
+  const user = buildUserPrompt(pc, documentText, solText);
 
   let ai;
   try {
@@ -259,7 +280,7 @@ export async function regenerateResult(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'AI request failed.' };
   }
-  const parsed = parseResult(ai.text, criterion.criterionType);
+  const parsed = parseResult(ai.text, pc.criterionType);
   if (!parsed) return { ok: false, error: 'Could not parse the AI response.' };
 
   await withTenant(companyId, async (tx) => {

@@ -252,6 +252,107 @@ function schemaFor(type: string): string {
   return `{${REVIEW_SCHEMA}, "determination": "<compliant|non_compliant|unable_to_determine>", "rationale": "<overall summary, citing specific requirements/tasks>", ${FINDINGS_SCHEMA}, "confidence": <float 0.0-1.0>}`;
 }
 
+// ===================== Requirements shred (compliance matrix) =====================
+
+// The requirement sources the shred classifies into — mirror the RequirementSource
+// enum. The UI groups the matrix by these.
+export const REQUIREMENT_SOURCES = [
+  'instruction',
+  'evaluation_factor',
+  'sow_pws',
+  'far_clause',
+  'other'
+] as const;
+export type RequirementSourceValue = (typeof REQUIREMENT_SOURCES)[number];
+
+export interface ShreddedRequirement {
+  name: string;
+  description: string;
+  source: RequirementSourceValue;
+  isScored: boolean;
+  farReference: string;
+  weight: number;
+}
+
+const SHRED_SCHEMA =
+  '{"requirements": [{' +
+  '"name": "<short handle, <= 12 words, e.g. \\"Page limit — Volume II\\">", ' +
+  '"description": "<the full requirement / \\"shall\\" statement, quoted or closely paraphrased>", ' +
+  '"source": "<one of: instruction | evaluation_factor | sow_pws | far_clause | other>", ' +
+  '"is_scored": <true only for Section M evaluation factors/subfactors that are scored; false otherwise>, ' +
+  '"far_reference": "<FAR/DFARS clause or section reference if stated, else empty string>", ' +
+  '"weight": <integer 0-100 relative importance if discernible for scored factors, else 0>' +
+  '}]}';
+
+/**
+ * Build the prompt that shreds a solicitation into a discrete requirements list
+ * for the compliance matrix. `solText` is the concatenated solicitation/RFP text.
+ */
+export function buildShredPrompt(solText: string): { system: string; user: string } {
+  const token = randomBytes(9).toString('hex');
+  const doc = fenceUntrusted('SOLICITATION', truncate(solText, 50000), token);
+
+  const system =
+    'You are a government-contracting proposal analyst. You read a solicitation and ' +
+    'extract every discrete, trackable requirement into a structured compliance ' +
+    'matrix. Be exhaustive and granular: one row per distinct "shall", instruction, ' +
+    'evaluation factor, or clause. Respond only in the JSON format specified.';
+
+  const user =
+    `## Solicitation Document\n\n${doc}\n\n## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    'Extract every discrete requirement from the solicitation into a flat list. ' +
+    'Classify each by "source":\n' +
+    '- "instruction" — Section L proposal-preparation/format instructions (page limits, fonts, volume structure, submission).\n' +
+    '- "evaluation_factor" — Section M evaluation factors and subfactors the Government uses to score proposals (set is_scored=true).\n' +
+    '- "sow_pws" — SOW/PWS/SOO tasks and "shall" performance requirements.\n' +
+    '- "far_clause" — FAR/DFARS clauses, provisions, or representations/certifications.\n' +
+    '- "other" — anything trackable that does not fit the above.\n\n' +
+    'Quote or closely paraphrase the actual requirement text in "description"; cite the FAR/DFARS reference in "far_reference" when present. ' +
+    'Do not invent requirements that are not in the document. ' +
+    `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${SHRED_SCHEMA}\n\n` +
+    'Do not include any text outside the JSON object.';
+
+  return { system, user };
+}
+
+/** Parse a shred response into a list of requirements; [] if unparseable. */
+export function parseShred(text: string): ShreddedRequirement[] {
+  let cleaned = text
+    .replace(/^```(?:json)?\s*/gm, '')
+    .replace(/```\s*$/gm, '')
+    .trim();
+  const match = cleaned.match(/\{[\s\S]+\}/);
+  if (!match) return [];
+
+  let data: any;
+  try {
+    data = JSON.parse(match[0]);
+  } catch {
+    return [];
+  }
+  const list = Array.isArray(data?.requirements) ? data.requirements : [];
+
+  return list
+    .map((r: any): ShreddedRequirement => {
+      const rawSource = String(r?.source ?? 'other').trim();
+      const source = (REQUIREMENT_SOURCES as readonly string[]).includes(rawSource)
+        ? (rawSource as RequirementSourceValue)
+        : 'other';
+      const name = String(r?.name ?? '').trim().slice(0, 300);
+      const description = String(r?.description ?? '').trim();
+      return {
+        name: name || description.slice(0, 120) || 'Requirement',
+        description,
+        source,
+        // Only evaluation factors are scored; honor an explicit true, else infer.
+        isScored: r?.is_scored === true && source === 'evaluation_factor',
+        farReference: String(r?.far_reference ?? '').trim().slice(0, 100),
+        weight: Math.max(0, Math.min(100, Math.round(Number(r?.weight ?? 0) || 0)))
+      };
+    })
+    .filter((r: ShreddedRequirement) => r.description || r.name);
+}
+
 /**
  * Truncate document text to stay within context limits.
  * Default: 60,000 words (~80K tokens) — safe for Claude (200K) and GPT-4o (128K).

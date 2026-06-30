@@ -65,6 +65,25 @@ enum JobType {
   generate_matrix
 }
 
+// Where a requirement originated in the solicitation. Drives the compliance matrix
+// grouping; `evaluation_factor` requirements are the ones a review scores.
+enum RequirementSource {
+  instruction       // Section L — proposal preparation/format instructions
+  evaluation_factor // Section M — evaluation factors/subfactors (scored)
+  sow_pws           // SOW/PWS/SOO task or "shall" statement
+  far_clause        // FAR/DFARS clause, provision, or representation
+  other
+}
+
+// Coverage status tracked per requirement on the compliance matrix.
+enum ComplianceStatus {
+  not_assessed
+  compliant
+  partial
+  non_compliant
+  not_applicable
+}
+
 enum JobStatus {
   pending
   running
@@ -273,12 +292,12 @@ model Solicitation {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  company     Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  solDocs     SolDocument[]
-  criteria    Criterion[]
-  responses   Response[]
-  evaluations Evaluation[]
-  departments SolicitationDepartment[]
+  company      Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  solDocs      SolDocument[]
+  requirements Requirement[]
+  responses    Response[]
+  evaluations  Evaluation[]
+  departments  SolicitationDepartment[]
 
   @@index([companyId])
   @@map("dara_solicitations")
@@ -303,23 +322,31 @@ model SolDocument {
   @@map("dara_sol_documents")
 }
 
-model Criterion {
-  id             BigInt  @id @default(autoincrement())
-  companyId      BigInt  @map("company_id")
-  solicitationId BigInt  @map("solicitation_id")
-  name           String  @db.VarChar(300)
-  description    String?
-  criterionType  String  @default("scored_factor") @map("criterion_type") @db.VarChar(50)
-  farReference   String  @default("") @map("far_reference") @db.VarChar(100)
-  weight         Int     @default(0)
-  sortOrder      Int     @default(0) @map("sort_order")
+// A single discrete requirement shredded from the solicitation — the row unit of
+// the compliance matrix. Evolved from the former Criterion model: `source` records
+// where it came from, `isScored` marks the Section M factors a review scores, and
+// complianceStatus/proposalRef track coverage. The compliance matrix for a
+// solicitation is the set of its (non-removed) requirements.
+model Requirement {
+  id               BigInt            @id @default(autoincrement())
+  companyId        BigInt            @map("company_id")
+  solicitationId   BigInt            @map("solicitation_id")
+  name             String            @db.VarChar(300) // short label / handle
+  description      String? // full requirement / "shall" text
+  source           RequirementSource @default(evaluation_factor)
+  isScored         Boolean           @default(true) @map("is_scored")
+  farReference     String            @default("") @map("far_reference") @db.VarChar(100)
+  weight           Int               @default(0)
+  complianceStatus ComplianceStatus  @default(not_assessed) @map("compliance_status")
+  proposalRef      String            @default("") @map("proposal_ref") @db.VarChar(300)
+  sortOrder        Int               @default(0) @map("sort_order")
 
   solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
   results      Result[]
 
   @@index([solicitationId])
   @@index([companyId])
-  @@map("dara_criteria")
+  @@map("dara_requirements")
 }
 
 model Persona {
@@ -402,7 +429,9 @@ model Result {
   id              BigInt   @id @default(autoincrement())
   evaluationId    BigInt   @map("evaluation_id")
   companyId       BigInt   @map("company_id")
-  criterionId     BigInt   @map("criterion_id")
+  // Column stays `criterion_id` (no DB rename) — the FK/unique index keep their
+  // names; the relation now points at Requirement.
+  requirementId   BigInt   @map("criterion_id")
   personaId       BigInt   @map("persona_id")
   aiDetermination String?  @map("ai_determination") @db.VarChar(50)
   aiScore         Decimal? @map("ai_score") @db.Decimal(5, 2)
@@ -421,13 +450,13 @@ model Result {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
 
-  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
-  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  criterion  Criterion  @relation(fields: [criterionId], references: [id], onDelete: Cascade)
-  persona    Persona    @relation(fields: [personaId], references: [id], onDelete: Cascade)
-  versions   ResultVersion[]
+  evaluation  Evaluation  @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  persona     Persona     @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  versions    ResultVersion[]
 
-  @@unique([evaluationId, criterionId, personaId])
+  @@unique([evaluationId, requirementId, personaId])
   @@index([companyId])
   @@index([evaluationId])
   @@map("dara_results")

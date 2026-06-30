@@ -30,7 +30,7 @@ export default function ResultCard({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-semibold text-t1">{res.criterion.name}</span>
+          <span className="text-[13px] font-semibold text-t1">{res.requirement.name}</span>
           {res.regenCount > 0 && (
             <span className="rounded bg-line px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-t4">
               regen ×{res.regenCount}

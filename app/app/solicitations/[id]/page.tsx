@@ -8,7 +8,9 @@ import {
   Save,
   Upload,
   FileText,
-  Inbox
+  Inbox,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
@@ -17,9 +19,11 @@ import { userTeamIds, canViewSolicitation, canManageDepartments } from '@/utils/
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
+import { shredRequirements } from '@/utils/dara/requirements';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import ResultCard from '@/components/dara/ResultCard';
+import SubmitButton from '@/components/dara/SubmitButton';
 import RunPanel, { type RunState } from '@/components/dara/RunPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
 import {
@@ -40,7 +44,31 @@ import {
 // can take a while; give the synchronous run room before the function times out.
 export const maxDuration = 300;
 
-const CRITERION_TYPES = ['scored_factor', 'pass_fail', 'requirement', 'subfactor', 'administrative'];
+const REQUIREMENT_SOURCES: { value: string; label: string }[] = [
+  { value: 'instruction', label: 'Section L — Instruction' },
+  { value: 'evaluation_factor', label: 'Section M — Evaluation factor' },
+  { value: 'sow_pws', label: 'SOW / PWS requirement' },
+  { value: 'far_clause', label: 'FAR / DFARS clause' },
+  { value: 'other', label: 'Other' }
+];
+const COMPLIANCE_STATUSES: { value: string; label: string }[] = [
+  { value: 'not_assessed', label: 'Not assessed' },
+  { value: 'compliant', label: 'Compliant' },
+  { value: 'partial', label: 'Partial' },
+  { value: 'non_compliant', label: 'Non-compliant' },
+  { value: 'not_applicable', label: 'N/A' }
+];
+const SOURCE_LABEL: Record<string, string> = Object.fromEntries(
+  REQUIREMENT_SOURCES.map((s) => [s.value, s.label])
+);
+// Compliance-status pill colors for the matrix.
+const STATUS_PILL: Record<string, string> = {
+  not_assessed: 'text-t5',
+  compliant: 'text-[#7de0a0]',
+  partial: 'text-[#e0c97d]',
+  non_compliant: 'text-[#e07d7d]',
+  not_applicable: 'text-t4'
+};
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -169,22 +197,52 @@ async function deleteSolicitation(formData: FormData) {
   redirect('/app/solicitations');
 }
 
-// ---- Criterion actions ----
-async function addCriterion(formData: FormData) {
+// ---- Compliance matrix (requirement) actions ----
+const VALID_SOURCES = new Set(REQUIREMENT_SOURCES.map((s) => s.value));
+const VALID_STATUSES = new Set(COMPLIANCE_STATUSES.map((s) => s.value));
+
+// AI-shred the solicitation documents into requirement rows (appended).
+async function generateMatrixAction(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const summary = await shredRequirements(solId, daraUser.companyId);
+  await recordAudit({
+    action: 'requirement.shred',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: solId,
+    metadata: {
+      ok: summary.ok,
+      count: summary.count,
+      error: summary.error ?? null,
+      provider: daraUser.company.activeProvider,
+      mode: daraUser.company.aiKeyMode
+    }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+async function addRequirement(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
   const name = String(formData.get('name') ?? '').trim();
   if (!name) return;
+  const source = String(formData.get('source') ?? 'evaluation_factor');
   await withTenant(daraUser.companyId, (tx) =>
-    tx.criterion.create({
+    tx.requirement.create({
       data: {
         companyId: daraUser.companyId,
         solicitationId: solId,
         name,
         description: String(formData.get('description') ?? '').trim() || null,
-        criterionType: String(formData.get('criterionType') ?? 'scored_factor'),
+        source: (VALID_SOURCES.has(source) ? source : 'other') as any,
+        isScored: formData.get('isScored') === 'on',
         farReference: String(formData.get('farReference') ?? '').trim(),
         weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
         sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
@@ -194,23 +252,27 @@ async function addCriterion(formData: FormData) {
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
-async function updateCriterion(formData: FormData) {
+async function updateRequirement(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
-  const id = BigInt(String(formData.get('criterionId')));
+  const id = BigInt(String(formData.get('requirementId')));
   const solId = BigInt(String(formData.get('solId')));
+  const source = String(formData.get('source') ?? '');
+  const status = String(formData.get('complianceStatus') ?? '');
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.criterion.findFirst({ where: { id, companyId: daraUser.companyId } });
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
     if (!owned) return false;
-    await tx.criterion.update({
+    await tx.requirement.update({
       where: { id },
       data: {
         name: String(formData.get('name') ?? '').trim() || owned.name,
         description: String(formData.get('description') ?? '').trim() || null,
-        criterionType: String(formData.get('criterionType') ?? owned.criterionType),
+        source: (VALID_SOURCES.has(source) ? source : owned.source) as any,
+        isScored: formData.get('isScored') === 'on',
+        complianceStatus: (VALID_STATUSES.has(status) ? status : owned.complianceStatus) as any,
+        proposalRef: String(formData.get('proposalRef') ?? '').trim(),
         farReference: String(formData.get('farReference') ?? '').trim(),
-        weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
-        sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
+        weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0
       }
     });
     return true;
@@ -219,15 +281,15 @@ async function updateCriterion(formData: FormData) {
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
-async function deleteCriterion(formData: FormData) {
+async function deleteRequirement(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
-  const id = BigInt(String(formData.get('criterionId')));
+  const id = BigInt(String(formData.get('requirementId')));
   const solId = BigInt(String(formData.get('solId')));
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.criterion.findFirst({ where: { id, companyId: daraUser.companyId } });
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
     if (!owned) return false;
-    await tx.criterion.delete({ where: { id } });
+    await tx.requirement.delete({ where: { id } });
     return true;
   });
   if (!ok) redirect('/app/solicitations');
@@ -567,7 +629,7 @@ export default async function SolicitationDetailPage({
     const solicitation = await tx.solicitation.findFirst({
       where: { id: solId, companyId: daraUser.companyId },
       include: {
-        criteria: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
+        requirements: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
         solDocs: { orderBy: { uploadedAt: 'desc' } },
         departments: { include: { team: true } },
         responses: {
@@ -580,11 +642,11 @@ export default async function SolicitationDetailPage({
             response: true,
             results: {
               include: {
-                criterion: true,
+                requirement: true,
                 persona: true,
                 versions: { orderBy: { version: 'desc' } }
               },
-              orderBy: { criterionId: 'asc' }
+              orderBy: { requirementId: 'asc' }
             }
           }
         }
@@ -619,15 +681,15 @@ export default async function SolicitationDetailPage({
   const canManageDepts = canManageDepartments(daraUser.id, daraUser.role, solicitation.createdBy);
 
   const sid = solicitation.id.toString();
-  const canEvaluate = activeCount > 0 && solicitation.criteria.length > 0;
+  const canEvaluate = activeCount > 0 && solicitation.requirements.length > 0;
 
-  // ---- Build the score matrix (offerors × criteria) from evaluation results ----
-  // For each offeror/criterion pair, average the numeric AI scores across every
+  // ---- Build the score matrix (offerors × requirements) from evaluation results ----
+  // For each offeror/requirement pair, average the numeric AI scores across every
   // persona that scored it; fall back to the first determination otherwise.
   const cellMap = new Map<string, { scores: number[]; determinations: string[] }>();
   for (const ev of solicitation.evaluations) {
     for (const res of ev.results) {
-      const key = `${ev.responseId.toString()}:${res.criterionId.toString()}`;
+      const key = `${ev.responseId.toString()}:${res.requirementId.toString()}`;
       const cell = cellMap.get(key) ?? { scores: [], determinations: [] };
       if (res.aiScore != null) cell.scores.push(Number(res.aiScore));
       else if (res.aiDetermination) cell.determinations.push(res.aiDetermination);
@@ -716,7 +778,7 @@ export default async function SolicitationDetailPage({
       <section className="rounded-[10px] border border-[#5a1f1f]/50 bg-surf p-6">
         <h2 className={sectionTitle}>Danger zone</h2>
         <p className="mt-1 text-[13px] text-t4">
-          Deleting this solicitation also removes its criteria, offerors,
+          Deleting this solicitation also removes its requirements, offerors,
           documents, and evaluations. This cannot be undone.
         </p>
         <form action={deleteSolicitation} className="mt-4">
@@ -764,84 +826,186 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const criteriaPanel = (
+  const requirements = solicitation.requirements;
+  const statusCounts = COMPLIANCE_STATUSES.map((s) => ({
+    ...s,
+    n: requirements.filter((r) => r.complianceStatus === s.value).length
+  }));
+
+  const compliancePanel = (
     <div className="space-y-4">
-      {solicitation.criteria.map((c) => (
-        <div key={c.id.toString()} className={`${card} p-4`}>
-          <form action={updateCriterion} className="space-y-3">
+      <CuiBoundaryNotice
+        provider={daraUser.company.activeProvider}
+        mode={daraUser.company.aiKeyMode}
+      />
+
+      {/* Generate + summary */}
+      <div className={`${card} p-5`}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={sectionTitle}>Compliance matrix</h2>
+            <p className="mt-1 max-w-xl text-[13px] text-t4">
+              Shred the solicitation into discrete requirements (Section L instructions,
+              Section M factors, SOW/PWS tasks, FAR clauses), then track coverage and where
+              each is answered in your proposal.
+            </p>
+          </div>
+          <form action={generateMatrixAction} className="flex-shrink-0">
             <input type="hidden" name="solId" value={sid} />
-            <input type="hidden" name="criterionId" value={c.id.toString()} />
-            <input type="hidden" name="sortOrder" value={c.sortOrder} />
-            <div className="grid gap-3 sm:grid-cols-12">
-              <div className="space-y-1.5 sm:col-span-6">
-                <label className={labelClasses}>Name</label>
-                <input name="name" type="text" defaultValue={c.name} className={fieldClasses} />
-              </div>
-              <div className="space-y-1.5 sm:col-span-3">
-                <label className={labelClasses}>Type</label>
-                <select name="criterionType" defaultValue={c.criterionType} className={fieldClasses}>
-                  {CRITERION_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
-                </select>
-              </div>
-              <div className="space-y-1.5 sm:col-span-3">
-                <label className={labelClasses}>Weight</label>
-                <input name="weight" type="number" defaultValue={c.weight} className={fieldClasses} />
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-12">
-              <div className="space-y-1.5 sm:col-span-9">
-                <label className={labelClasses}>Description</label>
-                <input name="description" type="text" defaultValue={c.description ?? ''} className={fieldClasses} />
-              </div>
-              <div className="space-y-1.5 sm:col-span-3">
-                <label className={labelClasses}>FAR Ref.</label>
-                <input name="farReference" type="text" defaultValue={c.farReference} className={fieldClasses} />
-              </div>
-            </div>
-            <div className="flex justify-end">
-              <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
-            </div>
-          </form>
-          <form action={deleteCriterion} className="mt-2 flex justify-end border-t border-line pt-2">
-            <input type="hidden" name="solId" value={sid} />
-            <input type="hidden" name="criterionId" value={c.id.toString()} />
-            <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete criterion</button>
+            <SubmitButton
+              className={btnPrimary}
+              pending={(<><Loader2 className="h-4 w-4 animate-spin" />Generating…</>)}
+            >
+              <Sparkles className="h-4 w-4" />
+              {requirements.length ? 'Generate more' : 'Generate from solicitation'}
+            </SubmitButton>
           </form>
         </div>
-      ))}
-      <div className={`${cardDashed} p-4`}>
-        <h3 className={`mb-3 ${sectionTitle}`}>Add criterion</h3>
-        <form action={addCriterion} className="space-y-3">
-          <input type="hidden" name="solId" value={sid} />
-          <div className="grid gap-3 sm:grid-cols-12">
-            <div className="space-y-1.5 sm:col-span-6">
-              <label className={labelClasses}>Name <span className="text-[#3b6ef0]">*</span></label>
-              <input name="name" type="text" required placeholder="e.g. Technical Approach" className={fieldClasses} />
+        {solicitation.solDocs.length === 0 && (
+          <p className="mt-3 rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
+            Upload solicitation documents on the Documents tab first — the generator reads
+            their extracted text.
+          </p>
+        )}
+        {requirements.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {statusCounts.map((s) => (
+              <span
+                key={s.value}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-2.5 py-1 text-[12px] text-t3"
+              >
+                <span className={`font-semibold ${STATUS_PILL[s.value]}`}>{s.n}</span>
+                {s.label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Requirements grouped by source */}
+      {requirements.length === 0 ? (
+        <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-10 text-center`}>
+          <Inbox className="h-8 w-8 text-t5" />
+          <p className="mt-3 text-[13px] text-t4">
+            No requirements yet. Generate them from the solicitation above, or add one manually below.
+          </p>
+        </div>
+      ) : (
+        REQUIREMENT_SOURCES.map((s) => {
+          const group = requirements.filter((r) => r.source === s.value);
+          if (group.length === 0) return null;
+          return (
+            <div key={s.value} className="space-y-3">
+              <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                {s.label} ({group.length})
+              </h3>
+              {group.map((r) => (
+                <div key={r.id.toString()} className={`${card} p-4`}>
+                  <form action={updateRequirement} className="space-y-3">
+                    <input type="hidden" name="solId" value={sid} />
+                    <input type="hidden" name="requirementId" value={r.id.toString()} />
+                    <div className="grid gap-3 sm:grid-cols-12">
+                      <div className="space-y-1.5 sm:col-span-8">
+                        <label className={labelClasses}>Requirement</label>
+                        <input name="name" type="text" defaultValue={r.name} className={fieldClasses} />
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-4">
+                        <label className={labelClasses}>Source</label>
+                        <select name="source" defaultValue={r.source} className={fieldClasses}>
+                          {REQUIREMENT_SOURCES.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Requirement text</label>
+                      <textarea name="description" rows={2} defaultValue={r.description ?? ''} className={fieldClasses} />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-12">
+                      <div className="space-y-1.5 sm:col-span-4">
+                        <label className={labelClasses}>Compliance</label>
+                        <select name="complianceStatus" defaultValue={r.complianceStatus} className={fieldClasses}>
+                          {COMPLIANCE_STATUSES.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-4">
+                        <label className={labelClasses}>Proposal reference</label>
+                        <input name="proposalRef" type="text" defaultValue={r.proposalRef} placeholder="Vol / §  / page" className={fieldClasses} />
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <label className={labelClasses}>FAR Ref.</label>
+                        <input name="farReference" type="text" defaultValue={r.farReference} className={fieldClasses} />
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <label className={labelClasses}>Weight</label>
+                        <input name="weight" type="number" defaultValue={r.weight} className={fieldClasses} />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-t3">
+                        <input type="checkbox" name="isScored" defaultChecked={r.isScored} className="h-3.5 w-3.5 accent-[#3b6ef0]" />
+                        Scored factor
+                      </label>
+                      <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
+                    </div>
+                  </form>
+                  <form action={deleteRequirement} className="mt-2 flex justify-end border-t border-line pt-2">
+                    <input type="hidden" name="solId" value={sid} />
+                    <input type="hidden" name="requirementId" value={r.id.toString()} />
+                    <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete</button>
+                  </form>
+                </div>
+              ))}
             </div>
-            <div className="space-y-1.5 sm:col-span-3">
-              <label className={labelClasses}>Type</label>
-              <select name="criterionType" defaultValue="scored_factor" className={fieldClasses}>
-                {CRITERION_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+          );
+        })
+      )}
+
+      {/* Add requirement */}
+      <div className={`${cardDashed} p-4`}>
+        <h3 className={`mb-3 ${sectionTitle}`}>Add requirement</h3>
+        <form action={addRequirement} className="space-y-3">
+          <input type="hidden" name="solId" value={sid} />
+          <input type="hidden" name="sortOrder" value={requirements.length} />
+          <div className="grid gap-3 sm:grid-cols-12">
+            <div className="space-y-1.5 sm:col-span-8">
+              <label className={labelClasses}>Requirement <span className="text-[#3b6ef0]">*</span></label>
+              <input name="name" type="text" required placeholder="e.g. Page limit — Volume II" className={fieldClasses} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-4">
+              <label className={labelClasses}>Source</label>
+              <select name="source" defaultValue="evaluation_factor" className={fieldClasses}>
+                {REQUIREMENT_SOURCES.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelClasses}>Requirement text</label>
+            <textarea name="description" rows={2} className={fieldClasses} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-12">
+            <div className="space-y-1.5 sm:col-span-3">
+              <label className={labelClasses}>FAR Ref.</label>
+              <input name="farReference" type="text" className={fieldClasses} />
             </div>
             <div className="space-y-1.5 sm:col-span-3">
               <label className={labelClasses}>Weight</label>
               <input name="weight" type="number" defaultValue={0} className={fieldClasses} />
             </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-12">
-            <div className="space-y-1.5 sm:col-span-9">
-              <label className={labelClasses}>Description</label>
-              <input name="description" type="text" className={fieldClasses} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-3">
-              <label className={labelClasses}>FAR Ref.</label>
-              <input name="farReference" type="text" className={fieldClasses} />
+            <div className="flex items-end sm:col-span-6">
+              <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-t3">
+                <input type="checkbox" name="isScored" className="h-3.5 w-3.5 accent-[#3b6ef0]" />
+                Scored factor
+              </label>
             </div>
           </div>
-          <input type="hidden" name="sortOrder" value={solicitation.criteria.length} />
           <div className="flex justify-end">
-            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add criterion</button>
+            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add requirement</button>
           </div>
         </form>
       </div>
@@ -857,7 +1021,7 @@ export default async function SolicitationDetailPage({
       {!canEvaluate && (
         <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
           To run evaluations you need at least one criterion and one active persona
-          ({solicitation.criteria.length} criteria, {activeCount} active personas).
+          ({solicitation.requirements.length} criteria, {activeCount} active personas).
         </p>
       )}
       {solicitation.responses.map((r) => (
@@ -956,7 +1120,7 @@ export default async function SolicitationDetailPage({
     <div className="space-y-6">
       <RunningBanner count={runningCount} />
       {/* Score matrix */}
-      {hasResults && solicitation.criteria.length > 0 && solicitation.responses.length > 0 ? (
+      {hasResults && solicitation.requirements.length > 0 && solicitation.responses.length > 0 ? (
         <div className={`${card} overflow-x-auto`}>
           <table className="w-full border-collapse text-left">
             <thead>
@@ -964,7 +1128,7 @@ export default async function SolicitationDetailPage({
                 <th className="sticky left-0 z-10 bg-surf3 px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
                   Offeror
                 </th>
-                {solicitation.criteria.map((c) => (
+                {solicitation.requirements.map((c) => (
                   <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     {c.name}
                   </th>
@@ -977,7 +1141,7 @@ export default async function SolicitationDetailPage({
                   <td className="sticky left-0 z-10 bg-surf px-[18px] py-3 text-[13px] font-semibold text-t2">
                     {r.offerorName}
                   </td>
-                  {solicitation.criteria.map((c) => {
+                  {solicitation.requirements.map((c) => {
                     const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
                     let label = '—';
                     let color = 'text-t5';
@@ -1007,8 +1171,8 @@ export default async function SolicitationDetailPage({
         <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-12 text-center`}>
           <Inbox className="h-9 w-9 text-t5" />
           <p className="mt-3 text-[13px] text-t4">
-            No evaluation results yet. Add criteria and offerors, upload proposal
-            documents, then run an evaluation from the Offerors tab.
+            No evaluation results yet. Build the compliance matrix and add offerors, upload
+            proposal documents, then run an evaluation from the Offerors tab.
           </p>
         </div>
       )}
@@ -1082,7 +1246,7 @@ export default async function SolicitationDetailPage({
   const tabs: TabDef[] = [
     { id: 'overview', label: 'Overview', content: overviewPanel },
     { id: 'documents', label: 'Documents', count: solicitation.solDocs.length, content: documentsPanel },
-    { id: 'criteria', label: 'Criteria', count: solicitation.criteria.length, content: criteriaPanel },
+    { id: 'compliance', label: 'Compliance', count: solicitation.requirements.length, content: compliancePanel },
     { id: 'offerors', label: 'Offerors', count: solicitation.responses.length, content: offerorsPanel },
     { id: 'matrix', label: 'Matrix', count: solicitation.evaluations.length, content: matrixPanel }
   ];

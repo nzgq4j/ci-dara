@@ -14,7 +14,7 @@ begin;
 -- 1) Remove all PostgREST (anon/authenticated) access to tenant tables.
 revoke all privileges on table
   public.dara_companies, public.dara_users, public.dara_solicitations,
-  public.dara_sol_documents, public.dara_criteria, public.dara_personas,
+  public.dara_sol_documents, public.dara_requirements, public.dara_personas,
   public.dara_responses, public.dara_response_files, public.dara_evaluations,
   public.dara_results, public.dara_job_queue
 from anon, authenticated;
@@ -24,7 +24,7 @@ alter table public.dara_companies      enable row level security;
 alter table public.dara_users          enable row level security;
 alter table public.dara_solicitations  enable row level security;
 alter table public.dara_sol_documents  enable row level security;
-alter table public.dara_criteria       enable row level security;
+alter table public.dara_requirements   enable row level security;
 alter table public.dara_personas       enable row level security;
 alter table public.dara_responses      enable row level security;
 alter table public.dara_response_files enable row level security;

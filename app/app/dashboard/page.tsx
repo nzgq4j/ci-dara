@@ -54,7 +54,7 @@ export default async function DashboardPage() {
         where: solWhere,
         orderBy: { createdAt: 'desc' },
         take: 5,
-        include: { _count: { select: { criteria: true, responses: true } } }
+        include: { _count: { select: { requirements: true, responses: true } } }
       }),
       tx.evaluation.findMany({
         where: { companyId, solicitation: access },
@@ -155,7 +155,7 @@ export default async function DashboardPage() {
                     Reference
                   </th>
                   <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
-                    Criteria
+                    Reqs
                   </th>
                   <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     Offerors
@@ -178,7 +178,7 @@ export default async function DashboardPage() {
                       {sol.solNumber || '—'}
                     </td>
                     <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
-                      {sol._count.criteria}
+                      {sol._count.requirements}
                     </td>
                     <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                       {sol._count.responses}
