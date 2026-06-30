@@ -449,31 +449,41 @@ export function buildAmendmentDiffPrompt(
   amendmentText: string
 ): { system: string; user: string } {
   const token = randomBytes(9).toString('hex');
-  const amendBlock = fenceUntrusted('AMENDMENT', truncate(amendmentText, 40000), token);
+  const amendBlock = fenceUntrusted('AMENDMENT', truncate(amendmentText, 50000), token);
+  // Send the full requirement text (not a 400-char preview) so the model can actually
+  // tell whether the amendment changes a requirement's substance.
   const matrix = JSON.stringify(
     current.map((r) => ({
       id: r.id,
       name: r.name,
       source: r.source,
-      description: (r.description ?? '').slice(0, 400)
+      description: (r.description ?? '').slice(0, 1500)
     }))
   );
 
   const system =
-    'You are a government-contracting proposal analyst. You reconcile a solicitation ' +
-    'amendment against an existing compliance-requirements matrix, proposing the minimal ' +
-    'set of additions, modifications, and removals needed to bring the matrix in line ' +
-    'with the amendment. Respond only in the JSON format specified.';
+    'You are a government-contracting proposal analyst reconciling a solicitation ' +
+    'amendment against an existing compliance-requirements matrix. Your job is to catch ' +
+    'EVERY change the amendment makes — additions, modifications, and removals. Amendments ' +
+    'frequently ship as a revised document (a re-issued PWS/SOW, revised Section L/M, a new ' +
+    'due date, added clauses); when a document is re-issued, every requirement whose ' +
+    'underlying text materially changed is a "modify", and anything new is an "add". Respond ' +
+    'only in the JSON format specified.';
 
   const user =
     `## Current compliance matrix (JSON)\n\n${matrix}\n\n## Amendment Document\n\n${amendBlock}\n\n` +
     `## Instructions\n\n${INJECTION_GUARD}\n\n` +
-    'Compare the amendment against the current matrix and propose changes:\n' +
-    '- "add" — a new requirement the amendment introduces (no requirement_id).\n' +
-    '- "modify" — an existing requirement the amendment changes (set requirement_id to its id; provide the full updated fields).\n' +
-    '- "remove" — an existing requirement the amendment deletes or supersedes (set requirement_id; no new fields).\n\n' +
-    'Only propose a change where the amendment actually warrants it — do not restate unchanged requirements. ' +
-    'Every change MUST include a "rationale" citing the relevant part of the amendment. ' +
+    'Work through this methodically and be thorough — aim for complete recall:\n' +
+    '1. For EACH existing requirement in the matrix, check whether the amendment changes its ' +
+    'substance (scope, tasks, deliverables, deadlines/period of performance, quantities or ' +
+    'thresholds, page limits, fonts, evaluation factors/weights, clauses). If it does → ' +
+    '"modify" with requirement_id set and the FULL updated text.\n' +
+    '2. Scan the amendment for requirements NOT represented in the matrix → "add".\n' +
+    '3. Identify requirements the amendment deletes, supersedes, or makes inapplicable → "remove".\n\n' +
+    'Prefer recall over precision: if the amendment plausibly affects a requirement, surface it ' +
+    '(the reviewer can reject false positives) — do NOT stay silent to keep the list short. ' +
+    'Do not, however, propose changes for requirements the amendment leaves untouched. ' +
+    'Every change MUST include a "rationale" citing the specific amendment provision (section/paragraph). ' +
     `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${DIFF_SCHEMA}\n\n` +
     'Do not include any text outside the JSON object.';
 
