@@ -10,14 +10,16 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `c81d576` (eval assessment formatting +
-  suggested-changes fix) is **deployed to prod and pushed**. This session, in order:
+- **Branch:** `main`, clean. Last commit `d1836dc` (**color-team reframing Phase 1 —
+  Requirements + Compliance matrix**) is **migrated, deployed to prod, and pushed**.
+  Earlier this session, in order:
   `4076ec7` (onboarding + Organization group + Company settings), `5ecc949` (Create
   Account), `8fd5ac3` (invite email-verification gate), `d322114` (Application Admin),
   `139368f` (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings),
   `e5a5bc7` (docs), `1bfb044` (non-BYOK AI lockdown + david demotion), `6a28608` (docs),
   `f361d70` (eval progress/regenerate/archive/review-summary), `3441f34` (eval token
-  fix), `c81d576` (eval assessment formatting + suggested-changes).
+  fix), `c81d576` (eval assessment formatting + suggested-changes), `d1836dc`
+  (reframing Phase 1: Requirements + Compliance matrix).
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -30,6 +32,20 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   risk-accepted with controls. SSP at `/app/security/plan`.
 
 ### Watch-outs (don't trip on these)
+
+- **Product is being reframed: offerors → color-team gate reviews** (review *our own*
+  proposal as it matures, not score competitors). The methodology is **never named** in
+  UI/prompts/code/docs — use "color team review", gate names (Pink/Red/Gold/Blue/Green/
+  Black/White), "review gate". **Phase 1 (Requirements + Compliance) is SHIPPED**; Phase 2
+  (Reviews/color teams: `Response`→`Review`, draft snapshots, persona selection, Color
+  Teams + Review tabs) is next; Phase 3 is amendments (AI reconciliation). See BUILD_STATUS
+  §2 for the four design decisions.
+- **`Criterion` is now `Requirement`** (`dara_requirements`). The old Criteria tab is the
+  **Compliance** tab: AI shred ("Generate from solicitation", `utils/dara/requirements.ts`)
+  + per-source grouping + compliance status + proposal reference. Evaluations run per
+  requirement. `dara_results.criterion_id` column was kept (Prisma field `requirementId`),
+  so the FK/unique index are unchanged. If a long RFP truncates the shred JSON, raise
+  `SHRED_MAX_TOKENS` in `utils/dara/requirements.ts`.
 
 - **Application Admin is a company-less operator role** (`/app/admin`). An email in
   `PLATFORM_ADMIN_EMAILS` (or an active `dara_platform_admins` row) gets the admin

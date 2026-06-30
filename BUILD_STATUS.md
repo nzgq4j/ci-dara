@@ -47,6 +47,8 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 | **Teams / departments model** | `Team` (`dara_teams`) per company; `TeamMember` join with a per-team `UserRole`; `Invitation` (`dara_invitations`) email-invite with `pending/accepted/revoked/expired` | `DaraUser.role` stays the **company-level** role (the `company_admin` gate); per-team role lives on `TeamMember`. The Team UI presents one department per user (single-select); schema stays multi-capable. |
 | **Invitations / join flow** | `provisionNewUser` matches a pending invite by email and attaches the user to that company + team with the invited role on first sign-in; else creates a new company (prior behavior) | Previously every signup made a one-person company — there was no way to join an existing one. Invite emails are Supabase-sent; the invite **row** is the source of truth, so joining works via sign-in even if email isn't configured. |
 | **Solicitation visibility** | Solicitations assignable to **multiple departments** (`dara_solicitation_departments`). Rules: `company_admin` sees all; **creator** always sees own; others see only via an assigned department; unassigned ⇒ admins + creator only | Department-scoped authorization within a tenant. **Enforced app-layer** (`utils/dara/sol-access.ts`): list/dashboard queries filtered; the detail gate (`requireViewableSolicitation`) covers the page + every mutation, so child data (docs/criteria/offerors/evaluations) is covered transitively. Company-level RLS remains the DB backstop; DB-level department RLS is a deferred hardening. Assign rights: admins + creator. |
+| **Product reframing → color-team reviews** | DARA is being reframed from source-selection (score competing **offerors**) to proposal development (**color-team gate reviews** of the company's *own* proposal as it matures). One solicitation → one or more reviews. The underlying methodology is **never named** in UI/prompts/code/docs. Decided 2026-06-30; phased: **Phase 1 Requirements/Compliance (SHIPPED)** → Phase 2 Reviews (color teams) → Phase 3 Amendments (AI reconciliation). | Decisions: (1) unify evaluation factors + requirements into one `Requirement` model (Compliance tab); (2) snapshot the proposal draft per review; (3) freeform reviews, color is a label, behavior from chosen personas; (4) full AI amendment reconciliation (diff → proposed changes → approve → versioned matrix). |
+| **Requirements / Compliance matrix (Phase 1)** | `Criterion` evolved into **`Requirement`** (`dara_criteria`→`dara_requirements`): `source` (Section L instruction / M factor / SOW-PWS / FAR clause / other), `isScored`, `complianceStatus`, `proposalRef`. The **Compliance tab** replaces Criteria and adds an **AI shred** ("Generate from solicitation") that turns the RFP docs into a requirements list. | Requirements are the structured backbone every review scores/tracks. `dara_results.criterion_id` column kept (Prisma field remapped to `requirementId`) so the FK/unique index are untouched. Old `criterion_type` migrated into `source`+`isScored`. Table rename preserves RLS; DARA-004/005 source files updated for rebuilds + `2026-07-01_requirements_rls.sql`. |
 
 ---
 
@@ -98,6 +100,14 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     a History(N) log) and **Archive/Restore** (`archivedAt`, retained — no delete).
     `ResultCard.tsx`; logic in `utils/dara/evaluator.ts` (`regenerateResult`,
     `setResultArchived`). All these fields populate on the **next** run/regenerate.
+- **Compliance matrix** (`/app/solicitations/[id]` → **Compliance** tab, Phase 1 of the
+  color-team reframing): `Requirement` rows (`dara_requirements`) shredded from the
+  solicitation via AI ("Generate from solicitation", `utils/dara/requirements.ts`) or
+  added manually. Each row carries a **source** (Section L instruction / M factor /
+  SOW-PWS / FAR clause / other), **scored** flag + weight, **compliance status**
+  (not-assessed/compliant/partial/non-compliant/N-A) and **proposal reference**; grouped
+  by source with status-count pills. Replaces the old Criteria tab; evaluations now run
+  per requirement. (Offeror→review rename + Color Teams/Review tabs are Phase 2.)
 - **Settings** (`/app/settings`, company admin): AI config + encrypted BYOK keys.
   (Member/team management moved to the Team page; Settings links to it.)
 - **Team** (`/app/team`, company admin): departments/sub-teams with per-team roles.
@@ -487,6 +497,16 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   card with numbered findings (`RationaleBlock`); strengthened the prompt so `suggested_changes`
   (change + rationale) is produced whenever a weakness/gap exists (the verbose review prompt had
   let the model return an empty list). Strengths/weaknesses/compliance unchanged.
+- **Color-team reframing — Phase 1: Requirements + Compliance matrix** (commit `d1836dc`,
+  migrated + deployed). `Criterion`→`Requirement` (`dara_criteria`→`dara_requirements`,
+  migration `20260701000000_requirements_compliance`); old `criterion_type` migrated into
+  `source`+`isScored`; `dara_results.criterion_id` column kept (Prisma field remapped to
+  `requirementId`). New AI **shred** (`utils/dara/requirements.ts` + `buildShredPrompt`/
+  `parseShred`) turns RFP docs into requirement rows. **Compliance tab** replaces Criteria
+  (generate / per-source grouping / compliance status + proposal ref). RLS preserved through
+  the rename; DARA-004/005 source files updated to the new name; `2026-07-01_requirements_rls.sql`
+  added. Engine + Matrix now run per requirement. See §2 (reframing decisions) — Phase 2
+  (Reviews/color teams) is next.
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —
