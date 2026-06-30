@@ -1,6 +1,6 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-06-29_
+_Last updated: 2026-06-30_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
 **Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
@@ -28,7 +28,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 | **Prisma 7 runtime** | `@prisma/adapter-pg` driver adapter, constructed with `DATABASE_URL` | Prisma 7 no longer reads the datasource URL from the schema/`prisma.config.ts` at runtime; a driver adapter is the supported path. `prisma.config.ts` now loads the CLI datasource URL from env (`DIRECT_URL`) — no longer hardcoded (fixed DARA-001). |
 | **PDF extraction** | `unpdf` (not `pdf-parse`) | `pdf-parse` v2 works locally but fails in Vercel's serverless runtime (pdfjs worker/asset tracing). `unpdf` ships a worker-free serverless pdfjs build. DOCX still uses `mammoth`. |
 | **Auth provisioning** | Call `provisionNewUser` on email+password sign-in too | Provisioning previously only ran in `/auth/callback` (OAuth/magic-link), so password users had "no account information". |
-| **Admin model** | Platform admin via email allow-list (`PLATFORM_ADMIN_EMAILS`, fallback list); company admin via `UserRole = company_admin` | No super-admin concept existed in the schema; email allow-list is simple and explicit. |
+| **Admin model** | **Application Admin** = company-less platform operator (`dara_platform_admins`), DB-backed and bootstrapped from `PLATFORM_ADMIN_EMAILS`; company admin via `UserRole = company_admin` | Formalized 2026-06-30. Separation of duties (CMMC AC-5/AC-6): an app admin manages accounts/users/platform settings but has **no tenant context → no CUI**, by construction. Env-listed emails are auto-provisioned and can't be removed in-app (bootstrap root). **Behavior change:** an email in `PLATFORM_ADMIN_EMAILS` no longer gets a company workspace — use a separate account for company/CUI access. |
+| **Platform AI config** | Platform LLM keys (encrypted) + central provider/model live in a singleton `dara_platform_settings`, edited **only** in the Application Admin console; platform-mode evaluations resolve from it (a console key overrides the `PLATFORM_*_KEY` env fallback) | 2026-06-30. One place to manage platform keys + model; `resolveCompanyAI(company, platform)` uses the central provider/model/key in platform mode. Company provider/model selectors apply to **BYOK only**. Env keys remain a transition fallback until moved into the console. |
+| **Onboarding** | New `Company.onboardedAt` + `DaraUser.onboardedAt` gate. Org creator (un-onboarded company + `company_admin`) → 6-step wizard `/onboarding` (prefilled from Google OAuth); other un-onboarded users → one-screen `/welcome`. Existing rows backfilled as onboarded | 2026-06-30. New sign-ups set up their workspace before the dashboard; invited members get a light welcome once. Gate lives in `app/app/layout.tsx`; wizard/welcome live outside the `/app` shell. |
 | **API keys at rest** | AES-256-GCM (`utils/dara/crypto.ts`) keyed off `APP_KEY` | BYOK keys must be encrypted; the WP `Crypto` class was not portable. |
 | **Stripe checkout** | Custom plan cards → Stripe Checkout Session (promotion codes enabled) | User chose custom cards over the hosted pricing table; coupon support needed for testing. |
 | **Stripe billing model** | Webhook syncs to the Prisma `Company` (`plan/planStatus/stripeCustomerId/stripeSubId`) | That's what the app's trial gating / admin actually read; the Supabase template billing tables were dropped. |
@@ -87,8 +89,32 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   role + active, with a self-lockout guard) and per-team membership (add existing,
   change role, remove). All actions audited. New tables `dara_teams` /
   `dara_team_members` / `dara_invitations` under the DARA-004 RLS model.
-- **Admin** (`/app/admin`, platform admin): manage all accounts (plan, status,
-  trial end, AI config) and all users.
+- **Application Admin** (`/app/admin`, company-less platform operator — 2026-06-30):
+  the formalized admin console. **Accounts** (plan/status/trial/AI config),
+  **Users** (role · ban/unban · delete incl. Supabase auth removal),
+  **Administrators** (grant by email · activate/deactivate · remove; env-pinned +
+  self protected), and **Platform AI** (below). Separate company-less shell
+  (`PlatformAdminSidebar`), no CUI. Identity in `dara_platform_admins`
+  (`utils/dara/platform.ts`); login routes admins to `/app/admin` and never
+  provisions a tenant; middleware + root keep them out of company routes. Banned
+  (`isActive=false`) users get a terminal "account disabled" screen.
+- **Platform AI** (`/app/admin#ai`, app admin only — 2026-06-30): the single place
+  to set platform LLM keys (encrypted) + the central provider/model. Singleton
+  `dara_platform_settings`; `utils/dara/{platform-ai,ai-catalog}.ts`. Platform-mode
+  evaluations resolve from here; a console key overrides the `PLATFORM_*_KEY` env
+  fallback. Model picker constrained to providers with a key.
+- **Company** (`/app/company`, company admin — 2026-06-30, under the **Organization**
+  sidebar group): edit company **profile** (name, legal name, website, phone, CAGE,
+  UEI), **address**, and **CMMC/C3PAO assessment** (target level, status, assessor
+  name/contact/email/phone, last-assessment + cert-expiry dates). 19 nullable columns
+  on `dara_companies`.
+- **Onboarding** (2026-06-30): `/onboarding` 6-step wizard for new org creators
+  (welcome → profile → organization → AI mode → invite team → done), prefilled from
+  Google OAuth; `/welcome` one-screen for invited members. `Company.onboardedAt` +
+  `DaraUser.onboardedAt` gate in `app/app/layout.tsx`; existing rows backfilled.
+- **Sign-in "Create Account"** (2026-06-30): replaced "Request access"; Google OAuth
+  now offered on the create-account view (flows into onboarding); signup form
+  restyled. Account creation still yields a trial `company_admin`.
 - **Billing** (`/app/billing`): custom plan cards → Checkout (coupons enabled),
   Customer Portal; webhook → `Company` sync.
 - **UI redesign (complete)**: foundation + shell (IBM Plex, accent, sidebar,
@@ -158,6 +184,17 @@ Security page and the first wave of remediations shipped (see §3 / §5).
      Authentication → Emails → SMTP Settings and set **Sender name** + **Sender email**
      (verified domain on your SMTP provider). `supabase/config.toml` only affects the
      local dev stack, not prod.
+   - **Subject/body:** Authentication → **Email Templates** → edit **Invite user**
+     (Team invites via `inviteUserByEmail`) and/or **Confirm signup** (self-registration —
+     the "Confirm your email address… finish signing up" copy). Vars: `{{ .ConfirmationURL }}`,
+     `{{ .SiteURL }}`, `{{ .Email }}`. (Code-owned branded emails via Resend/SMTP are an
+     alternative if you'd rather not use Supabase templates — not built.)
+   - **Note (defense-in-depth, 2026-06-30):** invitation acceptance now requires a
+     **verified email** (`provisionNewUser(emailVerified)`); OAuth/magic-link prove it
+     inherently, password only once confirmed. Turning **Confirm email ON** in Supabase
+     is what makes the password path's verification real. Without it, a pending invite
+     for an unverified address is refused (no hijack), but a legit invited password user
+     also can't join until confirmed — so enabling Confirm email is recommended.
 2. **Stripe webhook endpoint** — confirm the URL has **no trailing dot** and add
    `customer.subscription.updated` to the subscribed events (created/deleted are
    there; updated is needed for plan changes/renewals). Activate the **Customer
@@ -189,6 +226,18 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     `DARA_POSTGRES_*` / `DARA_SUPABASE_*` vars that the code does not read. Either
     remove them or wire the app to the integration's pooled URL (more robust for
     future rotations).
+14. **Move the platform LLM key into the console (2026-06-30).** Platform keys + the
+    active model now live in **Application Admin → Platform AI** (`dara_platform_settings`,
+    encrypted). `PLATFORM_ANTHROPIC_KEY` still works as a fallback (shown as "from env").
+    To finish: paste the Anthropic key into the console + pick the model, then you may
+    retire `PLATFORM_ANTHROPIC_KEY` from Vercel. (Optional model-catalog tweak:
+    `utils/dara/ai-catalog.ts`.)
+15. **`PLATFORM_ADMIN_EMAILS` is now `islanista@gmail.com` (2026-06-30).** `david@crucibleinsight.com`
+    was removed from the env allow-list and **deactivated** in the console, reverting it to
+    a normal user (company **"Proposal Foundry"**, `company_admin`). Its `dara_platform_admins`
+    row was kept (deactivated) per request. Current admins: `islanista@gmail.com` (env-pinned)
+    + `admin@crucibleinsight.com` (DB). NOTE: `PLATFORM_ADMIN_EMAILS` is stored **Sensitive**,
+    so `vercel env pull` shows it blank — use `vercel env add … --value … --force` to set it.
 11. **Open security findings** (full detail + status on `/app/security`). **None
     open.** DARA-007 (CUI→LLM) is **Risk accepted** with controls. Latest closures:
     **DARA-017 (migration history) Remediated 2026-06-29** (prod baselined to
@@ -283,11 +332,15 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 
 ## 6. Key paths
 
-- Engine: `utils/dara/{prompt,providers,evaluator,documents,personas,billing,crypto,admin,provision,teams}.ts`
+- Engine: `utils/dara/{prompt,providers,evaluator,documents,personas,billing,crypto,admin,provision,teams,platform,platform-ai,ai-catalog}.ts`
 - Teams: `app/app/team/{page.tsx,TeamView.tsx,actions.ts}`, `utils/dara/teams.ts` (invite email), invite-accept + `touchLastLogin` in `utils/dara/provision.ts`; RLS `prisma/security/2026-06-29_teams_rls.sql`
 - Solicitation access: `utils/dara/sol-access.ts` (rules + `requireViewableSolicitation` gate in the detail page); RLS `prisma/security/2026-06-29_solicitation_departments_rls.sql`; join table `dara_solicitation_departments`
-- App shell: `app/app/layout.tsx`, `components/layout/{Sidebar,ChromeGate}.tsx`
-- Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin,team}/…`
+- Application Admin: `utils/dara/platform.ts` (resolve/guard/manage admins + user ban/delete), `app/app/admin/{page.tsx,ai-actions.ts,PlatformAISelect.tsx}`, `components/layout/{PlatformAdminSidebar,AccountDisabled}.tsx`; tables `dara_platform_admins` (RLS `prisma/security/2026-06-30_platform_admins_rls.sql`), `dara_platform_settings` (RLS `…/2026-06-30_platform_settings_rls.sql`)
+- Platform AI: `utils/dara/{platform-ai.ts (DB settings),ai-catalog.ts (client-safe MODEL_CATALOG)}`; `resolveCompanyAI(company, platform)` in `providers.ts`; evaluator fetches `getPlatformAI()`
+- Onboarding: `app/onboarding/{page.tsx,OnboardingWizard.tsx,actions.ts}`, `app/welcome/{page.tsx,actions.ts}`; gate in `app/app/layout.tsx`; flags `Company.onboardedAt` + `DaraUser.onboardedAt`
+- Company settings: `app/app/company/page.tsx` (profile/address/CMMC); 19 cols on `dara_companies`
+- App shell: `app/app/layout.tsx` (admin-vs-company branch), `components/layout/{Sidebar (Organization group),PlatformAdminSidebar,ChromeGate}.tsx`
+- Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin,team,company}/…`
 - Webhook: `app/api/webhooks/route.ts`
 - Design tokens: `tailwind.config.js`, `styles/main.css`, fonts in `app/layout.tsx`
 - Design primitives: `components/dara/{theme.ts,PageHeader.tsx,Tabs.tsx}`
@@ -349,12 +402,46 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   solicitations have no departments, so non-admin/non-creator users stop seeing them
   until an admin/creator assigns departments.
 
+**Session 2026-06-30 — shipped:**
+- **Organization sidebar group** (`Sidebar.tsx`): empty-section filter so a group only
+  renders when the viewer can access something in it; **Company** + **Team** live under it
+  (company-admin only); Admin stays under Account for company users.
+- **Onboarding** (commit `4076ec7`, deployed): `/onboarding` 6-step wizard (prefilled from
+  Google OAuth) for new org creators; `/welcome` one-screen for invited members.
+  `Company.onboardedAt` + `DaraUser.onboardedAt` gate; existing rows backfilled as onboarded.
+  Migration `20260630000000_company_user_onboarding`.
+- **Company settings** (`/app/company`, commit `4076ec7`): profile/address/CMMC-C3PAO;
+  migration `20260630010000_company_profile` (19 cols).
+- **Sign-in "Create Account"** (commit `5ecc949`): replaced "Request access"; Google OAuth
+  on the create-account view; signup form restyled. Still yields a trial `company_admin`.
+- **Invitation email-verification gate** (commit `8fd5ac3`): `provisionNewUser(emailVerified)`
+  + `EmailVerificationRequiredError`; defense-in-depth vs invite hijack independent of the
+  Supabase Confirm-email setting. Company names intentionally non-unique (tenancy keyed on
+  id/slug); cross-tenant isolation still enforced by `withTenant` + RLS (DARA-004).
+- **Application Admin role** (commit `d322114`, deployed): company-less platform operator;
+  `dara_platform_admins` (migration `20260630020000` + RLS, verified `dara_admin` access);
+  `utils/dara/platform.ts`; login routing + admin shell; console with Accounts / Users
+  (ban/delete incl. Supabase auth) / Administrators. **Behavior change:** env-listed admin
+  emails are now company-less.
+- **Platform AI settings** (commit `139368f`, deployed): `dara_platform_settings` singleton
+  (migration `20260630030000` + RLS); Application Admin → Platform AI manages platform keys
+  (encrypted) + central provider/model; `resolveCompanyAI(company, platform)`; env key
+  fallback during transition; client-safe `ai-catalog.ts` split.
+- **Operator change:** `PLATFORM_ADMIN_EMAILS` → `islanista@gmail.com` (removed
+  `david@crucibleinsight.com`); david deactivated in-console → reverted to normal user
+  (company "Proposal Foundry"); david's admin row kept (deactivated). `admin@crucibleinsight.com`
+  is a DB admin.
+
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —
-   the only thing gating DARA-015 from "enforced"; (b) set the Supabase Auth Site URL
-   (#1) so Team invite emails resolve in prod.
-2. Feature backlog: per-company admin **audit-log viewer — now has a home in the
-   Team page** (`dara_audit_log` is per-company; add a read-only, company-admin-gated
-   tab/section there); and the AI codebase security-audit (back-office, platform key).
-3. Product backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron),
+   the only thing gating DARA-015 from "enforced"; (b) set the Supabase Auth Site URL +
+   **Confirm email ON** (#1) so Team invite emails resolve and the verification gate is
+   real; (c) move the platform Anthropic key into **Application Admin → Platform AI** and
+   retire `PLATFORM_ANTHROPIC_KEY` (#14).
+2. **Verify in prod:** the full onboarding flow with a brand-new Google account; billing
+   page renders (the `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` note); a real multi-criteria
+   evaluation end-to-end.
+3. Feature backlog: per-company admin **audit-log viewer** (home in the Team page); the
+   AI codebase security-audit (back-office, platform key).
+4. Product backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron),
    billing polish.
