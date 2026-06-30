@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { Save, Building2, Users, ShieldCheck, Ban, Trash2, Plus } from 'lucide-react';
+import { Save, Building2, Users, ShieldCheck, Ban, Trash2, Plus, Cpu } from 'lucide-react';
 import { prismaAdmin } from '@/utils/prisma';
 import {
   requirePlatformAdmin,
@@ -12,6 +12,9 @@ import {
   banUser,
   deleteUser
 } from '@/utils/dara/platform';
+import { getPlatformAIView, AI_PROVIDERS } from '@/utils/dara/platform-ai';
+import { savePlatformKeys } from './ai-actions';
+import PlatformAISelect from './PlatformAISelect';
 import { recordAudit } from '@/utils/dara/audit';
 import { secretHint } from '@/utils/dara/crypto';
 import PageHeader from '@/components/dara/PageHeader';
@@ -20,6 +23,7 @@ import {
   card,
   fieldClasses,
   labelClasses,
+  checkboxClasses,
   btnGhost,
   btnPrimary,
   btnDanger,
@@ -142,6 +146,7 @@ export default async function AdminPage() {
     include: { company: { select: { name: true } } }
   });
   const admins = await listPlatformAdmins();
+  const ai = await getPlatformAIView();
 
   return (
     <div className="mx-auto max-w-5xl fade">
@@ -158,6 +163,73 @@ export default async function AdminPage() {
       </div>
 
       <div className="space-y-8">
+        {/* Platform AI */}
+        <section id="ai" className="space-y-4 scroll-mt-6">
+          <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
+            <Cpu className="h-4 w-4 text-t5" />Platform AI
+          </h2>
+          <p className="text-[12px] text-t4">
+            Platform API keys used by every company on the{' '}
+            <span className="text-t2">platform</span> key mode, and the model those
+            evaluations run on. This is the only place these keys are configured.
+          </p>
+
+          {/* Keys */}
+          <form action={savePlatformKeys} className={`${card} space-y-4 p-5`}>
+            <h3 className="text-[13px] font-bold text-t1">Provider keys</h3>
+            {AI_PROVIDERS.map((p) => (
+              <div key={p} className="space-y-1.5">
+                <label className={labelClasses}>
+                  {p} key{' '}
+                  {ai.hints[p] ? (
+                    <span className="ml-1 normal-case text-[#7de0a0]">set ({ai.hints[p]})</span>
+                  ) : ai.envOnly[p] ? (
+                    <span className="ml-1 normal-case text-[#d9a441]">from env (move into console)</span>
+                  ) : (
+                    <span className="ml-1 normal-case text-t5">not set</span>
+                  )}
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    name={p}
+                    type="password"
+                    autoComplete="off"
+                    placeholder="Enter new key…"
+                    className={fieldClasses}
+                  />
+                  <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-t4">
+                    <input type="checkbox" name={`${p}_clear`} className={checkboxClasses} />
+                    clear
+                  </label>
+                </div>
+              </div>
+            ))}
+            <p className="text-[12px] text-t4">
+              Stored encrypted (AES-256-GCM). Leave blank to keep the current key; tick
+              &ldquo;clear&rdquo; to remove it. A key set here overrides the matching{' '}
+              <span className="font-mono">PLATFORM_*_KEY</span> env var.
+            </p>
+            <div className="flex justify-end">
+              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save keys</button>
+            </div>
+          </form>
+
+          {/* Active model */}
+          <div className={`${card} space-y-4 p-5`}>
+            <h3 className="text-[13px] font-bold text-t1">Active model</h3>
+            <PlatformAISelect
+              providersWithKey={ai.providersWithKey}
+              activeProvider={ai.activeProvider}
+              activeModel={ai.activeModel}
+            />
+            <p className="text-[12px] text-t4">
+              Current: <span className="font-mono text-t2">{ai.activeProvider}</span> ·{' '}
+              <span className="font-mono text-t2">{ai.activeModel}</span>. Companies on
+              platform mode use this model.
+            </p>
+          </div>
+        </section>
+
         {/* Companies */}
         <section className="space-y-4">
           <h2 className={`flex items-center gap-2 ${sectionTitle}`}>

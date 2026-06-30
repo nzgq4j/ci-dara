@@ -167,6 +167,21 @@ model PlatformAdmin {
   @@map("dara_platform_admins")
 }
 
+// Singleton platform AI configuration: the platform-supplied API keys (used by
+// companies in 'platform' mode) and the centrally-selected provider/model. Managed
+// only from the Application Admin console; accessed via prismaAdmin (dara_admin).
+model PlatformSetting {
+  id              Int        @id @default(1)
+  activeProvider  AIProvider @default(anthropic) @map("active_provider")
+  activeModel     String     @default("claude-sonnet-4-6") @map("active_model") @db.VarChar(100)
+  anthropicKeyEnc String?    @map("anthropic_key_enc")
+  openaiKeyEnc    String?    @map("openai_key_enc")
+  googleKeyEnc    String?    @map("google_key_enc")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  @@map("dara_platform_settings")
+}
+
 model Team {
   id          BigInt   @id @default(autoincrement())
   companyId   BigInt   @map("company_id")

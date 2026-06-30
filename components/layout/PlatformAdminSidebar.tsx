@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ShieldCheck, Building2, Users, LogOut, type LucideIcon } from 'lucide-react';
+import { ShieldCheck, Building2, Users, Cpu, LogOut, type LucideIcon } from 'lucide-react';
 import { SignOut } from '@/utils/auth-helpers/server';
 import { handleRequest } from '@/utils/auth-helpers/client';
 import ThemeToggle from '@/components/layout/ThemeToggle';
@@ -16,6 +16,7 @@ interface NavItem {
 
 // Application Admin console nav. Company-less by design — no Workspace / CUI links.
 const ITEMS: NavItem[] = [
+  { href: '/app/admin', label: 'Platform AI', icon: Cpu, hash: '#ai' },
   { href: '/app/admin', label: 'Accounts', icon: Building2, hash: '' },
   { href: '/app/admin', label: 'Users', icon: Users, hash: '#users' },
   { href: '/app/admin', label: 'Administrators', icon: ShieldCheck, hash: '#admins' }

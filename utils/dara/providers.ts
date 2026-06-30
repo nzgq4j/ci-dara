@@ -23,33 +23,52 @@ export interface ResolvedAI {
   apiKey: string;
 }
 
-/**
- * Resolve the provider, model, and API key for a company.
- * In 'platform' mode the key comes from a PLATFORM_*_KEY env var; in 'byok'
- * mode it comes from the company's stored key.
- */
-export function resolveCompanyAI(company: CompanyAI): ResolvedAI {
-  const provider = company.activeProvider;
-  let apiKey = '';
+// Platform-supplied keys + central provider/model (from dara_platform_settings,
+// resolved by utils/dara/platform-ai.getPlatformAI). Passed in to keep this module
+// free of DB access.
+export interface PlatformAIConfig {
+  activeProvider: string;
+  activeModel: string;
+  keys: { anthropic: string; openai: string; google: string };
+}
 
+/**
+ * Resolve the provider, model, and API key for an evaluation.
+ *
+ * In 'platform' mode the provider, model, and key all come from the central platform
+ * configuration (set in the Application Admin console). In 'byok' mode they come from
+ * the company's own provider/model selection and stored key. If `platform` is omitted
+ * in platform mode, falls back to the company's provider/model + PLATFORM_*_KEY env.
+ */
+export function resolveCompanyAI(
+  company: CompanyAI,
+  platform?: PlatformAIConfig
+): ResolvedAI {
   if (company.aiKeyMode === 'platform') {
-    apiKey =
+    if (platform) {
+      const provider = platform.activeProvider;
+      const apiKey = (platform.keys as Record<string, string>)[provider] ?? '';
+      return { provider, model: platform.activeModel, apiKey };
+    }
+    // Legacy fallback (no platform settings provided).
+    const provider = company.activeProvider;
+    const apiKey =
       provider === 'anthropic'
         ? process.env.PLATFORM_ANTHROPIC_KEY ?? ''
         : provider === 'openai'
           ? process.env.PLATFORM_OPENAI_KEY ?? ''
           : process.env.PLATFORM_GOOGLE_KEY ?? '';
-  } else {
-    const enc =
-      provider === 'anthropic'
-        ? company.anthropicKeyEnc
-        : provider === 'openai'
-          ? company.openaiKeyEnc
-          : company.googleKeyEnc;
-    apiKey = decryptSecret(enc);
+    return { provider, model: company.activeModel, apiKey };
   }
 
-  return { provider, model: company.activeModel, apiKey };
+  const provider = company.activeProvider;
+  const enc =
+    provider === 'anthropic'
+      ? company.anthropicKeyEnc
+      : provider === 'openai'
+        ? company.openaiKeyEnc
+        : company.googleKeyEnc;
+  return { provider, model: company.activeModel, apiKey: decryptSecret(enc) };
 }
 
 /** Dispatch a completion to the configured provider. */

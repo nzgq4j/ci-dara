@@ -2,6 +2,7 @@ import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { buildSystemPrompt, buildUserPrompt, parseResult } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
+import { getPlatformAI } from '@/utils/dara/platform-ai';
 
 export interface EvalSummary {
   ok: boolean;
@@ -85,7 +86,9 @@ export async function runEvaluation(
   if (!persona) return fail(evaluationId, companyId, 'Persona not found.');
   if (!company) return fail(evaluationId, companyId, 'Company not found.');
 
-  const { provider, model, apiKey } = resolveCompanyAI(company);
+  // Platform mode draws keys + provider/model from the central platform config.
+  const platform = company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
+  const { provider, model, apiKey } = resolveCompanyAI(company, platform);
   if (!apiKey) {
     return fail(evaluationId, companyId, `No API key configured for provider "${provider}".`);
   }

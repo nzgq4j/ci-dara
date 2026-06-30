@@ -6,6 +6,7 @@ import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { encryptSecret, secretHint } from '@/utils/dara/crypto';
+import { getPlatformModelInfo } from '@/utils/dara/platform-ai';
 import { recordAudit } from '@/utils/dara/audit';
 import PageHeader from '@/components/dara/PageHeader';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
@@ -108,6 +109,8 @@ export default async function SettingsPage() {
     openai: secretHint(company.openaiKeyEnc),
     google: secretHint(company.googleKeyEnc)
   };
+  const platformAI = await getPlatformModelInfo();
+  const onPlatform = company.aiKeyMode === 'platform';
 
   return (
     <div className="mx-auto max-w-3xl fade">
@@ -126,6 +129,16 @@ export default async function SettingsPage() {
           <div className="mb-4">
             <CuiBoundaryNotice provider={company.activeProvider} mode={company.aiKeyMode} />
           </div>
+          {onPlatform && (
+            <div className="mb-4 rounded-lg border border-[#3b6ef0]/30 bg-[#3b6ef0]/10 px-4 py-2.5 text-[12px] text-t3">
+              On <strong className="text-t2">platform</strong> mode, evaluations use the
+              platform-managed model:{' '}
+              <span className="font-mono text-t2">{platformAI.activeProvider}</span> ·{' '}
+              <span className="font-mono text-t2">{platformAI.activeModel}</span>. The
+              provider and model below apply only when you switch to{' '}
+              <strong className="text-t2">byok</strong> (your own key).
+            </div>
+          )}
           <form action={updateAIConfig} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
