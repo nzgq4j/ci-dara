@@ -11,7 +11,9 @@ import { buildAmendmentDiffPrompt, parseAmendmentDiff } from '@/utils/dara/promp
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
-const DIFF_MAX_TOKENS = 8000;
+// Generous headroom so a large diff's JSON isn't truncated; parseAmendmentDiff also
+// salvages complete changes from a truncated array as a backstop.
+const DIFF_MAX_TOKENS = 16000;
 
 export interface ReconcileSummary {
   ok: boolean;

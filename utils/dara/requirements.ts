@@ -8,8 +8,10 @@ import { buildShredPrompt, parseShred } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
-// The shred can return a long list of requirements; give the JSON generous headroom.
-const SHRED_MAX_TOKENS = 8000;
+// The shred of a full RFP can return a long requirements list; give the JSON generous
+// headroom (8000 truncated mid-array on real solicitations → unparseable). parseShred
+// also salvages complete items from a truncated array as a backstop.
+const SHRED_MAX_TOKENS = 16000;
 
 export interface ShredSummary {
   ok: boolean;
@@ -59,12 +61,14 @@ export async function shredRequirements(
   if (!loaded?.solicitation) return { ok: false, count: 0, error: 'Solicitation not found.' };
   if (!loaded.company) return { ok: false, count: 0, error: 'Company not found.' };
 
-  const solText = concatDocs(loaded.solicitation.solDocs);
+  // Shred only the RFP itself — not our proposal draft or amendment files.
+  const rfpDocs = loaded.solicitation.solDocs.filter((d) => d.docType === 'rfp');
+  const solText = concatDocs(rfpDocs);
   if (solText.trim() === '') {
     return {
       ok: false,
       count: 0,
-      error: 'No extracted solicitation text. Upload solicitation documents and wait for extraction.'
+      error: 'No extracted RFP text. Upload the solicitation (RFP) documents on the Documents tab and wait for extraction.'
     };
   }
 

@@ -315,42 +315,84 @@ export function buildShredPrompt(solText: string): { system: string; user: strin
   return { system, user };
 }
 
+function stripFences(text: string): string {
+  return text.replace(/^```(?:json)?\s*/gm, '').replace(/```\s*$/gm, '').trim();
+}
+
+// Tolerant extractor: pull each balanced top-level object out of a named JSON array,
+// parsing items individually. A truncated final object (the model hit its output cap)
+// is simply skipped rather than discarding the whole response — so a partial shred/diff
+// still yields every complete item.
+function extractArrayObjects(text: string, key: string): any[] {
+  const keyIdx = text.indexOf(`"${key}"`);
+  const start = keyIdx >= 0 ? text.indexOf('[', keyIdx) : text.indexOf('[');
+  if (start < 0) return [];
+  const objs: any[] = [];
+  let depth = 0;
+  let objStart = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = start + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && objStart >= 0) {
+        try {
+          objs.push(JSON.parse(text.slice(objStart, i + 1)));
+        } catch {
+          /* skip a malformed item */
+        }
+        objStart = -1;
+      }
+    } else if (ch === ']' && depth === 0) {
+      break;
+    }
+  }
+  return objs;
+}
+
+function mapShredItem(r: any): ShreddedRequirement {
+  const rawSource = String(r?.source ?? 'other').trim();
+  const source = (REQUIREMENT_SOURCES as readonly string[]).includes(rawSource)
+    ? (rawSource as RequirementSourceValue)
+    : 'other';
+  const name = String(r?.name ?? '').trim().slice(0, 300);
+  const description = String(r?.description ?? '').trim();
+  return {
+    name: name || description.slice(0, 120) || 'Requirement',
+    description,
+    source,
+    // Only evaluation factors are scored; honor an explicit true, else infer.
+    isScored: r?.is_scored === true && source === 'evaluation_factor',
+    farReference: String(r?.far_reference ?? '').trim().slice(0, 100),
+    weight: Math.max(0, Math.min(100, Math.round(Number(r?.weight ?? 0) || 0)))
+  };
+}
+
 /** Parse a shred response into a list of requirements; [] if unparseable. */
 export function parseShred(text: string): ShreddedRequirement[] {
-  let cleaned = text
-    .replace(/^```(?:json)?\s*/gm, '')
-    .replace(/```\s*$/gm, '')
-    .trim();
-  const match = cleaned.match(/\{[\s\S]+\}/);
-  if (!match) return [];
-
-  let data: any;
+  const cleaned = stripFences(text);
+  let list: any[] = [];
   try {
-    data = JSON.parse(match[0]);
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    const data = JSON.parse(m ? m[0] : cleaned);
+    if (Array.isArray(data?.requirements)) list = data.requirements;
   } catch {
-    return [];
+    /* fall through to salvage */
   }
-  const list = Array.isArray(data?.requirements) ? data.requirements : [];
-
-  return list
-    .map((r: any): ShreddedRequirement => {
-      const rawSource = String(r?.source ?? 'other').trim();
-      const source = (REQUIREMENT_SOURCES as readonly string[]).includes(rawSource)
-        ? (rawSource as RequirementSourceValue)
-        : 'other';
-      const name = String(r?.name ?? '').trim().slice(0, 300);
-      const description = String(r?.description ?? '').trim();
-      return {
-        name: name || description.slice(0, 120) || 'Requirement',
-        description,
-        source,
-        // Only evaluation factors are scored; honor an explicit true, else infer.
-        isScored: r?.is_scored === true && source === 'evaluation_factor',
-        farReference: String(r?.far_reference ?? '').trim().slice(0, 100),
-        weight: Math.max(0, Math.min(100, Math.round(Number(r?.weight ?? 0) || 0)))
-      };
-    })
-    .filter((r: ShreddedRequirement) => r.description || r.name);
+  // Full parse failed or yielded nothing (often a truncated array) — salvage items.
+  if (list.length === 0) list = extractArrayObjects(cleaned, 'requirements');
+  return list.map(mapShredItem).filter((r) => r.description || r.name);
 }
 
 // ===================== Amendment reconciliation (compliance matrix diff) ==========
@@ -438,54 +480,55 @@ export function buildAmendmentDiffPrompt(
   return { system, user };
 }
 
+function mapChange(c: any): ParsedChange | null {
+  const action = String(c?.action ?? '').trim();
+  if (action !== 'add' && action !== 'modify' && action !== 'remove') return null;
+  const rawId = c?.requirement_id;
+  const requirementId = rawId != null && /^\d+$/.test(String(rawId)) ? String(rawId) : null;
+  if ((action === 'modify' || action === 'remove') && !requirementId) return null;
+
+  let proposed: ProposedRequirement | null = null;
+  if (action === 'add' || action === 'modify') {
+    const rawSource = String(c?.source ?? 'other').trim();
+    const source = (REQUIREMENT_SOURCES as readonly string[]).includes(rawSource)
+      ? (rawSource as RequirementSourceValue)
+      : 'other';
+    const description = String(c?.description ?? '').trim();
+    const name = String(c?.name ?? '').trim().slice(0, 300) || description.slice(0, 120) || 'Requirement';
+    proposed = {
+      name,
+      description,
+      source,
+      isScored: c?.is_scored === true && source === 'evaluation_factor',
+      farReference: String(c?.far_reference ?? '').trim().slice(0, 100),
+      weight: Math.max(0, Math.min(100, Math.round(Number(c?.weight ?? 0) || 0)))
+    };
+  }
+  return { action, requirementId, proposed, rationale: String(c?.rationale ?? '').trim() };
+}
+
 /** Parse an amendment-diff response. Returns { summary:'', changes:[] } if unparseable. */
 export function parseAmendmentDiff(text: string): ParsedAmendmentDiff {
-  let cleaned = text
-    .replace(/^```(?:json)?\s*/gm, '')
-    .replace(/```\s*$/gm, '')
-    .trim();
-  const match = cleaned.match(/\{[\s\S]+\}/);
-  if (!match) return { summary: '', changes: [] };
-
-  let data: any;
+  const cleaned = stripFences(text);
+  let summary = '';
+  let list: any[] = [];
   try {
-    data = JSON.parse(match[0]);
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    const data = JSON.parse(m ? m[0] : cleaned);
+    summary = String(data?.summary ?? '').trim();
+    if (Array.isArray(data?.changes)) list = data.changes;
   } catch {
-    return { summary: '', changes: [] };
+    /* fall through to salvage */
   }
-
-  const list = Array.isArray(data?.changes) ? data.changes : [];
-  const changes: ParsedChange[] = list
-    .map((c: any): ParsedChange | null => {
-      const action = String(c?.action ?? '').trim();
-      if (action !== 'add' && action !== 'modify' && action !== 'remove') return null;
-      const rawId = c?.requirement_id;
-      const requirementId =
-        rawId != null && /^\d+$/.test(String(rawId)) ? String(rawId) : null;
-      if ((action === 'modify' || action === 'remove') && !requirementId) return null;
-
-      let proposed: ProposedRequirement | null = null;
-      if (action === 'add' || action === 'modify') {
-        const rawSource = String(c?.source ?? 'other').trim();
-        const source = (REQUIREMENT_SOURCES as readonly string[]).includes(rawSource)
-          ? (rawSource as RequirementSourceValue)
-          : 'other';
-        const description = String(c?.description ?? '').trim();
-        const name = String(c?.name ?? '').trim().slice(0, 300) || description.slice(0, 120) || 'Requirement';
-        proposed = {
-          name,
-          description,
-          source,
-          isScored: c?.is_scored === true && source === 'evaluation_factor',
-          farReference: String(c?.far_reference ?? '').trim().slice(0, 100),
-          weight: Math.max(0, Math.min(100, Math.round(Number(c?.weight ?? 0) || 0)))
-        };
-      }
-      return { action, requirementId, proposed, rationale: String(c?.rationale ?? '').trim() };
-    })
+  if (list.length === 0) list = extractArrayObjects(cleaned, 'changes');
+  if (!summary) {
+    const sm = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (sm) summary = sm[1];
+  }
+  const changes = list
+    .map(mapChange)
     .filter((c: ParsedChange | null): c is ParsedChange => c !== null);
-
-  return { summary: String(data?.summary ?? '').trim(), changes };
+  return { summary, changes };
 }
 
 /**

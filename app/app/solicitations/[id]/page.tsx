@@ -9,8 +9,7 @@ import {
   Upload,
   FileText,
   Inbox,
-  Sparkles,
-  Loader2
+  Sparkles
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
@@ -25,7 +24,7 @@ import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendment
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import ResultCard from '@/components/dara/ResultCard';
-import SubmitButton from '@/components/dara/SubmitButton';
+import AiActionButton from '@/components/dara/AiActionButton';
 import RunPanel, { type RunState } from '@/components/dara/RunPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
 import {
@@ -90,6 +89,14 @@ function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Deterministic UTC date (YYYY-MM-DD). Locale/timezone-dependent formatters like
+// toLocaleDateString() render differently on the server (UTC) vs the client, which
+// for a UTC-midnight date shifts the day in western timezones — a hydration mismatch
+// that crashes the page. ISO-from-UTC is identical on both sides.
+function fmtDate(d: Date): string {
+  return new Date(d).toISOString().slice(0, 10);
 }
 
 async function authedUser() {
@@ -218,7 +225,7 @@ const VALID_SOURCES = new Set(REQUIREMENT_SOURCES.map((s) => s.value));
 const VALID_STATUSES = new Set(COMPLIANCE_STATUSES.map((s) => s.value));
 
 // AI-shred the solicitation documents into requirement rows (appended).
-async function generateMatrixAction(formData: FormData) {
+async function generateMatrixAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
@@ -240,6 +247,7 @@ async function generateMatrixAction(formData: FormData) {
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: summary.ok, count: summary.count, error: summary.error };
 }
 
 async function addRequirement(formData: FormData) {
@@ -596,7 +604,7 @@ async function deleteAmendment(formData: FormData) {
 }
 
 // AI-diff the amendment against the current compliance matrix → proposed changes.
-async function reconcileAmendmentAction(formData: FormData) {
+async function reconcileAmendmentAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('amendmentId')));
@@ -619,6 +627,7 @@ async function reconcileAmendmentAction(formData: FormData) {
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: summary.ok, count: summary.changes, error: summary.error };
 }
 
 async function applyChangeAction(formData: FormData) {
@@ -1064,16 +1073,18 @@ export default async function SolicitationDetailPage({
               each is answered in your proposal.
             </p>
           </div>
-          <form action={generateMatrixAction} className="flex-shrink-0">
-            <input type="hidden" name="solId" value={sid} />
-            <SubmitButton
+          <div className="flex-shrink-0">
+            <AiActionButton
+              action={generateMatrixAction}
+              fields={{ solId: sid }}
+              idle={<Sparkles className="h-4 w-4" />}
+              label={requirements.length ? 'Generate more' : 'Generate from solicitation'}
+              pendingLabel="Generating…"
+              noun="requirement"
+              verb="added"
               className={btnPrimary}
-              pending={(<><Loader2 className="h-4 w-4 animate-spin" />Generating…</>)}
-            >
-              <Sparkles className="h-4 w-4" />
-              {requirements.length ? 'Generate more' : 'Generate from solicitation'}
-            </SubmitButton>
-          </form>
+            />
+          </div>
         </div>
         {solicitation.solDocs.length === 0 && (
           <p className="mt-3 rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
@@ -1349,7 +1360,7 @@ export default async function SolicitationDetailPage({
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
               <p className="text-[12px] text-t4">
                 {rv.snapshotAt
-                  ? `Draft snapshot: ${rv.documents.length} document(s), captured ${new Date(rv.snapshotAt).toLocaleDateString()}`
+                  ? `Draft snapshot: ${rv.documents.length} document(s), captured ${fmtDate(rv.snapshotAt)}`
                   : 'No draft captured yet.'}
               </p>
               <form action={captureSnapshotAction}>
@@ -1586,7 +1597,7 @@ export default async function SolicitationDetailPage({
                 {a.title && <span className="text-t4">· {a.title}</span>}
                 {a.effectiveDate && (
                   <span className="font-mono text-[10px] uppercase tracking-wide text-t5">
-                    eff. {new Date(a.effectiveDate).toLocaleDateString()}
+                    eff. {fmtDate(a.effectiveDate)}
                   </span>
                 )}
                 <StatusBadge status={a.reconciliationStatus} />
@@ -1628,18 +1639,17 @@ export default async function SolicitationDetailPage({
 
             {/* Reconcile */}
             <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
-              <form action={reconcileAmendmentAction}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="amendmentId" value={a.id.toString()} />
-                <SubmitButton
-                  className={btnPrimary}
-                  disabled={a.documents.length === 0}
-                  pending={(<><Loader2 className="h-4 w-4 animate-spin" />Reconciling…</>)}
-                >
-                  <Sparkles className="h-4 w-4" />
-                  {a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
-                </SubmitButton>
-              </form>
+              <AiActionButton
+                action={reconcileAmendmentAction}
+                fields={{ solId: sid, amendmentId: a.id.toString() }}
+                idle={<Sparkles className="h-4 w-4" />}
+                label={a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
+                pendingLabel="Reconciling…"
+                noun="change"
+                verb="proposed"
+                className={btnPrimary}
+                disabled={a.documents.length === 0}
+              />
             </div>
 
             {a.aiSummary && (
