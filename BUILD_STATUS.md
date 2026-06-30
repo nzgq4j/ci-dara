@@ -30,6 +30,7 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 | **Auth provisioning** | Call `provisionNewUser` on email+password sign-in too | Provisioning previously only ran in `/auth/callback` (OAuth/magic-link), so password users had "no account information". |
 | **Admin model** | **Application Admin** = company-less platform operator (`dara_platform_admins`), DB-backed and bootstrapped from `PLATFORM_ADMIN_EMAILS`; company admin via `UserRole = company_admin` | Formalized 2026-06-30. Separation of duties (CMMC AC-5/AC-6): an app admin manages accounts/users/platform settings but has **no tenant context → no CUI**, by construction. Env-listed emails are auto-provisioned and can't be removed in-app (bootstrap root). **Behavior change:** an email in `PLATFORM_ADMIN_EMAILS` no longer gets a company workspace — use a separate account for company/CUI access. |
 | **Platform AI config** | Platform LLM keys (encrypted) + central provider/model live in a singleton `dara_platform_settings`, edited **only** in the Application Admin console; platform-mode evaluations resolve from it (a console key overrides the `PLATFORM_*_KEY` env fallback) | 2026-06-30. One place to manage platform keys + model; `resolveCompanyAI(company, platform)` uses the central provider/model/key in platform mode. **Non-BYOK (platform) accounts have NO per-account key/model choice** — the company Settings AI form hides the provider/model/key inputs on platform mode and shows the admin-set model read-only; those inputs appear only in BYOK mode (`app/app/settings/CompanyAIConfig.tsx`). Env keys remain a transition fallback until moved into the console. |
+| **Evaluation output + sections** | Each result returns a structured **review summary** (how the review was made / what was reviewed / measured against, with citations to specific tasks/requirements), a formatted **Assessment** (rationale), then **strengths / weaknesses / compliance / suggested-changes-with-rationale**. A "section" = one criterion's result: regeneratable in place (snapshot → `dara_result_versions`, `regenCount` bumped), archivable (`archivedAt`, never deleted). Output budget raised to 8000 tokens. | 2026-06-30. Per-criterion granularity gives finest control. Runs stay **synchronous** with a live progress indicator (RunPanel) + a running-count banner that auto-refreshes; async JobQueue+cron deferred. The review-summary addition first truncated JSON at the old 4096 cap, then over-suppressed `suggested_changes` — both fixed (8000 tokens; prompt requires a suggested change per weakness). |
 | **Onboarding** | New `Company.onboardedAt` + `DaraUser.onboardedAt` gate. Org creator (un-onboarded company + `company_admin`) → 6-step wizard `/onboarding` (prefilled from Google OAuth); other un-onboarded users → one-screen `/welcome`. Existing rows backfilled as onboarded | 2026-06-30. New sign-ups set up their workspace before the dashboard; invited members get a light welcome once. Gate lives in `app/app/layout.tsx`; wizard/welcome live outside the `/app` shell. |
 | **API keys at rest** | AES-256-GCM (`utils/dara/crypto.ts`) keyed off `APP_KEY` | BYOK keys must be encrypted; the WP `Crypto` class was not portable. |
 | **Stripe checkout** | Custom plan cards → Stripe Checkout Session (promotion codes enabled) | User chose custom cards over the hosted pricing table; coupon support needed for testing. |
@@ -83,9 +84,20 @@ Security page and the first wave of remediations shipped (see §3 / §5).
     **strengths**, **weaknesses**, **compliance**, and **suggested changes**
     (each with a rationale) alongside the score/determination. Schema +
     instructions in `prompt.ts`; stored in `Result.ai_{strengths,weaknesses,
-    compliance,suggested_changes}`; rendered by `components/dara/ResultFindings.tsx`
-    in the Matrix tab cards. Populates on the **next** run (older results show only
-    the rationale until re-run).
+    compliance,suggested_changes}`; rendered by `components/dara/ResultFindings.tsx`.
+  - **Review summary + Assessment (2026-06-30):** each result opens with a
+    **Review summary** (`ReviewSummary.tsx` ← `Result.ai_review`): how the review
+    was made / what was reviewed / measured against — the prompt requires citing
+    specific tasks/requirements (PWS/SOW, Section L/M, FAR). The rationale renders as
+    a formatted **Assessment** card with numbered findings (`RationaleBlock.tsx`).
+  - **Progress + completion (2026-06-30):** `RunPanel.tsx` shows a live
+    "Evaluating… (N personas)" spinner + a completion notice (runs are synchronous);
+    `RunningBanner.tsx` shows the in-progress count and auto-refreshes while any run.
+  - **Regenerate / archive by section (2026-06-30):** per-criterion **Regenerate**
+    (snapshots the prior values into `dara_result_versions`, bumps `regenCount`, shows
+    a History(N) log) and **Archive/Restore** (`archivedAt`, retained — no delete).
+    `ResultCard.tsx`; logic in `utils/dara/evaluator.ts` (`regenerateResult`,
+    `setResultArchived`). All these fields populate on the **next** run/regenerate.
 - **Settings** (`/app/settings`, company admin): AI config + encrypted BYOK keys.
   (Member/team management moved to the Team page; Settings links to it.)
 - **Team** (`/app/team`, company admin): departments/sub-teams with per-team roles.
@@ -209,7 +221,10 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 3. **Live AI evaluation** verified to connect (manual `SELECT 1` + sync), but a
    full multi-criteria AI run hasn't been exercised end-to-end in the browser.
 4. **Synchronous evaluation** can approach the 300s function limit on large
-   solicitations; `JobQueue` table exists but is unused (future: cron worker).
+   solicitations; `JobQueue` table exists but is unused (future: cron worker). The
+   per-section **Regenerate** is the interim escape hatch (re-runs one criterion).
+   Output budget is `EVAL_MAX_TOKENS=8000`; the richer review+findings output can be
+   verbose, so watch for truncation on unusually long criteria (raise if needed).
 5. **Per-criterion persona assignment**, **Compliance Matrix**, **Reports/export**
    from the WP plugin are not ported yet.
 6. No OCR for scanned/image-only PDFs.
@@ -348,7 +363,9 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 - Application Admin: `utils/dara/platform.ts` (resolve/guard/manage admins + user ban/delete), `app/app/admin/{page.tsx,ai-actions.ts,PlatformAISelect.tsx}`, `components/layout/{PlatformAdminSidebar,AccountDisabled}.tsx`; tables `dara_platform_admins` (RLS `prisma/security/2026-06-30_platform_admins_rls.sql`), `dara_platform_settings` (RLS `…/2026-06-30_platform_settings_rls.sql`)
 - Platform AI: `utils/dara/{platform-ai.ts (DB settings),ai-catalog.ts (client-safe MODEL_CATALOG)}`; `resolveCompanyAI(company, platform)` in `providers.ts`; evaluator fetches `getPlatformAI()`
 - Onboarding: `app/onboarding/{page.tsx,OnboardingWizard.tsx,actions.ts}`, `app/welcome/{page.tsx,actions.ts}`; gate in `app/app/layout.tsx`; flags `Company.onboardedAt` + `DaraUser.onboardedAt`
-- Evaluation findings: `utils/dara/prompt.ts` (schema + `parseResult`), `utils/dara/evaluator.ts` (persists `ai_strengths/weaknesses/compliance/suggested_changes`), `components/dara/ResultFindings.tsx` (Matrix-tab render)
+- Evaluation engine: `utils/dara/prompt.ts` (review + findings schema/instructions + `parseResult`), `utils/dara/evaluator.ts` (`runEvaluation`, `regenerateResult`, `setResultArchived`, `aiFields`, `EVAL_MAX_TOKENS=8000`)
+- Evaluation UI: `components/dara/{ResultCard,ReviewSummary,RationaleBlock,ResultFindings,RunPanel,RunningBanner,SubmitButton}.tsx`; per-section + run server actions in `app/app/solicitations/[id]/page.tsx`
+- Result versioning: `Result.{aiReview,regenCount,archivedAt}` + `ResultVersion` (`dara_result_versions`); RLS `prisma/security/2026-06-30_result_versions_rls.sql`
 - Company settings: `app/app/company/page.tsx` (profile/address/CMMC); 19 cols on `dara_companies`
 - App shell: `app/app/layout.tsx` (admin-vs-company branch), `components/layout/{Sidebar (Organization group),PlatformAdminSidebar,ChromeGate}.tsx`
 - Pages: `app/app/{dashboard,solicitations,personas,settings,billing,admin,team,company}/…`
@@ -456,6 +473,20 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   cause was his `dara_platform_admins` row was `active=true` (the portal Deactivate hadn't
   persisted — it's blocked while env-pinned), and an active row = admin regardless of the env
   list. Deleted the row; he's back to a normal `company_admin` (Proposal Foundry). See gap #15.
+- **Evaluation: 4-part feature** (commit `f361d70`, deployed; per-criterion + live sync
+  indicator, per the chosen options): (1) progress indicator (`RunPanel`) + completion notice
+  + running-count banner (`RunningBanner`, auto-refresh); (2) regenerate-by-section (snapshot →
+  `dara_result_versions`, `regenCount`, History log); (3) archive-not-delete (`archivedAt`);
+  (4) reformatted "first part" — a **Review summary** (how/what/measured-against, citing
+  specific tasks/requirements) opening each result, findings unchanged. New migration
+  `20260630050000_result_versioning` + RLS (DARA-004), verified `dara_app` access.
+- **Eval fix 1** (commit `3441f34`): the review-summary addition truncated each criterion's
+  JSON at the old 4096 `max_tokens` (parse failed → evaluations reported failed/incomplete).
+  Raised to `EVAL_MAX_TOKENS=8000`.
+- **Eval fix 2** (commit `c81d576`): formatted the **Assessment** (rationale) into a titled
+  card with numbered findings (`RationaleBlock`); strengthened the prompt so `suggested_changes`
+  (change + rationale) is produced whenever a weakness/gap exists (the verbose review prompt had
+  let the model return an empty list). Strengths/weaknesses/compliance unchanged.
 
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
 1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —

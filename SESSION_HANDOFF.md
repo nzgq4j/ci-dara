@@ -10,12 +10,14 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. Last commit `1bfb044` (non-BYOK AI lockdown + david fix)
-  is **deployed to prod and pushed**. This session, in order: `4076ec7` (onboarding +
-  Organization group + Company settings), `5ecc949` (Create Account), `8fd5ac3`
-  (invite email-verification gate), `d322114` (Application Admin), `139368f`
-  (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings), `e5a5bc7` (docs),
-  `1bfb044` (non-BYOK AI lockdown + david demotion).
+- **Branch:** `main`, clean. Last commit `c81d576` (eval assessment formatting +
+  suggested-changes fix) is **deployed to prod and pushed**. This session, in order:
+  `4076ec7` (onboarding + Organization group + Company settings), `5ecc949` (Create
+  Account), `8fd5ac3` (invite email-verification gate), `d322114` (Application Admin),
+  `139368f` (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings),
+  `e5a5bc7` (docs), `1bfb044` (non-BYOK AI lockdown + david demotion), `6a28608` (docs),
+  `f361d70` (eval progress/regenerate/archive/review-summary), `3441f34` (eval token
+  fix), `c81d576` (eval assessment formatting + suggested-changes).
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -47,6 +49,15 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   catalog: `utils/dara/ai-catalog.ts`. **Non-BYOK company accounts have no key/model
   choice** — Settings hides the provider/model/key inputs on platform mode (they appear
   only in BYOK mode; `app/app/settings/CompanyAIConfig.tsx`).
+- **Evaluation results are richer now and populate on the next run/regenerate.** Each
+  result: **Review summary** (how/what/measured-against, with citations) → **Assessment**
+  (formatted rationale) → strengths / weaknesses / compliance / **suggested changes**
+  (change + rationale). A "section" = one criterion: **Regenerate** (logs prior versions
+  in `dara_result_versions`, shows History(N) + a regen×N badge) and **Archive/Restore**
+  (retained, never deleted). Runs are synchronous with a live `RunPanel` spinner +
+  `RunningBanner` count. Output budget `EVAL_MAX_TOKENS=8000` (in `utils/dara/evaluator.ts`)
+  — if very long criteria ever truncate, raise it or move `suggested_changes` earlier in
+  the schema. Older results show only the rationale/findings until re-run.
 - **Demoting a platform admin takes two steps.** Removing the email from
   `PLATFORM_ADMIN_EMAILS` is NOT enough: `resolvePlatformAdmin` treats an active
   `dara_platform_admins` row as admin regardless of the env list, and the console
