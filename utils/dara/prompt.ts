@@ -239,8 +239,8 @@ const FINDINGS_INSTRUCTIONS =
   'Also populate the structured findings: ' +
   '"strengths" and "weaknesses" as arrays of concise, evidence-based bullet points; ' +
   '"compliance" as a short assessment of compliance with the criterion\'s requirements; ' +
-  'and "suggested_changes" as an array of concrete, actionable changes the offeror could make, each with a "rationale" explaining why. ' +
-  'Use an empty array when there are no items (e.g. no suggested changes).';
+  'and "suggested_changes" as an array of concrete, actionable changes the offeror could make to better satisfy this criterion — each item MUST include a "change" and a "rationale" explaining why it helps (which requirement or weakness it addresses). ' +
+  'Whenever you identify any weakness, gap, or non-compliance, you MUST provide at least one corresponding suggested_change; only return an empty suggested_changes array if the proposal fully satisfies the criterion with no possible improvement.';
 
 function schemaFor(type: string): string {
   if (type === 'scored_factor') {

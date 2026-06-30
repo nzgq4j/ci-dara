@@ -1,5 +1,6 @@
 import { RefreshCw, Archive, ArchiveRestore, History, Loader2 } from 'lucide-react';
 import ReviewSummary from './ReviewSummary';
+import RationaleBlock from './RationaleBlock';
 import ResultFindings from './ResultFindings';
 import SubmitButton from './SubmitButton';
 import { btnGhost } from './theme';
@@ -53,11 +54,7 @@ export default function ResultCard({
 
       <ReviewSummary review={res.aiReview} />
 
-      {res.aiRationale && (
-        <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-t3">
-          {res.aiRationale}
-        </p>
-      )}
+      <RationaleBlock rationale={res.aiRationale} />
 
       <ResultFindings
         strengths={res.aiStrengths}
