@@ -7,7 +7,7 @@
 import { Prisma } from '@prisma/client';
 import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
-import { buildAmendmentDiffPrompt, parseAmendmentDiff } from '@/utils/dara/prompt';
+import { buildAmendmentDiffPrompt, buildAmendmentGapPrompt, parseAmendmentDiff } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
@@ -92,6 +92,29 @@ export async function reconcileAmendment(
   }
 
   const diff = parseAmendmentDiff(ai.text);
+
+  // Coverage pass: catch amendment impacts the first diff missed (best-effort, one round).
+  const changeKey = (c: (typeof diff.changes)[number]) =>
+    `${c.action}|${c.requirementId ?? (c.proposed?.name ?? '').toLowerCase()}`;
+  try {
+    const already = diff.changes.map((c) => `${c.action} ${c.requirementId ?? c.proposed?.name ?? ''}`.trim());
+    const gap = buildAmendmentGapPrompt(
+      loaded.requirements.map((r) => ({ id: r.id.toString(), name: r.name, description: r.description, source: r.source })),
+      amendmentText,
+      already
+    );
+    const gapAi = await complete(provider, gap.system, gap.user, model, apiKey, DIFF_MAX_TOKENS);
+    const seen = new Set(diff.changes.map(changeKey));
+    for (const c of parseAmendmentDiff(gapAi.text).changes) {
+      const k = changeKey(c);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      diff.changes.push(c);
+    }
+  } catch {
+    /* coverage is best-effort — the first diff still applies */
+  }
+
   const validIds = new Set(loaded.requirements.map((r) => r.id.toString()));
 
   await withTenant(companyId, async (tx) => {

@@ -597,6 +597,41 @@ function mapShredItem(r: any): ShreddedRequirement {
   };
 }
 
+/**
+ * Coverage pass for the shred: given the requirements already extracted, find only the
+ * ones the first pass MISSED. Same schema/classification/exclusion rules; returns an empty
+ * list when nothing was overlooked. Used to loop the shred until it comes up dry.
+ */
+export function buildShredGapPrompt(
+  solText: string,
+  alreadyFound: string[]
+): { system: string; user: string } {
+  const token = randomBytes(9).toString('hex');
+  const doc = fenceUntrusted('SOLICITATION', truncate(solText, 50000), token);
+  const found = alreadyFound.slice(0, 500).map((n) => `- ${n}`).join('\n');
+
+  const system =
+    'You are a senior government-contracting proposal manager doing a SECOND-PASS coverage ' +
+    'review of a compliance matrix. A first pass already extracted requirements; your job is ' +
+    'to catch the discrete offeror obligations it MISSED — nothing it already found. Respond ' +
+    'only in the JSON format specified.';
+
+  const user =
+    `## Solicitation Document\n\n${doc}\n\n` +
+    `## Requirements already captured — do NOT repeat any of these\n\n${truncate(found, 5000)}\n\n` +
+    `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    'This is a COVERAGE pass. Find ONLY requirements that are genuinely MISSING from the list ' +
+    'above — distinct "shall"/instruction/factor/clause obligations the first pass overlooked. ' +
+    'Apply the same rules: classify each by "source" and "disposition" (scored / compliance / ' +
+    'administrative), and DO NOT extract non-requirements (the evaluation/scoring methodology or ' +
+    'rating-scale definitions, background/boilerplate, or Government responsibilities). If nothing ' +
+    'was missed, return {"requirements": []}. Do not restate anything already captured.\n\n' +
+    `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${SHRED_SCHEMA}\n\n` +
+    'Do not include any text outside the JSON object.';
+
+  return { system, user };
+}
+
 /** Parse a shred response into a list of requirements; [] if unparseable. */
 export function parseShred(text: string): ShreddedRequirement[] {
   const cleaned = stripFences(text);
@@ -702,6 +737,43 @@ export function buildAmendmentDiffPrompt(
     '(the reviewer can reject false positives) — do NOT stay silent to keep the list short. ' +
     'Do not, however, propose changes for requirements the amendment leaves untouched. ' +
     'Every change MUST include a "rationale" citing the specific amendment provision (section/paragraph). ' +
+    `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${DIFF_SCHEMA}\n\n` +
+    'Do not include any text outside the JSON object.';
+
+  return { system, user };
+}
+
+/**
+ * Coverage pass for amendment reconciliation: given the changes already proposed, catch the
+ * amendment impacts the first diff MISSED. Same DIFF_SCHEMA; returns an empty "changes" list
+ * when nothing was overlooked.
+ */
+export function buildAmendmentGapPrompt(
+  current: DiffRequirement[],
+  amendmentText: string,
+  alreadyProposed: string[]
+): { system: string; user: string } {
+  const token = randomBytes(9).toString('hex');
+  const amendBlock = fenceUntrusted('AMENDMENT', truncate(amendmentText, 50000), token);
+  const matrix = JSON.stringify(
+    current.map((r) => ({ id: r.id, name: r.name, source: r.source, description: (r.description ?? '').slice(0, 1500) }))
+  );
+  const proposed = alreadyProposed.slice(0, 300).map((c) => `- ${c}`).join('\n');
+
+  const system =
+    'You are a government-contracting proposal analyst doing a SECOND-PASS coverage review of ' +
+    'an amendment reconciliation. A first diff already proposed changes; find the amendment ' +
+    'impacts it MISSED — additional modifies/adds/removes not already proposed. Respond only in ' +
+    'the JSON format specified.';
+
+  const user =
+    `## Current compliance matrix (JSON)\n\n${matrix}\n\n## Amendment Document\n\n${amendBlock}\n\n` +
+    `## Changes already proposed — do NOT repeat these\n\n${truncate(proposed, 4000)}\n\n` +
+    `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    'This is a COVERAGE pass. Surface ONLY amendment impacts MISSING from the list above: an ' +
+    'existing requirement the amendment materially changes (modify), a new requirement it adds ' +
+    '(add), or one it deletes/supersedes (remove). Every change MUST cite the amendment provision ' +
+    'in its "rationale". If nothing was missed, return {"summary":"", "changes":[]}.\n\n' +
     `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${DIFF_SCHEMA}\n\n` +
     'Do not include any text outside the JSON object.';
 

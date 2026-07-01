@@ -4,7 +4,7 @@
 
 import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
-import { buildShredPrompt, parseShred } from '@/utils/dara/prompt';
+import { buildShredPrompt, buildShredGapPrompt, parseShred } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
@@ -99,6 +99,29 @@ export async function shredRequirements(
   const shredded = parseShred(ai.text);
   if (shredded.length === 0) {
     return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
+  }
+
+  // Coverage passes: hunt for requirements the first pass missed. Bounded (≤2 rounds) and
+  // stops early when a round comes up dry. Best-effort — a failed round just ends the loop.
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const seenNames = new Set<string>(Array.from(loaded.existingNames));
+  shredded.forEach((r) => seenNames.add(norm(r.name)));
+  for (let round = 0; round < 2; round++) {
+    const gap = buildShredGapPrompt(solText, Array.from(seenNames));
+    let gapAi;
+    try {
+      gapAi = await complete(provider, gap.system, gap.user, model, apiKey, SHRED_MAX_TOKENS);
+    } catch {
+      break;
+    }
+    const more = parseShred(gapAi.text).filter((r) => {
+      const k = norm(r.name);
+      if (!k || seenNames.has(k)) return false;
+      seenNames.add(k);
+      return true;
+    });
+    if (more.length === 0) break;
+    more.forEach((r) => shredded.push(r));
   }
 
   // Dedupe: skip anything whose name already exists (so re-running does not duplicate),
