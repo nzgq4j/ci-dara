@@ -64,6 +64,16 @@ const COMPLIANCE_STATUSES: { value: string; label: string }[] = [
   { value: 'non_compliant', label: 'Non-compliant' },
   { value: 'not_applicable', label: 'N/A' }
 ];
+// How each requirement is handled — set automatically by the shred, overridable per row.
+const REQUIREMENT_DISPOSITIONS: { value: string; label: string; short: string }[] = [
+  { value: 'scored', label: 'Scored — holistic review', short: 'Scored' },
+  { value: 'compliance', label: 'Compliance — pass/fail', short: 'Compliance' },
+  { value: 'administrative', label: 'Administrative — not in proposal', short: 'Admin' }
+];
+const DISPOSITION_LABEL: Record<string, string> = Object.fromEntries(
+  REQUIREMENT_DISPOSITIONS.map((d) => [d.value, d.short])
+);
+const VALID_DISPOSITIONS = new Set(REQUIREMENT_DISPOSITIONS.map((d) => d.value));
 const SOURCE_LABEL: Record<string, string> = Object.fromEntries(
   REQUIREMENT_SOURCES.map((s) => [s.value, s.label])
 );
@@ -305,6 +315,8 @@ async function addRequirement(formData: FormData) {
   const name = String(formData.get('name') ?? '').trim();
   if (!name) return;
   const source = String(formData.get('source') ?? 'evaluation_factor');
+  const dispIn = String(formData.get('disposition') ?? 'compliance');
+  const disposition = VALID_DISPOSITIONS.has(dispIn) ? dispIn : 'compliance';
   await withTenant(daraUser.companyId, (tx) =>
     tx.requirement.create({
       data: {
@@ -313,7 +325,10 @@ async function addRequirement(formData: FormData) {
         name,
         description: String(formData.get('description') ?? '').trim() || null,
         source: (VALID_SOURCES.has(source) ? source : 'other') as any,
-        isScored: formData.get('isScored') === 'on',
+        disposition: disposition as any,
+        isScored: disposition === 'scored',
+        // Administrative rows aren't graded — default them to N/A.
+        complianceStatus: (disposition === 'administrative' ? 'not_applicable' : 'not_assessed') as any,
         farReference: String(formData.get('farReference') ?? '').trim(),
         weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
         sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
@@ -330,16 +345,19 @@ async function updateRequirement(formData: FormData) {
   const solId = BigInt(String(formData.get('solId')));
   const source = String(formData.get('source') ?? '');
   const status = String(formData.get('complianceStatus') ?? '');
+  const dispIn = String(formData.get('disposition') ?? '');
   const ok = await withTenant(daraUser.companyId, async (tx) => {
     const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
     if (!owned) return false;
+    const disposition = VALID_DISPOSITIONS.has(dispIn) ? dispIn : owned.disposition;
     await tx.requirement.update({
       where: { id },
       data: {
         name: String(formData.get('name') ?? '').trim() || owned.name,
         description: String(formData.get('description') ?? '').trim() || null,
         source: (VALID_SOURCES.has(source) ? source : owned.source) as any,
-        isScored: formData.get('isScored') === 'on',
+        disposition: disposition as any,
+        isScored: disposition === 'scored',
         complianceStatus: (VALID_STATUSES.has(status) ? status : owned.complianceStatus) as any,
         proposalRef: String(formData.get('proposalRef') ?? '').trim(),
         farReference: String(formData.get('farReference') ?? '').trim(),
@@ -1173,12 +1191,15 @@ export default async function SolicitationDetailPage({
           <div>
             <h2 className={sectionTitle}>Compliance matrix</h2>
             <p className="mt-1 max-w-xl text-[13px] text-t4">
-              <span className="font-semibold text-t2">1.</span> Shred the solicitation into
-              discrete requirements. <span className="font-semibold text-t2">2.</span> Mark
-              the Section&nbsp;M evaluation factors <span className="text-t2">Scored</span> —
-              those get a holistic color-team review. <span className="font-semibold text-t2">3.</span>{' '}
-              <span className="text-t2">Run compliance check</span> to grade the remaining
-              administrative / pass-fail items (Met / Partial / Gap) against your proposal draft.
+              <span className="font-semibold text-t2">1.</span> Shred the solicitation — each
+              requirement is auto-classified as <span className="text-t2">Scored</span> (Section&nbsp;M
+              factors → holistic color-team review), <span className="text-t2">Compliance</span>{' '}
+              (pass/fail, addressed in your proposal), or <span className="text-t2">Administrative</span>{' '}
+              (complied with but not written up — reps &amp; certs, submission logistics).
+              <span className="font-semibold text-t2"> 2.</span> Adjust any row's type if needed.
+              <span className="font-semibold text-t2"> 3.</span>{' '}
+              <span className="text-t2">Run compliance check</span> to grade the Compliance items
+              (Met / Partial / Gap) against your proposal draft.
             </p>
           </div>
           <div className="no-print flex flex-shrink-0 flex-col gap-2">
@@ -1192,13 +1213,13 @@ export default async function SolicitationDetailPage({
               verb="added"
               className={btnPrimary}
             />
-            {requirements.some((r) => !r.isScored) && (
+            {requirements.some((r) => r.disposition === 'compliance') && (
               <AiActionButton
                 action={runComplianceCheckAction}
                 fields={{ solId: sid }}
                 idle={<CheckSquare className="h-4 w-4" />}
                 label="Run compliance check"
-                pendingLabel={`Grading ${requirements.filter((r) => !r.isScored).length} pass/fail requirements against your proposal…`}
+                pendingLabel={`Grading ${requirements.filter((r) => r.disposition === 'compliance').length} pass/fail requirements against your proposal…`}
                 noun="requirement"
                 verb="checked"
                 className={btnGhost}
@@ -1238,19 +1259,19 @@ export default async function SolicitationDetailPage({
         </div>
       ) : (
         <div className={`${card} overflow-x-auto`}>
-          <div className="min-w-[780px]">
-            <div className="grid grid-cols-[118px_minmax(0,1fr)_150px_54px_128px_38px_38px] items-center gap-2 bg-surf2 px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5">
+          <div className="min-w-[860px]">
+            <div className="grid grid-cols-[112px_minmax(0,1fr)_138px_118px_120px_36px_36px] items-center gap-2 bg-surf2 px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5">
               <span>Status</span>
               <span>Requirement</span>
               <span>Source</span>
-              <span className="text-center">Scored</span>
+              <span>Type</span>
               <span>Proposal ref</span>
               <span className="col-span-2 text-right">Edit</span>
             </div>
             {requirements.map((r) => (
               <div
                 key={r.id.toString()}
-                className="grid grid-cols-[118px_minmax(0,1fr)_150px_54px_128px_38px_38px] items-center gap-2 border-t border-line px-3 py-1.5"
+                className="grid grid-cols-[112px_minmax(0,1fr)_138px_118px_120px_36px_36px] items-center gap-2 border-t border-line px-3 py-1.5"
               >
                 <form action={updateRequirement} className="contents">
                   <input type="hidden" name="solId" value={sid} />
@@ -1292,7 +1313,7 @@ export default async function SolicitationDetailPage({
                         farReference={r.farReference}
                         status={COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus}
                         proposalRef={r.proposalRef}
-                        scored={r.isScored}
+                        disposition={REQUIREMENT_DISPOSITIONS.find((d) => d.value === r.disposition)?.label ?? DISPOSITION_LABEL[r.disposition] ?? r.disposition}
                       />
                     </div>
                   </div>
@@ -1303,9 +1324,13 @@ export default async function SolicitationDetailPage({
                   >
                     {REQUIREMENT_SOURCES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                   </select>
-                  <label className="flex cursor-pointer justify-center">
-                    <input type="checkbox" name="isScored" defaultChecked={r.isScored} className="h-3.5 w-3.5 accent-[#3b6ef0]" />
-                  </label>
+                  <select
+                    name="disposition"
+                    defaultValue={r.disposition}
+                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t3 outline-none"
+                  >
+                    {REQUIREMENT_DISPOSITIONS.map((o) => (<option key={o.value} value={o.value}>{o.short}</option>))}
+                  </select>
                   <input
                     name="proposalRef"
                     defaultValue={r.proposalRef}
@@ -1370,19 +1395,21 @@ export default async function SolicitationDetailPage({
             <textarea name="description" rows={2} className={fieldClasses} />
           </div>
           <div className="grid gap-3 sm:grid-cols-12">
-            <div className="space-y-1.5 sm:col-span-3">
+            <div className="space-y-1.5 sm:col-span-5">
+              <label className={labelClasses}>Type</label>
+              <select name="disposition" defaultValue="compliance" className={fieldClasses}>
+                {REQUIREMENT_DISPOSITIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5 sm:col-span-4">
               <label className={labelClasses}>FAR Ref.</label>
               <input name="farReference" type="text" className={fieldClasses} />
             </div>
             <div className="space-y-1.5 sm:col-span-3">
               <label className={labelClasses}>Weight</label>
               <input name="weight" type="number" defaultValue={0} className={fieldClasses} />
-            </div>
-            <div className="flex items-end sm:col-span-6">
-              <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-t3">
-                <input type="checkbox" name="isScored" className="h-3.5 w-3.5 accent-[#3b6ef0]" />
-                Scored factor
-              </label>
             </div>
           </div>
           <div className="flex justify-end">
@@ -1687,8 +1714,8 @@ export default async function SolicitationDetailPage({
           <Inbox className="h-9 w-9 text-t5" />
           <p className="mt-3 max-w-md text-[13px] text-t4">
             No holistic review results yet. On the <span className="text-t3">Compliance</span> tab,
-            generate the matrix and mark your Section&nbsp;M items <span className="text-t3">Scored</span>;
-            upload your proposal draft (Documents); then create and run a review from{' '}
+            generate the matrix (the Section&nbsp;M factors are auto-classified{' '}
+            <span className="text-t3">Scored</span>); upload your proposal draft (Documents); then create and run a review from{' '}
             <span className="text-t3">Color Teams</span>. The rich per-factor findings appear below.
           </p>
         </div>
@@ -1992,7 +2019,7 @@ export default async function SolicitationDetailPage({
   // Advisory "done" flags — the pipeline is a suggestion, so these only tint the dots.
   const colorDone = (c: string) => reviews.some((rv) => rv.colorTeam === c && rv.status === 'complete');
   const anyComplianceChecked = activeRequirements.some(
-    (r) => !r.isScored && r.complianceStatus !== 'not_assessed'
+    (r) => r.disposition === 'compliance' && r.complianceStatus !== 'not_assessed'
   );
   const anyReviewComplete = reviews.some((rv) => rv.status === 'complete');
 

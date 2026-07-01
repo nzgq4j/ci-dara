@@ -163,6 +163,7 @@ export async function applyAmendmentChange(
           description: proposed.description ? String(proposed.description) : null,
           source: proposed.source ?? 'other',
           isScored: proposed.isScored === true,
+          disposition: proposed.isScored === true ? ('scored' as const) : ('compliance' as const),
           farReference: String(proposed.farReference ?? '').slice(0, 100),
           weight: Number(proposed.weight ?? 0) || 0,
           sortOrder: (agg._max.sortOrder ?? -1) + 1,
@@ -199,6 +200,14 @@ export async function applyAmendmentChange(
               description: proposed.description ? String(proposed.description) : null,
               source: proposed.source ?? req.source,
               isScored: proposed.isScored === true,
+              // Keep disposition in sync with scored-ness; preserve an administrative
+              // classification when the amendment doesn't make it a scored factor.
+              disposition:
+                proposed.isScored === true
+                  ? ('scored' as const)
+                  : req.disposition === 'scored'
+                    ? ('compliance' as const)
+                    : req.disposition,
               farReference: String(proposed.farReference ?? req.farReference).slice(0, 100),
               weight: Number(proposed.weight ?? req.weight) || 0,
               version: req.version + 1,

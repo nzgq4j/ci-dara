@@ -15,7 +15,7 @@ export default function RequirementDetail({
   farReference,
   status,
   proposalRef,
-  scored
+  disposition
 }: {
   abridged: string;
   name: string;
@@ -25,7 +25,7 @@ export default function RequirementDetail({
   farReference: string;
   status: string;
   proposalRef: string;
-  scored: boolean;
+  disposition: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -79,7 +79,7 @@ export default function RequirementDetail({
               <Row label="Citation" value={citation} />
               <Row label="Source" value={source} />
               <Row label="FAR ref." value={farReference} />
-              <Row label="Type" value={scored ? 'Scored evaluation factor' : 'Pass/fail compliance'} />
+              <Row label="Type" value={disposition} />
               <Row label="Status" value={status} />
               <Row label="Proposal ref" value={proposalRef} />
             </div>

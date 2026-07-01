@@ -428,10 +428,16 @@ export const REQUIREMENT_SOURCES = [
 ] as const;
 export type RequirementSourceValue = (typeof REQUIREMENT_SOURCES)[number];
 
+// How a requirement is handled — the shred classifies each into one of these
+// (orthogonal to `source`). Mirrors the RequirementDisposition enum.
+export const REQUIREMENT_DISPOSITIONS = ['scored', 'compliance', 'administrative'] as const;
+export type RequirementDispositionValue = (typeof REQUIREMENT_DISPOSITIONS)[number];
+
 export interface ShreddedRequirement {
   name: string;
   description: string;
   source: RequirementSourceValue;
+  disposition: RequirementDispositionValue;
   isScored: boolean;
   farReference: string;
   citation: string;
@@ -443,37 +449,70 @@ const SHRED_SCHEMA =
   '"name": "<short handle, <= 12 words, e.g. \\"Page limit — Volume II\\">", ' +
   '"description": "<the full requirement / \\"shall\\" statement, quoted or closely paraphrased>", ' +
   '"source": "<one of: instruction | evaluation_factor | sow_pws | far_clause | other>", ' +
+  '"disposition": "<one of: scored | compliance | administrative — see the classification rules>", ' +
   '"citation": "<where this requirement appears in the solicitation, e.g. \\"Section L.4.2\\", \\"PWS 3.1.2\\", \\"Section M.2(b)\\" — cite the section/paragraph>", ' +
-  '"is_scored": <true only for Section M evaluation factors/subfactors that are scored; false otherwise>, ' +
   '"far_reference": "<FAR/DFARS clause or section reference if stated, else empty string>", ' +
-  '"weight": <integer 0-100 relative importance if discernible for scored factors, else 0>' +
+  '"weight": <integer 0-100 relative importance for a scored evaluation factor if discernible, else 0>' +
   '}]}';
 
 /**
  * Build the prompt that shreds a solicitation into a discrete requirements list
  * for the compliance matrix. `solText` is the concatenated solicitation/RFP text.
+ *
+ * The shred both EXTRACTS discrete offeror obligations and CLASSIFIES each by how the
+ * team will handle it (disposition), so the matrix separates the few scored evaluation
+ * factors from the pass/fail requirements from the administrative items — and excludes
+ * text that is not an offeror obligation at all (e.g. the evaluation/scoring methodology).
  */
 export function buildShredPrompt(solText: string): { system: string; user: string } {
   const token = randomBytes(9).toString('hex');
   const doc = fenceUntrusted('SOLICITATION', truncate(solText, 50000), token);
 
   const system =
-    'You are a government-contracting proposal analyst. You read a solicitation and ' +
-    'extract every discrete, trackable requirement into a structured compliance ' +
-    'matrix. Be exhaustive and granular: one row per distinct "shall", instruction, ' +
-    'evaluation factor, or clause. Respond only in the JSON format specified.';
+    'You are a senior government-contracting proposal manager building a compliance matrix. ' +
+    'You read a solicitation and capture every discrete obligation the OFFEROR must meet — ' +
+    'and you are disciplined about what is NOT a requirement. You classify each requirement ' +
+    'by how the proposal team will handle it. Be thorough but precise: one row per distinct ' +
+    'obligation, no duplicates, no filler. Respond only in the JSON format specified.';
 
   const user =
     `## Solicitation Document\n\n${doc}\n\n## Instructions\n\n${INJECTION_GUARD}\n\n` +
-    'Extract every discrete requirement from the solicitation into a flat list. ' +
-    'Classify each by "source":\n' +
+    'Extract the discrete requirements the offeror must satisfy, and classify each one. ' +
+    'A requirement is something the offeror must DO, PROVIDE, COMPLY WITH, or be EVALUATED ON.\n\n' +
+    '### DO NOT extract (these are not requirements — omit them entirely)\n' +
+    '- The evaluation or scoring METHODOLOGY itself: adjectival/color/risk rating-scale definitions ' +
+    '(e.g. Outstanding/Good/Acceptable/Marginal/Unacceptable), how factors are weighted or combined, ' +
+    'relative order of importance, best-value tradeoff / basis-of-award process, or any description of ' +
+    'how the Government/SSA/SSEB will conduct the evaluation. (The evaluation FACTORS themselves are ' +
+    'requirements — the scale and process used to score them are not.)\n' +
+    '- Background, purpose, scope narrative, definitions, acronym lists, and boilerplate that impose ' +
+    'no obligation on the offeror.\n' +
+    '- Government responsibilities, or statements about what the Government will do/furnish.\n\n' +
+    '### Classify each requirement two ways\n' +
+    '"source" — where it comes from:\n' +
     '- "instruction" — Section L proposal-preparation/format instructions (page limits, fonts, volume structure, submission).\n' +
-    '- "evaluation_factor" — Section M evaluation factors and subfactors the Government uses to score proposals (set is_scored=true).\n' +
+    '- "evaluation_factor" — Section M evaluation factors/subfactors the Government scores.\n' +
     '- "sow_pws" — SOW/PWS/SOO tasks and "shall" performance requirements.\n' +
     '- "far_clause" — FAR/DFARS clauses, provisions, or representations/certifications.\n' +
-    '- "other" — anything trackable that does not fit the above.\n\n' +
-    'Quote or closely paraphrase the actual requirement text in "description"; cite the FAR/DFARS reference in "far_reference" when present. ' +
-    'Do not invent requirements that are not in the document. ' +
+    '- "other" — a genuine obligation that fits none of the above.\n\n' +
+    '"disposition" — how the proposal team handles it (choose exactly one):\n' +
+    '- "scored" — a Section M evaluation factor or subfactor the Government uses to SCORE the proposal ' +
+    '(these get a full color-team review). Almost always source = evaluation_factor. Set a "weight" if the ' +
+    'relative importance is discernible.\n' +
+    '- "compliance" — a pass/fail requirement the offeror must DEMONSTRATE or ADDRESS in the proposal, ' +
+    'and whose satisfaction can be checked against the proposal narrative (e.g. page/format limits, ' +
+    'required volumes/sections, "the offeror shall describe/provide/submit…", key-personnel qualifications, ' +
+    'SOW/PWS performance tasks the proposal must show it will meet).\n' +
+    '- "administrative" — a requirement the offeror complies with but does NOT write up in the proposal ' +
+    'narrative, so there is nothing to grade against the text (e.g. active SAM/CAGE/UEI registration, ' +
+    'reps & certs and FAR/DFARS clauses incorporated by reference, size-status certification, submission ' +
+    'logistics such as the due date/time, delivery address or portal, number of copies, file naming/format).\n\n' +
+    'When unsure between "compliance" and "administrative": if the proposal text would contain evidence a ' +
+    'reviewer could grade, choose "compliance"; if compliance is a checkbox/registration/logistical fact ' +
+    'outside the narrative, choose "administrative".\n\n' +
+    'Quote or closely paraphrase the actual requirement text in "description"; cite the FAR/DFARS reference ' +
+    'in "far_reference" when present; cite the section/paragraph in "citation". Do not invent requirements ' +
+    'that are not in the document, and do not split one obligation into near-duplicate rows.\n\n' +
     `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${SHRED_SCHEMA}\n\n` +
     'Do not include any text outside the JSON object.';
 
@@ -533,12 +572,25 @@ function mapShredItem(r: any): ShreddedRequirement {
     : 'other';
   const name = String(r?.name ?? '').trim().slice(0, 300);
   const description = String(r?.description ?? '').trim();
+
+  // Disposition drives handling. Honor the model's choice; tolerate the legacy is_scored
+  // flag and infer from source when disposition is missing/invalid.
+  const rawDisp = String(r?.disposition ?? '').trim().toLowerCase();
+  let disposition: RequirementDispositionValue = (REQUIREMENT_DISPOSITIONS as readonly string[]).includes(rawDisp)
+    ? (rawDisp as RequirementDispositionValue)
+    : r?.is_scored === true || source === 'evaluation_factor'
+      ? 'scored'
+      : 'compliance';
+  // A "scored" row is meaningful only for an evaluation factor; if the model tagged
+  // something else scored, treat it as a compliance requirement instead.
+  if (disposition === 'scored' && source !== 'evaluation_factor') disposition = 'compliance';
+
   return {
     name: name || description.slice(0, 120) || 'Requirement',
     description,
     source,
-    // Only evaluation factors are scored; honor an explicit true, else infer.
-    isScored: r?.is_scored === true && source === 'evaluation_factor',
+    disposition,
+    isScored: disposition === 'scored',
     farReference: String(r?.far_reference ?? '').trim().slice(0, 100),
     citation: String(r?.citation ?? '').trim().slice(0, 200),
     weight: Math.max(0, Math.min(100, Math.round(Number(r?.weight ?? 0) || 0)))

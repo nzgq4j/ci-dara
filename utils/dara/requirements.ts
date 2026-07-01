@@ -123,7 +123,11 @@ export async function shredRequirements(
         name: r.name,
         description: r.description || null,
         source: r.source,
+        disposition: r.disposition,
         isScored: r.isScored,
+        // Administrative items are not written up in the proposal, so there is nothing to
+        // grade — mark them N/A up front and let the compliance sweep skip them.
+        complianceStatus: r.disposition === 'administrative' ? ('not_applicable' as const) : ('not_assessed' as const),
         farReference: r.farReference,
         citation: r.citation,
         weight: r.weight,

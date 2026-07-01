@@ -307,7 +307,9 @@ export async function runComplianceSweep(
     if (!review) return null;
     const company = await tx.company.findUnique({ where: { id: companyId } });
     const requirements = await tx.requirement.findMany({
-      where: { solicitationId: review.solicitationId, companyId, removedAt: null, isScored: false },
+      // Only the pass/fail compliance requirements are graded against the proposal.
+      // Scored factors get the holistic review; administrative items are not written up.
+      where: { solicitationId: review.solicitationId, companyId, removedAt: null, disposition: 'compliance' },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
     const solDocs = await tx.solDocument.findMany({
@@ -402,7 +404,7 @@ export async function runComplianceCheck(
   const loaded = await withTenant(companyId, async (tx) => {
     const company = await tx.company.findUnique({ where: { id: companyId } });
     const requirements = await tx.requirement.findMany({
-      where: { solicitationId, companyId, removedAt: null, isScored: false },
+      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance' },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
     const solDocs = await tx.solDocument.findMany({ where: { solicitationId, companyId } });
@@ -411,7 +413,7 @@ export async function runComplianceCheck(
 
   if (!loaded.company) return { ok: false, checked: 0, error: 'Company not found.' };
   if (loaded.requirements.length === 0) {
-    return { ok: false, checked: 0, error: 'No administrative requirements to check. Generate the matrix and mark Section M items as Scored.' };
+    return { ok: false, checked: 0, error: 'No pass/fail compliance requirements to check. Generate the matrix — the shred classifies each requirement as Scored, Compliance, or Administrative.' };
   }
   const documentText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'proposal'));
   if (documentText.trim() === '') {

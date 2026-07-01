@@ -84,6 +84,18 @@ enum ComplianceStatus {
   not_applicable
 }
 
+// How a requirement is handled — the AI shred classifies each row into one of these
+// (independent of `source`, which records where it came from):
+//   scored         — a Section M evaluation factor/subfactor → holistic color-team review.
+//   compliance     — a pass/fail requirement the proposal must demonstrate → compliance sweep.
+//   administrative — a requirement complied with but NOT written up in the proposal
+//                    (reps & certs, SAM/CAGE, submission logistics) → tracked, not swept.
+enum RequirementDisposition {
+  scored
+  compliance
+  administrative
+}
+
 // Color-team gate label for a review. A freeform label only — review behavior comes
 // from the chosen personas, not the color.
 enum ColorTeam {
@@ -390,6 +402,9 @@ model Requirement {
   description      String? // full requirement / "shall" text
   source           RequirementSource @default(evaluation_factor)
   isScored         Boolean           @default(true) @map("is_scored")
+  // How the requirement is handled (scored / compliance / administrative). Set by the
+  // AI shred; `isScored` is kept in sync as `disposition == scored` for the review engine.
+  disposition      RequirementDisposition @default(compliance)
   farReference     String            @default("") @map("far_reference") @db.VarChar(100)
   // Where this requirement is cited in the solicitation (e.g. "Section L.4.2", "PWS 3.1").
   citation         String            @default("") @db.VarChar(200)
@@ -426,11 +441,11 @@ model RequirementVersion {
   name             String            @db.VarChar(300)
   description      String?
   source           RequirementSource
-  isScored         Boolean
-  farReference     String            @db.VarChar(100)
+  isScored         Boolean           @map("is_scored")
+  farReference     String            @map("far_reference") @db.VarChar(100)
   weight           Int
-  complianceStatus ComplianceStatus
-  proposalRef      String            @db.VarChar(300)
+  complianceStatus ComplianceStatus  @map("compliance_status")
+  proposalRef      String            @map("proposal_ref") @db.VarChar(300)
   amendmentId      BigInt?           @map("amendment_id")
   createdAt        DateTime          @default(now()) @map("created_at")
 
