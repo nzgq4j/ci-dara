@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X } from 'lucide-react';
 
 // An "add" affordance: a compact button that opens the form in a MODAL — never a
 // persistent blank card/object in the list. The form (a server-action form) is passed
-// as children. After a create that redirects, the page reloads and this resets.
+// as children. The modal closes the moment its form submits, so the server action's
+// re-render never has to reconcile the open modal (which could throw a client-side error).
 export default function AddSection({
   label,
   children,
@@ -17,6 +18,19 @@ export default function AddSection({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Close on submit. `submit` doesn't bubble, so listen in the CAPTURE phase on the modal
+  // body — a capturing ancestor still receives a descendant form's submit event. Closing
+  // here unmounts the heavy form before the server action's revalidate re-renders the page.
+  useEffect(() => {
+    if (!open) return;
+    const el = bodyRef.current;
+    if (!el) return;
+    const onSubmit = () => setOpen(false);
+    el.addEventListener('submit', onSubmit, true);
+    return () => el.removeEventListener('submit', onSubmit, true);
+  }, [open]);
 
   return (
     <>
@@ -37,6 +51,7 @@ export default function AddSection({
           onClick={() => setOpen(false)}
         >
           <div
+            ref={bodyRef}
             className="w-full max-w-lg rounded-xl border border-line bg-surf p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >

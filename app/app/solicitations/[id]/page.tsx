@@ -395,7 +395,7 @@ async function createReview(formData: FormData) {
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
   const name = String(formData.get('name') ?? '').trim();
-  if (!name) redirect(`/app/solicitations/${solId}`);
+  if (!name) return;
   const color = String(formData.get('colorTeam') ?? 'pink');
   const personaIds = formData
     .getAll('persona')
@@ -403,10 +403,8 @@ async function createReview(formData: FormData) {
     .filter((v) => /^\d+$/.test(v))
     .map((v) => BigInt(v));
 
-  // Guard against an accidental re-create: a transient client render error can make a
-  // successful create look like it failed, prompting the user to submit again. If an
-  // identical review was created moments ago, treat this as a duplicate and just land
-  // on the page (which now shows the already-created review).
+  // Guard against an accidental re-create: if an identical review was created moments ago,
+  // treat this submit as a duplicate and no-op (the page already shows it).
   const recentDuplicate = await withTenant(daraUser.companyId, (tx) =>
     tx.review.findFirst({
       where: {
@@ -418,7 +416,10 @@ async function createReview(formData: FormData) {
       select: { id: true }
     })
   );
-  if (recentDuplicate) redirect(`/app/solicitations/${solId}`);
+  if (recentDuplicate) {
+    revalidatePath(`/app/solicitations/${solId}`);
+    return;
+  }
 
   const created = await withTenant(daraUser.companyId, async (tx) => {
     const review = await tx.review.create({
@@ -456,9 +457,9 @@ async function createReview(formData: FormData) {
     entityId: created.id,
     metadata: { solicitationId: solId.toString(), name, colorTeam: color }
   });
-  // Land on the page via a fresh navigation rather than an in-place client patch — the
-  // patch reconciliation is what was throwing the client-side render error after create.
-  redirect(`/app/solicitations/${solId}`);
+  // The AddSection modal closes on submit, so the server-action re-render never has to
+  // reconcile the open modal — revalidate in place (no redirect) to show the new review.
+  revalidatePath(`/app/solicitations/${solId}`);
 }
 
 async function updateReview(formData: FormData) {
