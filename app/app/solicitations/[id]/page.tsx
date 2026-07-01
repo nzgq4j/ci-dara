@@ -30,6 +30,7 @@ import AiActionButton from '@/components/dara/AiActionButton';
 import AddSection from '@/components/dara/AddSection';
 import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
+import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
 import {
@@ -331,6 +332,7 @@ async function addRequirement(formData: FormData) {
         // Administrative rows aren't graded — default them to N/A.
         complianceStatus: (disposition === 'administrative' ? 'not_applicable' : 'not_assessed') as any,
         farReference: String(formData.get('farReference') ?? '').trim(),
+        notes: String(formData.get('notes') ?? '').trim() || null,
         weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0,
         sortOrder: parseInt(String(formData.get('sortOrder') ?? '0'), 10) || 0
       }
@@ -361,6 +363,7 @@ async function updateRequirement(formData: FormData) {
         isScored: disposition === 'scored',
         complianceStatus: (VALID_STATUSES.has(status) ? status : owned.complianceStatus) as any,
         proposalRef: String(formData.get('proposalRef') ?? '').trim(),
+        notes: String(formData.get('notes') ?? '').trim() || null,
         farReference: String(formData.get('farReference') ?? '').trim(),
         weight: parseInt(String(formData.get('weight') ?? '0'), 10) || 0
       }
@@ -384,6 +387,67 @@ async function deleteRequirement(formData: FormData) {
   });
   if (!ok) redirect('/app/solicitations');
   revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// ---- Compliance matrix export (CSV / Word) ----
+async function exportMatrixAction(
+  formData: FormData
+): Promise<{ ok: boolean; filename?: string; mime?: string; content?: string; error?: string }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  const format = String(formData.get('format') ?? 'csv') === 'doc' ? 'doc' : 'csv';
+  await requireViewableSolicitation(solId, daraUser);
+
+  const loaded = await withTenant(daraUser.companyId, async (tx) => {
+    const sol = await tx.solicitation.findFirst({
+      where: { id: solId, companyId: daraUser.companyId },
+      select: { solNumber: true, title: true }
+    });
+    const requirements = await tx.requirement.findMany({
+      where: { solicitationId: solId, companyId: daraUser.companyId, removedAt: null },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+    });
+    return { sol, requirements };
+  });
+  if (!loaded.sol) return { ok: false, error: 'Solicitation not found.' };
+
+  const cols = ['#', 'Requirement', 'Detail', 'Source', 'Type', 'Citation', 'Response Location', 'Status', 'Notes'];
+  const rows = loaded.requirements.map((r, i) => [
+    String(i + 1),
+    r.name,
+    r.description ?? '',
+    SOURCE_LABEL[r.source] ?? r.source,
+    DISPOSITION_LABEL[r.disposition] ?? r.disposition,
+    r.citation,
+    r.proposalRef,
+    COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus,
+    r.notes ?? ''
+  ]);
+
+  const slug = (loaded.sol.solNumber || 'solicitation').replace(/[^a-zA-Z0-9._-]+/g, '_');
+  const title = `Compliance Matrix — ${loaded.sol.solNumber}${loaded.sol.title ? ` · ${loaded.sol.title}` : ''}`;
+
+  if (format === 'csv') {
+    const esc = (s: string) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+    const content = [cols, ...rows].map((row) => row.map(esc).join(',')).join('\r\n');
+    return { ok: true, filename: `${slug}_compliance_matrix.csv`, mime: 'text/csv;charset=utf-8', content };
+  }
+
+  // Word: an HTML document Word opens natively (no dependency).
+  const he = (s: string) =>
+    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const th = cols.map((c) => `<th>${he(c)}</th>`).join('');
+  const trs = rows
+    .map((row) => `<tr>${row.map((c) => `<td>${he(c).replace(/\n/g, '<br>')}</td>`).join('')}</tr>`)
+    .join('');
+  const content =
+    `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8">` +
+    `<style>body{font:11px Arial,sans-serif}h2{font-size:15px}table{border-collapse:collapse;width:100%}` +
+    `th,td{border:1px solid #999;padding:4px 6px;vertical-align:top;text-align:left}th{background:#1B2A4A;color:#fff;font-size:10px}</style></head>` +
+    `<body><h2>${he(title)}</h2><p>${loaded.requirements.length} requirements</p>` +
+    `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
+  return { ok: true, filename: `${slug}_compliance_matrix.doc`, mime: 'application/msword', content };
 }
 
 // ---- Color-team review actions ----
@@ -1142,6 +1206,7 @@ export default async function SolicitationDetailPage({
                 className={btnGhost}
               />
             )}
+            {requirements.length > 0 && <MatrixExport solId={sid} action={exportMatrixAction} />}
             {requirements.length > 0 && <PrintButton label="Print matrix" className={btnGhost} />}
           </div>
         </div>
@@ -1176,19 +1241,20 @@ export default async function SolicitationDetailPage({
         </div>
       ) : (
         <div className={`${card} overflow-x-auto`}>
-          <div className="min-w-[860px]">
-            <div className="grid grid-cols-[112px_minmax(0,1fr)_138px_118px_120px_36px_36px] items-center gap-2 bg-surf2 px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5">
+          <div className="min-w-[1000px]">
+            <div className="grid grid-cols-[104px_minmax(0,1.25fr)_124px_104px_112px_minmax(0,1fr)_34px_34px] items-center gap-2 bg-surf2 px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5">
               <span>Status</span>
               <span>Requirement</span>
               <span>Source</span>
               <span>Type</span>
-              <span>Proposal ref</span>
+              <span>Response loc.</span>
+              <span>Notes</span>
               <span className="col-span-2 text-right">Edit</span>
             </div>
             {requirements.map((r) => (
               <div
                 key={r.id.toString()}
-                className="grid grid-cols-[112px_minmax(0,1fr)_138px_118px_120px_36px_36px] items-center gap-2 border-t border-line px-3 py-1.5"
+                className="grid grid-cols-[104px_minmax(0,1.25fr)_124px_104px_112px_minmax(0,1fr)_34px_34px] items-center gap-2 border-t border-line px-3 py-1.5"
               >
                 <form action={updateRequirement} className="contents">
                   <input type="hidden" name="solId" value={sid} />
@@ -1254,6 +1320,12 @@ export default async function SolicitationDetailPage({
                     placeholder="Vol/§/pg"
                     className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-[#3b6ef0]/50"
                   />
+                  <input
+                    name="notes"
+                    defaultValue={r.notes ?? ''}
+                    placeholder="Notes…"
+                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-[#3b6ef0]/50"
+                  />
                   <button type="submit" title="Save row" className="flex justify-center rounded border border-line py-1 text-t4 transition-colors hover:text-[#7de0a0]">
                     <Save className="h-3.5 w-3.5" />
                   </button>
@@ -1310,6 +1382,10 @@ export default async function SolicitationDetailPage({
           <div className="space-y-1.5">
             <label className={labelClasses}>Requirement text</label>
             <textarea name="description" rows={2} className={fieldClasses} />
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelClasses}>Notes</label>
+            <input name="notes" type="text" placeholder="Team notes (optional)" className={fieldClasses} />
           </div>
           <div className="grid gap-3 sm:grid-cols-12">
             <div className="space-y-1.5 sm:col-span-5">

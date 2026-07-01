@@ -437,6 +437,8 @@ model Requirement {
   weight           Int               @default(0)
   complianceStatus ComplianceStatus  @default(not_assessed) @map("compliance_status")
   proposalRef      String            @default("") @map("proposal_ref") @db.VarChar(300)
+  // Free-text team notes shown in the compliance matrix (design's "Notes" column).
+  notes            String?
   sortOrder        Int               @default(0) @map("sort_order")
 
   // Amendment provenance (Phase 3). removedAt marks a requirement struck by an
