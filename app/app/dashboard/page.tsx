@@ -20,6 +20,37 @@ const evBadge: Record<string, string> = {
   failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
 };
 
+// Aggregate a solicitation's review passes into a P1/P2/P3 status + avg score. A pass type
+// counts complete if ANY of the solicitation's reviews has it complete.
+const PASS_TYPES_ORDER = ['compliance_format', 'technical_responsiveness', 'risk_competitive'] as const;
+const passPill: Record<string, string> = {
+  complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
+  running: 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
+  error: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
+  not_run: 'bg-surf3 text-t5'
+};
+function aggPasses(
+  reviews: { passes: { passType: string; status: string; score: number | null }[] }[]
+) {
+  const rank: Record<string, number> = { not_run: 0, error: 1, running: 2, complete: 3 };
+  const byType: Record<string, string> = {
+    compliance_format: 'not_run',
+    technical_responsiveness: 'not_run',
+    risk_competitive: 'not_run'
+  };
+  const scores: number[] = [];
+  for (const rv of reviews) {
+    for (const p of rv.passes) {
+      const cur = byType[p.passType] ?? 'not_run';
+      const next = p.status === 'queued' ? 'running' : p.status === 'not_started' ? 'not_run' : p.status;
+      if ((rank[next] ?? 0) > (rank[cur] ?? 0)) byType[p.passType] = next;
+      if (p.status === 'complete' && p.score != null) scores.push(p.score);
+    }
+  }
+  const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  return { byType, avg };
+}
+
 export default async function DashboardPage() {
   const supabase = createClient();
   const {
@@ -34,7 +65,7 @@ export default async function DashboardPage() {
   const [
     solicitationCount,
     reviewCount,
-    evaluationCount,
+    passScoreAgg,
     activePersonaCount,
     recentSolicitations,
     recentEvaluations,
@@ -48,13 +79,16 @@ export default async function DashboardPage() {
       // companyId filters kept as defense-in-depth alongside RLS (DARA-004).
       tx.solicitation.count({ where: solWhere }),
       tx.review.count({ where: { companyId, solicitation: access } }),
-      tx.evaluation.count({ where: { companyId, solicitation: access } }),
+      tx.reviewPass.aggregate({ where: { companyId, status: 'complete' }, _avg: { score: true } }),
       tx.persona.count({ where: { companyId, isActive: true } }),
       tx.solicitation.findMany({
         where: solWhere,
         orderBy: { createdAt: 'desc' },
         take: 5,
-        include: { _count: { select: { requirements: true, reviews: true } } }
+        include: {
+          _count: { select: { requirements: true, reviews: true } },
+          reviews: { select: { passes: { select: { passType: true, status: true, score: true } } } }
+        }
       }),
       tx.evaluation.findMany({
         where: { companyId, solicitation: access },
@@ -77,10 +111,11 @@ export default async function DashboardPage() {
     year: 'numeric'
   });
 
+  const avgScore = passScoreAgg._avg.score;
   const stats = [
     { label: 'Solicitations', value: solicitationCount, color: '#3b6ef0', sub: 'total packages' },
     { label: 'Reviews', value: reviewCount, color: '#7c3aed', sub: 'across solicitations' },
-    { label: 'Evaluations', value: evaluationCount, color: '#f59e0b', sub: 'run to date' },
+    { label: 'Avg Score', value: avgScore != null ? Math.round(avgScore) : '—', color: '#f59e0b', sub: 'completed AI passes' },
     { label: 'Active Personas', value: activePersonaCount, color: '#10b981', sub: 'evaluator panel' }
   ];
 
@@ -160,6 +195,9 @@ export default async function DashboardPage() {
                   <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                     Reviews
                   </th>
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
+                    AI Passes
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -182,6 +220,27 @@ export default async function DashboardPage() {
                     </td>
                     <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                       {sol._count.reviews}
+                    </td>
+                    <td className="px-3.5 py-3">
+                      {(() => {
+                        const { byType, avg } = aggPasses(sol.reviews);
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            {PASS_TYPES_ORDER.map((t, i) => (
+                              <span
+                                key={t}
+                                title={`Pass ${i + 1}: ${(byType[t] ?? 'not_run').replace('_', ' ')}`}
+                                className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${passPill[byType[t] ?? 'not_run']}`}
+                              >
+                                P{i + 1}
+                              </span>
+                            ))}
+                            {avg != null && (
+                              <span className="ml-1 font-mono text-[11px] font-semibold text-t3">{avg}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
