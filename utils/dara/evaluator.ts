@@ -13,11 +13,16 @@ import {
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
-// Output-token budget for a single criterion's structured result. The response now
-// carries the review summary + rationale + strengths/weaknesses/compliance/suggested
-// changes; the old 4096 default truncated the JSON mid-object (parse fails → the
-// criterion errors), so give it generous headroom (safe across Anthropic/OpenAI/Google).
-const EVAL_MAX_TOKENS = 8000;
+// Output-token budget for a single evaluation factor's structured result. Enough for a
+// full holistic assessment (review summary + rationale + strengths/weaknesses/compliance/
+// suggested changes) but bounded so generation stays fast — the rich calls are the run's
+// bottleneck. regenerateResult uses the same budget.
+const EVAL_MAX_TOKENS = 5000;
+
+// Evaluation factors are assessed concurrently (each is its own LLM call), so a review
+// with many factors finishes in one round instead of a slow sequential crawl. Kept
+// modest to respect provider rate limits.
+const FACTOR_CONCURRENCY = 5;
 
 // Convert a read-side JSON value (or null) into Prisma's write input.
 function jsonIn(
@@ -205,44 +210,53 @@ export async function runEvaluation(
   let errors = 0;
   let done = doneIds.size;
 
-  // One rich call per evaluation factor — the holistic, structured assessment.
-  for (const factor of todo) {
+  // One rich call per evaluation factor — the holistic, structured assessment. Factors
+  // run CONCURRENTLY (in bounded chunks) so a many-factor review finishes in one round;
+  // LLM calls are OUTSIDE any transaction, and each chunk's results persist together.
+  for (let i = 0; i < todo.length; i += FACTOR_CONCURRENCY) {
     if (Date.now() > deadlineMs) break;
-    const pc = toPromptCriterion(factor); // isScored → scored_factor schema
-    const system = buildSystemPrompt(persona, pc, evaluation.solicitation);
-    const user = buildUserPrompt(pc, documentText, solText);
-    try {
-      // LLM call OUTSIDE any transaction — the slow network hop.
-      const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
-      const parsed = parseResult(ai.text, pc.criterionType);
-      if (!parsed) {
-        errors++;
-        continue;
-      }
-      await withTenant(companyId, (tx) =>
-        tx.result.upsert({
+    const chunk = todo.slice(i, i + FACTOR_CONCURRENCY);
+    const outcomes = await Promise.all(
+      chunk.map(async (factor) => {
+        const pc = toPromptCriterion(factor); // isScored → scored_factor schema
+        const system = buildSystemPrompt(persona, pc, evaluation.solicitation);
+        const user = buildUserPrompt(pc, documentText, solText);
+        try {
+          const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
+          const parsed = parseResult(ai.text, pc.criterionType);
+          return parsed ? { factor, parsed, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut } : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    await withTenant(companyId, async (tx) => {
+      for (const o of outcomes) {
+        if (!o) {
+          errors++;
+          continue;
+        }
+        await tx.result.upsert({
           where: {
             evaluationId_requirementId_personaId: {
               evaluationId,
-              requirementId: factor.id,
+              requirementId: o.factor.id,
               personaId: persona.id
             }
           },
           create: {
             evaluationId,
             companyId,
-            requirementId: factor.id,
+            requirementId: o.factor.id,
             personaId: persona.id,
-            ...aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
+            ...aiFields(o.parsed, model, o.tokenIn, o.tokenOut)
           },
-          update: aiFields(parsed, model, ai.tokenIn, ai.tokenOut)
-        })
-      );
-      newResults++;
-      done++;
-    } catch {
-      errors++;
-    }
+          update: aiFields(o.parsed, model, o.tokenIn, o.tokenOut)
+        });
+        newResults++;
+        done++;
+      }
+    });
   }
 
   const allDone = done >= total;

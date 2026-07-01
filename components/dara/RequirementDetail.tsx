@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Maximize2, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
-// A "view full requirement" affordance for the dense compliance table: a small icon
-// that opens a modal with the complete requirement text, description, and citations —
-// so the table can stay compact without a truncating tooltip.
+// A "view full requirement" affordance for the dense compliance table: click the
+// abridged description to open a modal with the complete requirement text, description,
+// and citations — so the table stays compact without a truncating tooltip.
 export default function RequirementDetail({
+  abridged,
   name,
   description,
   citation,
@@ -16,6 +17,7 @@ export default function RequirementDetail({
   proposalRef,
   scored
 }: {
+  abridged: string;
   name: string;
   description: string;
   citation: string;
@@ -41,9 +43,9 @@ export default function RequirementDetail({
         type="button"
         onClick={() => setOpen(true)}
         title="View full requirement"
-        className="mt-0.5 flex-shrink-0 text-t5 transition-colors hover:text-[#6f9bf5]"
+        className="block max-w-full truncate text-left text-[10px] text-t5 underline-offset-2 transition-colors hover:text-[#6f9bf5] hover:underline"
       >
-        <Maximize2 className="h-3.5 w-3.5" />
+        {abridged || 'View details'}
       </button>
 
       {open && (

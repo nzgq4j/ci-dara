@@ -45,9 +45,10 @@ import {
   sectionTitle
 } from '@/components/dara/theme';
 
-// Evaluations call the AI provider once per criterion per active persona, which
-// can take a while; give the synchronous run room before the function times out.
-export const maxDuration = 300;
+// Reviews run the AI provider across evaluation factors (concurrently) + a compliance
+// sweep; give the function generous room (Fluid Compute allows up to 800s) so a full
+// run completes in one round.
+export const maxDuration = 800;
 
 const REQUIREMENT_SOURCES: { value: string; label: string }[] = [
   { value: 'instruction', label: 'Section L — Instruction' },
@@ -276,7 +277,7 @@ async function runComplianceCheckAction(formData: FormData): Promise<{ ok: boole
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  const res = await runComplianceCheck(solId, daraUser.companyId, Date.now() + 200_000);
+  const res = await runComplianceCheck(solId, daraUser.companyId, Date.now() + 760_000);
   await recordAudit({
     action: 'requirement.compliance_check',
     companyId: daraUser.companyId,
@@ -749,10 +750,10 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     tx.review.update({ where: { id: reviewId }, data: { status: 'in_progress' } })
   );
 
-  // Time-box the run under the 300s function limit, leaving generous headroom so even a
-  // slow single batch (large proposal + slower model) finishes before the hard kill.
-  // Large reviews resume on the next click (runEvaluation skips already-done requirements).
-  const deadline = Date.now() + 200_000;
+  // Time-box the run under the function limit (maxDuration=800), leaving headroom for the
+  // final chunk + compliance sweep + response. Concurrency makes most runs finish here in
+  // one round; anything larger resumes on the next click (already-done factors are skipped).
+  const deadline = Date.now() + 760_000;
   let totalResults = 0;
   let totalErrors = 0;
   let totalDone = 0;
@@ -1264,34 +1265,35 @@ export default async function SolicitationDetailPage({
                   >
                     {COMPLIANCE_STATUSES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                   </select>
-                  <div className="flex min-w-0 items-start gap-1.5">
-                    <RequirementDetail
-                      name={r.name}
-                      description={r.description ?? ''}
-                      citation={r.citation}
-                      source={SOURCE_LABEL[r.source] ?? r.source}
-                      farReference={r.farReference}
-                      status={COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus}
-                      proposalRef={r.proposalRef}
-                      scored={r.isScored}
+                  <div className="min-w-0">
+                    <input
+                      name="name"
+                      defaultValue={r.name}
+                      className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-[#3b6ef0]/50"
                     />
-                    <div className="min-w-0 flex-1">
-                      <input
-                        name="name"
-                        defaultValue={r.name}
-                        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-[#3b6ef0]/50"
+                    <div className="flex items-center gap-1.5 px-1">
+                      {r.citation && (
+                        <span className="flex-shrink-0 font-mono text-[10px] text-t5" title={r.citation}>{r.citation}</span>
+                      )}
+                      {r.addedByAmendmentId && (
+                        <span className="flex-shrink-0 rounded bg-[#1f5a31]/25 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#7de0a0]">new</span>
+                      )}
+                      {r.changedByAmendmentId && (
+                        <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#e0c97d]">amended v{r.version}</span>
+                      )}
+                    </div>
+                    <div className="px-1">
+                      <RequirementDetail
+                        abridged={r.description ?? ''}
+                        name={r.name}
+                        description={r.description ?? ''}
+                        citation={r.citation}
+                        source={SOURCE_LABEL[r.source] ?? r.source}
+                        farReference={r.farReference}
+                        status={COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus}
+                        proposalRef={r.proposalRef}
+                        scored={r.isScored}
                       />
-                      <div className="flex items-center gap-1.5 px-1">
-                        {r.citation && (
-                          <span className="truncate font-mono text-[10px] text-t5" title={r.citation}>{r.citation}</span>
-                        )}
-                        {r.addedByAmendmentId && (
-                          <span className="flex-shrink-0 rounded bg-[#1f5a31]/25 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#7de0a0]">new</span>
-                        )}
-                        {r.changedByAmendmentId && (
-                          <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#e0c97d]">amended v{r.version}</span>
-                        )}
-                      </div>
                     </div>
                   </div>
                   <select

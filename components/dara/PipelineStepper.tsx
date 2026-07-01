@@ -50,27 +50,27 @@ export default function PipelineStepper({
                 <button
                   type="button"
                   onClick={() => setActive(s.id)}
-                  className="flex flex-col items-center rounded-md border-b-2 px-3 py-2 transition-colors hover:bg-surf2"
+                  className="flex flex-col items-center rounded-md border-b-2 px-2 py-1.5 transition-colors hover:bg-surf2"
                   style={{ borderColor: on ? s.color : 'transparent' }}
                 >
-                  <div className="mb-0.5 flex items-center gap-2">
+                  <div className="mb-0.5 flex items-center gap-1.5">
                     <span
-                      className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-bold text-white ${filled ? '' : 'bg-line !text-t5'}`}
+                      className={`flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-bold text-white ${filled ? '' : 'bg-line !text-t5'}`}
                       style={filled ? { background: s.color } : undefined}
                     >
                       {s.done ? '✓' : s.num}
                     </span>
                     <span
-                      className={`whitespace-nowrap text-[11px] font-semibold ${on ? '' : 'text-t3'}`}
+                      className={`whitespace-nowrap text-[11px] font-semibold leading-none ${on ? '' : 'text-t3'}`}
                       style={on ? { color: s.color } : undefined}
                     >
                       {s.label}
                     </span>
                   </div>
-                  <span className="whitespace-nowrap text-[10px] text-t5">{s.sub}</span>
+                  <span className="whitespace-nowrap text-[9px] leading-none text-t5">{s.sub}</span>
                 </button>
                 {i < stages.length - 1 && (
-                  <div className="mt-[-14px] h-px w-4 flex-shrink-0 bg-line" />
+                  <div className="mt-[-12px] h-px w-2.5 flex-shrink-0 bg-line" />
                 )}
               </div>
             );
