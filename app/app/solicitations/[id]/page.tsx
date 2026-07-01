@@ -22,6 +22,7 @@ import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker } from '@/utils/dara/passes';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
@@ -29,7 +30,7 @@ import AiActionButton from '@/components/dara/AiActionButton';
 import AddSection from '@/components/dara/AddSection';
 import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
-import RunPanel, { type RunState } from '@/components/dara/RunPanel';
+import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
 import {
   card,
@@ -735,110 +736,17 @@ async function applyChangeAction(formData: FormData) {
 }
 
 // ---- Run a color-team review ----
-// Run a color-team review: the chosen reviewer personas (or all active if none were
-// selected) each evaluate the review's frozen proposal snapshot against the
-// requirements. Returns a summary so the client RunPanel can show a completion notice.
-async function runReviewAction(formData: FormData): Promise<RunState> {
+// Run a color-team review as a multi-pass AI review: enqueue the three passes (Compliance
+// & Format → Technical Responsiveness → Risk & Competitive) and kick the async worker so
+// they run without blocking the request. The UI polls each pass's status/progress.
+async function runReviewAction(formData: FormData): Promise<{ ok: boolean }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const reviewId = BigInt(String(formData.get('reviewId')));
   await requireViewableSolicitation(solId, daraUser);
-  const personas = await withTenant(daraUser.companyId, async (tx) => {
-    const review = await tx.review.findFirst({
-      where: { id: reviewId, companyId: daraUser.companyId },
-      include: { reviewPersonas: true }
-    });
-    if (!review) return null;
-    const chosen = review.reviewPersonas.map((rp) => rp.personaId);
-    // Chosen reviewers if any (still gated to active); otherwise all active personas.
-    return tx.persona.findMany({
-      where: {
-        companyId: daraUser.companyId,
-        isActive: true,
-        ...(chosen.length ? { id: { in: chosen } } : {})
-      }
-    });
-  });
-  if (!personas || personas.length === 0) {
-    return { ok: false, personas: 0, results: 0, errors: 0, done: 0, total: 0 };
-  }
 
-  await withTenant(daraUser.companyId, (tx) =>
-    tx.review.update({ where: { id: reviewId }, data: { status: 'in_progress' } })
-  );
-
-  // Time-box the run under the function limit (maxDuration=800), leaving headroom for the
-  // final chunk + compliance sweep + response. Concurrency makes most runs finish here in
-  // one round; anything larger resumes on the next click (already-done factors are skipped).
-  const deadline = Date.now() + 760_000;
-  let totalResults = 0;
-  let totalErrors = 0;
-  let totalDone = 0;
-  let totalReqs = 0;
-  let allComplete = true;
-
-  for (const persona of personas) {
-    // Find-or-create the evaluation row in its own short burst...
-    const evaluation = await withTenant(daraUser.companyId, async (tx) => {
-      const existing = await tx.evaluation.findFirst({
-        where: { companyId: daraUser.companyId, reviewId, personaId: persona.id }
-      });
-      return (
-        existing ??
-        tx.evaluation.create({
-          data: {
-            companyId: daraUser.companyId,
-            solicitationId: solId,
-            reviewId,
-            personaId: persona.id,
-            status: 'pending'
-          }
-        })
-      );
-    });
-    if (evaluation.status === 'complete') {
-      // Already done from a prior run — count it (evaluation factors only) and move on.
-      totalDone += await withTenant(daraUser.companyId, (tx) =>
-        tx.result.count({ where: { evaluationId: evaluation.id, companyId: daraUser.companyId } })
-      );
-      totalReqs += await withTenant(daraUser.companyId, (tx) =>
-        tx.requirement.count({
-          where: { solicitationId: solId, companyId: daraUser.companyId, removedAt: null, isScored: true }
-        })
-      );
-      continue;
-    }
-    if (Date.now() > deadline) {
-      allComplete = false;
-      break;
-    }
-    // ...then run it OUTSIDE any transaction — runEvaluation manages its own
-    // withTenant bursts around the slow LLM calls (do not nest transactions).
-    const summary = await runEvaluation(evaluation.id, daraUser.companyId, deadline);
-    totalResults += summary.results;
-    totalErrors += summary.errors;
-    totalDone += summary.done ?? 0;
-    totalReqs += summary.total ?? 0;
-    if ((summary.done ?? 0) < (summary.total ?? 0)) allComplete = false;
-  }
-
-  // Bundled compliance matrix: sweep the pass/fail administrative requirements against
-  // this review's snapshot (objective, persona-independent — run once per run).
-  let complianceChecked = 0;
-  if (Date.now() < deadline) {
-    const sweep = await runComplianceSweep(reviewId, daraUser.companyId, deadline);
-    complianceChecked = sweep.checked;
-  } else {
-    allComplete = false;
-  }
-
-  await withTenant(daraUser.companyId, (tx) =>
-    tx.review.update({
-      where: { id: reviewId },
-      data: { status: allComplete ? 'complete' : 'in_progress' }
-    })
-  );
+  await enqueueReviewRun(reviewId, daraUser.companyId);
   await recordAudit({
     action: 'review.run',
     companyId: daraUser.companyId,
@@ -849,24 +757,28 @@ async function runReviewAction(formData: FormData): Promise<RunState> {
     // Record the CUI egress target for the data-boundary trail (DARA-007).
     metadata: {
       solicitationId: solId.toString(),
-      personas: personas.length,
-      results: totalResults,
-      complianceChecked,
-      complete: allComplete,
+      kind: 'review_passes',
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
   });
+  // Kick the worker immediately (fire-and-forget); the every-minute cron is the backstop.
+  triggerWorker();
   revalidatePath(`/app/solicitations/${solId}`);
-  return {
-    ok: totalResults > 0 || allComplete,
-    personas: personas.length,
-    results: totalResults,
-    errors: totalErrors,
-    done: totalDone,
-    total: totalReqs,
-    complianceChecked
-  };
+  return { ok: true };
+}
+
+// Re-run / retry a single pass (leaves the review's other passes untouched).
+async function rerunPassAction(formData: FormData): Promise<{ ok: boolean }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  const passId = BigInt(String(formData.get('passId')));
+  await requireViewableSolicitation(solId, daraUser);
+  await enqueuePassRun(passId, daraUser.companyId);
+  triggerWorker();
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
 }
 
 // ---- Regenerate / archive a single result (section) ----
@@ -947,7 +859,11 @@ export default async function SolicitationDetailPage({
           orderBy: { createdAt: 'desc' },
           include: {
             documents: { orderBy: { capturedAt: 'desc' } },
-            reviewPersonas: true
+            reviewPersonas: true,
+            passes: {
+              orderBy: { passType: 'asc' },
+              include: { findings: { orderBy: { sortOrder: 'asc' } } }
+            }
           }
         },
         evaluations: {
@@ -1484,9 +1400,6 @@ export default async function SolicitationDetailPage({
       {stageReviews.map((rv) => {
         const ct = COLOR_TEAM_MAP[rv.colorTeam] ?? COLOR_TEAM_MAP.pink;
         const sel = new Set(rv.reviewPersonas.map((rp) => rp.personaId.toString()));
-        const runCount = sel.size
-          ? personas.filter((p) => p.isActive && sel.has(p.id.toString())).length
-          : activeCount;
         const reviewEvals = solicitation.evaluations.filter((e) => e.reviewId === rv.id);
         return (
           <div key={rv.id.toString()} className={`${card} p-3`}>
@@ -1506,46 +1419,69 @@ export default async function SolicitationDetailPage({
               </span>
             </div>
 
-            {/* Controls */}
-            <div className="no-print mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
-              <RunPanel
-                action={runReviewAction}
-                solId={sid}
-                reviewId={rv.id.toString()}
-                activeCount={runCount}
-                disabled={!canEvaluate || rv.documents.length === 0}
-              />
-              <div className="flex items-center gap-2">
-                <form action={captureSnapshotAction}>
-                  <input type="hidden" name="solId" value={sid} />
-                  <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                  <button type="submit" className={`${btnGhost} !py-1.5 !text-[12px]`}><Upload className="h-3.5 w-3.5" />{rv.snapshotAt ? 'Re-capture' : 'Capture draft'}</button>
-                </form>
-                <form action={deleteReview}>
-                  <input type="hidden" name="solId" value={sid} />
-                  <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                  <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#e07d7d]"><Trash2 className="h-3.5 w-3.5" /></button>
-                </form>
-              </div>
+            {/* Snapshot / delete controls */}
+            <div className="no-print mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-line pt-2">
+              <form action={captureSnapshotAction}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                <button type="submit" className={`${btnGhost} !py-1.5 !text-[12px]`}><Upload className="h-3.5 w-3.5" />{rv.snapshotAt ? 'Re-capture' : 'Capture draft'}</button>
+              </form>
+              <form action={deleteReview}>
+                <input type="hidden" name="solId" value={sid} />
+                <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#e07d7d]"><Trash2 className="h-3.5 w-3.5" /></button>
+              </form>
             </div>
 
-            {/* Holistic findings */}
-            {reviewEvals.length > 0 && (
-              <div className="mt-3 space-y-3 border-t border-line pt-3">
-                {reviewEvals.map((e) => {
-                  const active = e.results.filter((res) => !res.archivedAt);
-                  return (
-                    <div key={e.id.toString()}>
-                      <div className="mb-1.5 flex items-center gap-2 text-[12px]">
-                        <span className="font-semibold text-t2">{personaMap.get(e.personaId.toString()) ?? 'Reviewer'}</span>
-                        <StatusBadge status={e.status} />
-                      </div>
-                      {e.errorMessage && (
-                        <p className="mb-2 rounded-lg border border-[#5a1f1f]/50 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e07d7d]">{e.errorMessage}</p>
-                      )}
-                      {active.length === 0 ? (
-                        <p className="text-[12px] text-t5">No findings yet — run this review.</p>
-                      ) : (
+            {/* Multi-pass AI review */}
+            <div className="mt-3 border-t border-line pt-3">
+              <ReviewPassPanel
+                solId={sid}
+                reviewId={rv.id.toString()}
+                canRun={canEvaluate && rv.documents.length > 0}
+                disabledReason={
+                  rv.documents.length === 0
+                    ? 'Capture the proposal draft first (button above).'
+                    : 'Add at least one requirement (Compliance stage) and one active persona.'
+                }
+                runAction={runReviewAction}
+                rerunAction={rerunPassAction}
+                passes={rv.passes.map((p) => ({
+                  id: p.id.toString(),
+                  passType: p.passType,
+                  status: p.status,
+                  score: p.score,
+                  progress: p.progress,
+                  progressLabel: p.progressLabel,
+                  findingsCount: p.findingsCount,
+                  errorMessage: p.errorMessage,
+                  findings: p.findings.map((f) => ({
+                    id: f.id.toString(),
+                    severity: f.severity,
+                    text: f.text,
+                    requirementRef: f.requirementRef,
+                    recommendedAction: f.recommendedAction
+                  }))
+                }))}
+              />
+            </div>
+
+            {/* Legacy per-reviewer holistic findings (prior runs) */}
+            {reviewEvals.some((e) => e.results.some((res) => !res.archivedAt)) && (
+              <details className="no-print mt-3 border-t border-line pt-2">
+                <summary className="cursor-pointer list-none font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                  Earlier per-reviewer findings ({reviewEvals.length})
+                </summary>
+                <div className="mt-2 space-y-3">
+                  {reviewEvals.map((e) => {
+                    const active = e.results.filter((res) => !res.archivedAt);
+                    if (active.length === 0) return null;
+                    return (
+                      <div key={e.id.toString()}>
+                        <div className="mb-1.5 flex items-center gap-2 text-[12px]">
+                          <span className="font-semibold text-t2">{personaMap.get(e.personaId.toString()) ?? 'Reviewer'}</span>
+                          <StatusBadge status={e.status} />
+                        </div>
                         <div className="space-y-2">
                           {active.map((res) => (
                             <ResultCard
@@ -1557,11 +1493,11 @@ export default async function SolicitationDetailPage({
                             />
                           ))}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
             )}
 
             {/* Settings (collapsed) */}

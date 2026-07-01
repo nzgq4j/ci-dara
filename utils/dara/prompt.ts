@@ -768,3 +768,151 @@ function truncate(text: string, maxWords = 60000): string {
   if (words.length <= maxWords) return text;
   return words.slice(0, maxWords).join(' ') + '\n\n[Document truncated to fit context limit]';
 }
+
+// ===================== Multi-pass AI review =====================
+
+export const PASS_TYPES = ['compliance_format', 'technical_responsiveness', 'risk_competitive'] as const;
+export type PassTypeValue = (typeof PASS_TYPES)[number];
+
+export const FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+export type FindingSeverityValue = (typeof FINDING_SEVERITIES)[number];
+
+// Per-pass lens: the label, one-line description, what its score measures, and the
+// review instructions handed to the model. These three fixed lenses are the design's
+// Pass 1 / 2 / 3.
+export const PASS_LENS: Record<PassTypeValue, {
+  label: string;
+  blurb: string;
+  scoreMeans: string;
+  guidance: string;
+}> = {
+  compliance_format: {
+    label: 'Compliance & Format Check',
+    blurb: 'Validates proposal structure, volume/page limits, required forms, and formatting',
+    scoreMeans: 'overall administrative & format compliance readiness',
+    guidance:
+      'Check the proposal draft against the solicitation\'s Section L instructions and administrative/pass-fail requirements: required volumes and their order, page/format limits (page counts, fonts, margins), mandatory forms and certifications, submission mechanics, and required attachments/exhibits. Each finding is a concrete compliance or format gap (missing form, over-limit volume, absent section, unmet instruction).'
+  },
+  technical_responsiveness: {
+    label: 'Technical Responsiveness Review',
+    blurb: 'Evaluates alignment of the technical approach with PWS/SOW requirements and Section M subfactors',
+    scoreMeans: 'how completely and strongly the technical approach responds to the requirements and evaluation factors',
+    guidance:
+      'Evaluate how well the proposal\'s technical/management approach addresses every PWS/SOW performance requirement and each Section M evaluation factor/subfactor. Each finding is an unaddressed or weakly-addressed requirement/subfactor, a coverage gap, or a response that would not earn a strong rating. Cite the specific requirement/subfactor.'
+  },
+  risk_competitive: {
+    label: 'Risk & Competitive Assessment',
+    blurb: 'Identifies programmatic risks, competitive gaps, and areas requiring strengthening',
+    scoreMeans: 'competitive position and freedom from unmitigated risk',
+    guidance:
+      'Assess the proposal for programmatic and performance risks, weaknesses a competitor could exploit, discriminators that are missing or under-developed, and areas that need strengthening to win. Each finding is a risk or competitive gap with the impact it carries. Prefer recall — surface everything a color-team reviewer would raise.'
+  }
+};
+
+const PASS_SCHEMA =
+  '{"score": <integer 0-100>, "summary": "<1-2 sentence overall assessment of this pass>", "findings": [{' +
+  '"severity": "<critical | high | medium | low>", ' +
+  '"finding": "<the specific issue, concrete and evidence-based>", ' +
+  '"ref": "<the requirement/section it relates to, e.g. \\"L-1.1.3\\", \\"M § 2.1\\", \\"PWS 3.4.2\\" — empty string if none>", ' +
+  '"recommended_action": "<what the team should do to resolve it>"' +
+  '}]}';
+
+export interface ParsedPass {
+  score: number | null;
+  summary: string;
+  findings: {
+    severity: FindingSeverityValue;
+    text: string;
+    requirementRef: string;
+    recommendedAction: string;
+  }[];
+}
+
+/**
+ * Build the prompt for one pass of a multi-pass AI review. `requirementsRef` is a compact
+ * list of the solicitation's requirements (name + citation) the model can cite in findings.
+ */
+export function buildPassPrompt(
+  passType: PassTypeValue,
+  solText: string,
+  proposalText: string,
+  requirementsRef: string
+): { system: string; user: string } {
+  const lens = PASS_LENS[passType];
+  const token = randomBytes(9).toString('hex');
+  const sol = fenceUntrusted('SOLICITATION', truncate(solText, 40000), token);
+  const proposal = fenceUntrusted('PROPOSAL', truncate(proposalText, 40000), token);
+
+  const system =
+    'You are a senior government-contracting proposal reviewer conducting a structured, ' +
+    `single-lens review pass: "${lens.label}". ${lens.guidance} ` +
+    'You produce a numeric score and a list of severity-ranked findings, each tied to a ' +
+    'specific requirement where possible and paired with a concrete recommended action. ' +
+    'Be rigorous and specific; cite evidence from the proposal and solicitation. Respond ' +
+    'only in the JSON format specified.';
+
+  const user =
+    `## Solicitation (reference)\n\n${sol}\n\n` +
+    `## Proposal draft under review\n\n${proposal}\n\n` +
+    (requirementsRef.trim()
+      ? `## Requirements checklist (cite these in "ref" where relevant)\n\n${truncate(requirementsRef, 6000)}\n\n`
+      : '') +
+    `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    `Perform the "${lens.label}" pass. ${lens.guidance}\n\n` +
+    `Assign a "score" from 0-100 representing ${lens.scoreMeans} (100 = fully ready / no issues). ` +
+    'List every material finding, most severe first. Use "critical" for a gap that would make the ' +
+    'proposal non-compliant or non-competitive, "high" for a serious weakness, "medium" for a ' +
+    'notable improvement, "low" for a minor polish item. Do not invent requirements not in the ' +
+    'documents. If the proposal draft is empty or missing, return score 0 and a single critical ' +
+    'finding saying no proposal draft was captured.\n\n' +
+    `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${PASS_SCHEMA}\n\n` +
+    'Do not include any text outside the JSON object.';
+
+  return { system, user };
+}
+
+function mapFinding(f: any): ParsedPass['findings'][number] | null {
+  const sevRaw = String(f?.severity ?? '').trim().toLowerCase();
+  const severity = (FINDING_SEVERITIES as readonly string[]).includes(sevRaw)
+    ? (sevRaw as FindingSeverityValue)
+    : 'medium';
+  const text = String(f?.finding ?? f?.text ?? '').trim();
+  if (!text) return null;
+  return {
+    severity,
+    text: text.slice(0, 2000),
+    requirementRef: String(f?.ref ?? f?.requirement_ref ?? '').trim().slice(0, 200),
+    recommendedAction: String(f?.recommended_action ?? f?.action ?? '').trim().slice(0, 2000)
+  };
+}
+
+/** Parse a pass response into a score + findings; tolerant of truncated arrays. */
+export function parsePassResult(text: string): ParsedPass {
+  const cleaned = stripFences(text);
+  let score: number | null = null;
+  let summary = '';
+  let list: any[] = [];
+  try {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    const data = JSON.parse(m ? m[0] : cleaned);
+    if (data?.score != null && Number.isFinite(Number(data.score))) score = Number(data.score);
+    summary = String(data?.summary ?? '').trim();
+    if (Array.isArray(data?.findings)) list = data.findings;
+  } catch {
+    /* fall through to salvage */
+  }
+  if (list.length === 0) list = extractArrayObjects(cleaned, 'findings');
+  if (score === null) {
+    const sm = cleaned.match(/"score"\s*:\s*(\d{1,3})/);
+    if (sm) score = Number(sm[1]);
+  }
+  if (!summary) {
+    const sm = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (sm) summary = sm[1];
+  }
+  if (score !== null) score = Math.max(0, Math.min(100, Math.round(score)));
+  const findings = list
+    .map(mapFinding)
+    .filter((f): f is ParsedPass['findings'][number] => f !== null);
+  return { score, summary: summary.slice(0, 500), findings };
+}

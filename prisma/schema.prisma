@@ -96,6 +96,32 @@ enum RequirementDisposition {
   administrative
 }
 
+// The three fixed lenses of a multi-pass AI review. Each color-team review runs all
+// three in sequence, each producing a score + severity-ranked findings.
+enum ReviewPassType {
+  compliance_format         // Pass 1 — structure, volume/page limits, required forms, formatting
+  technical_responsiveness  // Pass 2 — technical approach vs PWS reqs + Section M subfactors
+  risk_competitive          // Pass 3 — programmatic risks, competitive gaps, areas to strengthen
+}
+
+// Lifecycle of one pass within a review run. Passes run sequentially (queued → running
+// → complete), each independently re-runnable; error is terminal until retried.
+enum PassStatus {
+  not_started
+  queued
+  running
+  complete
+  error
+}
+
+// Severity of a single AI-review finding.
+enum FindingSeverity {
+  critical
+  high
+  medium
+  low
+}
+
 // Color-team gate label for a review. A freeform label only — review behavior comes
 // from the chosen personas, not the color.
 enum ColorTeam {
@@ -546,10 +572,60 @@ model Review {
   documents      ReviewDocument[]
   reviewPersonas ReviewPersona[]
   evaluations    Evaluation[]
+  passes         ReviewPass[]
 
   @@index([solicitationId])
   @@index([companyId])
   @@map("dara_reviews")
+}
+
+// One pass of a review's multi-pass AI evaluation. A review has (up to) three — one per
+// ReviewPassType — created when a run is enqueued and driven by the async worker. Holds
+// the pass score, live progress, and links to its findings. Mirrors the design's pass
+// cards (status · score · findings · re-run/retry).
+model ReviewPass {
+  id            BigInt         @id @default(autoincrement())
+  companyId     BigInt         @map("company_id")
+  reviewId      BigInt         @map("review_id")
+  passType      ReviewPassType @map("pass_type")
+  status        PassStatus     @default(not_started)
+  score         Int? // 0-100, null until complete
+  progress      Int            @default(0) // 0-100, for the live bar while running
+  progressLabel String         @default("") @map("progress_label") @db.VarChar(200)
+  findingsCount Int            @default(0) @map("findings_count")
+  errorMessage  String?        @map("error_message") @db.VarChar(500)
+  startedAt     DateTime?      @map("started_at")
+  completedAt   DateTime?      @map("completed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at")
+
+  review   Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  findings Finding[]
+
+  @@unique([reviewId, passType])
+  @@index([companyId])
+  @@index([reviewId])
+  @@map("dara_review_passes")
+}
+
+// A single severity-ranked finding produced by a review pass: the issue, the requirement
+// it references, and the recommended action. Rebuilt on each pass re-run.
+model Finding {
+  id                BigInt          @id @default(autoincrement())
+  companyId         BigInt          @map("company_id")
+  passId            BigInt          @map("pass_id")
+  severity          FindingSeverity
+  text              String
+  requirementRef    String          @default("") @map("requirement_ref") @db.VarChar(200)
+  recommendedAction String          @default("") @map("recommended_action")
+  sortOrder         Int             @default(0) @map("sort_order")
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  pass ReviewPass @relation(fields: [passId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([passId])
+  @@map("dara_findings")
 }
 
 // A frozen snapshot of one proposal-draft document captured for a review (evolved
