@@ -26,6 +26,7 @@ import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
+import AddSection from '@/components/dara/AddSection';
 import RunPanel, { type RunState } from '@/components/dara/RunPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
 import {
@@ -1011,91 +1012,89 @@ export default async function SolicitationDetailPage({
   // ===================== Tab panels =====================
 
   const overviewPanel = (
-    <div className="space-y-6">
-      <section className={`${card} p-6`}>
-        <h2 className={`mb-4 ${sectionTitle}`}>Details</h2>
-        <form action={updateSolicitation} className="space-y-4">
+    <div className="grid gap-3 lg:grid-cols-2">
+      <section className={`${card} p-4`}>
+        <h2 className={`mb-3 ${sectionTitle}`}>Details</h2>
+        <form action={updateSolicitation} className="space-y-2.5">
           <input type="hidden" name="solId" value={sid} />
-          <div className="space-y-1.5">
-            <label htmlFor="title" className={labelClasses}>
-              Title <span className="text-[#3b6ef0]">*</span>
-            </label>
+          <div className="space-y-1">
+            <label htmlFor="title" className={labelClasses}>Title <span className="text-[#3b6ef0]">*</span></label>
             <input id="title" name="title" type="text" required defaultValue={solicitation.title} className={fieldClasses} />
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <div className="space-y-1">
               <label htmlFor="solNumber" className={labelClasses}>Solicitation Number</label>
               <input id="solNumber" name="solNumber" type="text" defaultValue={solicitation.solNumber} className={fieldClasses} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label htmlFor="agency" className={labelClasses}>Agency</label>
               <input id="agency" name="agency" type="text" defaultValue={solicitation.agency} className={fieldClasses} />
             </div>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <label htmlFor="notes" className={labelClasses}>Notes</label>
-            <textarea id="notes" name="notes" rows={3} defaultValue={solicitation.notes ?? ''} className={fieldClasses} />
+            <textarea id="notes" name="notes" rows={2} defaultValue={solicitation.notes ?? ''} className={fieldClasses} />
           </div>
           <div className="flex justify-end">
-            <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save changes</button>
+            <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save</button>
           </div>
         </form>
       </section>
 
-      <section className={`${card} p-6`}>
-        <h2 className={`mb-1 ${sectionTitle}`}>Departments</h2>
-        <p className="mb-4 text-[13px] text-t4">
-          Members of an assigned department can see this solicitation. Company admins
-          and the creator can always see it; with no departments assigned, no one else can.
-        </p>
-        {allTeams.length === 0 ? (
-          <p className="text-[13px] text-t5">
-            No departments exist yet. Create them on the{' '}
-            <Link href="/app/team" className="text-[#3b6ef0] hover:underline">Team</Link> page.
+      <div className="space-y-3">
+        <section className={`${card} p-4`}>
+          <h2 className={`mb-1 ${sectionTitle}`}>Departments</h2>
+          <p className="mb-3 text-[12px] text-t4">
+            Members of an assigned department can see this solicitation (admins + creator always can).
           </p>
-        ) : canManageDepts ? (
-          <form action={setSolicitationDepartments} className="space-y-4">
-            <input type="hidden" name="solId" value={sid} />
-            <div className="flex flex-wrap gap-2">
-              {allTeams.map((t) => (
-                <label
-                  key={t.id.toString()}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t3 transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1"
-                >
-                  <input type="checkbox" name="dept" value={t.id.toString()} defaultChecked={assignedTeamIds.has(t.id.toString())} className="peer sr-only" />
-                  <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
-                  {t.name}
-                </label>
+          {allTeams.length === 0 ? (
+            <p className="text-[12px] text-t5">
+              No departments yet — create them on the{' '}
+              <Link href="/app/team" className="text-[#3b6ef0] hover:underline">Team</Link> page.
+            </p>
+          ) : canManageDepts ? (
+            <form action={setSolicitationDepartments} className="space-y-3">
+              <input type="hidden" name="solId" value={sid} />
+              <div className="flex flex-wrap gap-1.5">
+                {allTeams.map((t) => (
+                  <label
+                    key={t.id.toString()}
+                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[12px] text-t3 transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1"
+                  >
+                    <input type="checkbox" name="dept" value={t.id.toString()} defaultChecked={assignedTeamIds.has(t.id.toString())} className="peer sr-only" />
+                    <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
+              </div>
+            </form>
+          ) : solicitation.departments.length === 0 ? (
+            <p className="text-[12px] text-t5">No departments assigned.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {solicitation.departments.map((d) => (
+                <span key={d.id.toString()} className="inline-flex items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[12px] text-t3">
+                  <span className="h-2 w-2 rounded-full bg-[#3b6ef0]" />{d.team.name}
+                </span>
               ))}
             </div>
-            <div className="flex justify-end">
-              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save departments</button>
-            </div>
-          </form>
-        ) : solicitation.departments.length === 0 ? (
-          <p className="text-[13px] text-t5">No departments assigned.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {solicitation.departments.map((d) => (
-              <span key={d.id.toString()} className="inline-flex items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t3">
-                <span className="h-2 w-2 rounded-full bg-[#3b6ef0]" />{d.team.name}
-              </span>
-            ))}
-          </div>
-        )}
-      </section>
+          )}
+        </section>
 
-      <section className="rounded-[10px] border border-[#5a1f1f]/50 bg-surf p-6">
-        <h2 className={sectionTitle}>Danger zone</h2>
-        <p className="mt-1 text-[13px] text-t4">
-          Deleting this solicitation also removes its requirements, offerors,
-          documents, and evaluations. This cannot be undone.
-        </p>
-        <form action={deleteSolicitation} className="mt-4">
-          <input type="hidden" name="solId" value={sid} />
-          <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete solicitation</button>
-        </form>
-      </section>
+        <section className="flex items-center justify-between gap-3 rounded-[10px] border border-[#5a1f1f]/50 bg-surf px-4 py-3">
+          <p className="text-[12px] text-t4">
+            <span className="font-semibold text-t3">Delete solicitation</span> — removes its
+            requirements, reviews, documents, and evaluations. Cannot be undone.
+          </p>
+          <form action={deleteSolicitation} className="flex-shrink-0">
+            <input type="hidden" name="solId" value={sid} />
+            <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete</button>
+          </form>
+        </section>
+      </div>
     </div>
   );
 
@@ -1225,7 +1224,7 @@ export default async function SolicitationDetailPage({
         )}
       </div>
 
-      {/* Requirements grouped by source */}
+      {/* Compliance matrix — dense, inline-editable table */}
       {requirements.length === 0 ? (
         <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-10 text-center`}>
           <Inbox className="h-8 w-8 text-t5" />
@@ -1234,93 +1233,85 @@ export default async function SolicitationDetailPage({
           </p>
         </div>
       ) : (
-        REQUIREMENT_SOURCES.map((s) => {
-          const group = requirements.filter((r) => r.source === s.value);
-          if (group.length === 0) return null;
-          return (
-            <div key={s.value} className="space-y-3">
-              <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
-                {s.label} ({group.length})
-              </h3>
-              {group.map((r) => (
-                <div key={r.id.toString()} className={`${card} p-4`}>
-                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${STATUS_PILL[r.complianceStatus]}`}>
-                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                      {r.isScored ? 'scored factor' : (COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus)}
-                    </span>
-                    {r.addedByAmendmentId && (
-                      <span className="rounded bg-[#1f5a31]/25 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#7de0a0]">
-                        added by amendment
-                      </span>
-                    )}
-                    {r.changedByAmendmentId && (
-                      <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
-                        amended · v{r.version}
-                      </span>
+        <div className={`${card} overflow-x-auto`}>
+          <div className="min-w-[780px]">
+            <div className="grid grid-cols-[118px_minmax(0,1fr)_150px_54px_128px_38px_38px] items-center gap-2 bg-surf2 px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5">
+              <span>Status</span>
+              <span>Requirement</span>
+              <span>Source</span>
+              <span className="text-center">Scored</span>
+              <span>Proposal ref</span>
+              <span className="col-span-2 text-right">Edit</span>
+            </div>
+            {requirements.map((r) => (
+              <div
+                key={r.id.toString()}
+                className="grid grid-cols-[118px_minmax(0,1fr)_150px_54px_128px_38px_38px] items-center gap-2 border-t border-line px-3 py-1.5"
+              >
+                <form action={updateRequirement} className="contents">
+                  <input type="hidden" name="solId" value={sid} />
+                  <input type="hidden" name="requirementId" value={r.id.toString()} />
+                  <input type="hidden" name="description" value={r.description ?? ''} />
+                  <input type="hidden" name="farReference" value={r.farReference} />
+                  <input type="hidden" name="weight" value={r.weight} />
+                  <select
+                    name="complianceStatus"
+                    defaultValue={r.complianceStatus}
+                    className={`w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] font-semibold outline-none ${STATUS_PILL[r.complianceStatus]}`}
+                  >
+                    {COMPLIANCE_STATUSES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                  </select>
+                  <div className="min-w-0">
+                    <input
+                      name="name"
+                      defaultValue={r.name}
+                      className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-[#3b6ef0]/50"
+                    />
+                    {(r.description || r.addedByAmendmentId || r.changedByAmendmentId) && (
+                      <div className="flex items-center gap-1.5 px-1">
+                        {r.description && (
+                          <span className="truncate text-[10px] text-t5" title={r.description}>{r.description}</span>
+                        )}
+                        {r.addedByAmendmentId && (
+                          <span className="flex-shrink-0 rounded bg-[#1f5a31]/25 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#7de0a0]">new</span>
+                        )}
+                        {r.changedByAmendmentId && (
+                          <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#e0c97d]">amended v{r.version}</span>
+                        )}
+                      </div>
                     )}
                   </div>
-                  <form action={updateRequirement} className="space-y-3">
-                    <input type="hidden" name="solId" value={sid} />
-                    <input type="hidden" name="requirementId" value={r.id.toString()} />
-                    <div className="grid gap-3 sm:grid-cols-12">
-                      <div className="space-y-1.5 sm:col-span-8">
-                        <label className={labelClasses}>Requirement</label>
-                        <input name="name" type="text" defaultValue={r.name} className={fieldClasses} />
-                      </div>
-                      <div className="space-y-1.5 sm:col-span-4">
-                        <label className={labelClasses}>Source</label>
-                        <select name="source" defaultValue={r.source} className={fieldClasses}>
-                          {REQUIREMENT_SOURCES.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className={labelClasses}>Requirement text</label>
-                      <textarea name="description" rows={2} defaultValue={r.description ?? ''} className={fieldClasses} />
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-12">
-                      <div className="space-y-1.5 sm:col-span-4">
-                        <label className={labelClasses}>Compliance</label>
-                        <select name="complianceStatus" defaultValue={r.complianceStatus} className={fieldClasses}>
-                          {COMPLIANCE_STATUSES.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-1.5 sm:col-span-4">
-                        <label className={labelClasses}>Proposal reference</label>
-                        <input name="proposalRef" type="text" defaultValue={r.proposalRef} placeholder="Vol / §  / page" className={fieldClasses} />
-                      </div>
-                      <div className="space-y-1.5 sm:col-span-2">
-                        <label className={labelClasses}>FAR Ref.</label>
-                        <input name="farReference" type="text" defaultValue={r.farReference} className={fieldClasses} />
-                      </div>
-                      <div className="space-y-1.5 sm:col-span-2">
-                        <label className={labelClasses}>Weight</label>
-                        <input name="weight" type="number" defaultValue={r.weight} className={fieldClasses} />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-t3">
-                        <input type="checkbox" name="isScored" defaultChecked={r.isScored} className="h-3.5 w-3.5 accent-[#3b6ef0]" />
-                        Scored factor
-                      </label>
-                      <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
-                    </div>
-                  </form>
-                  <form action={deleteRequirement} className="mt-2 flex justify-end border-t border-line pt-2">
-                    <input type="hidden" name="solId" value={sid} />
-                    <input type="hidden" name="requirementId" value={r.id.toString()} />
-                    <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete</button>
-                  </form>
-                </div>
-              ))}
-            </div>
-          );
-        })
+                  <select
+                    name="source"
+                    defaultValue={r.source}
+                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t3 outline-none"
+                  >
+                    {REQUIREMENT_SOURCES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                  </select>
+                  <label className="flex cursor-pointer justify-center">
+                    <input type="checkbox" name="isScored" defaultChecked={r.isScored} className="h-3.5 w-3.5 accent-[#3b6ef0]" />
+                  </label>
+                  <input
+                    name="proposalRef"
+                    defaultValue={r.proposalRef}
+                    placeholder="Vol/§/pg"
+                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-[#3b6ef0]/50"
+                  />
+                  <button type="submit" title="Save row" className="flex justify-center rounded border border-line py-1 text-t4 transition-colors hover:text-[#7de0a0]">
+                    <Save className="h-3.5 w-3.5" />
+                  </button>
+                </form>
+                <form action={deleteRequirement} className="contents">
+                  <input type="hidden" name="solId" value={sid} />
+                  <input type="hidden" name="requirementId" value={r.id.toString()} />
+                  <button type="submit" title="Delete row" className="flex justify-center rounded border border-line py-1 text-t5 transition-colors hover:text-[#e07d7d]">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </form>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Removed by amendment (retained, excluded from the active matrix) */}
@@ -1341,8 +1332,7 @@ export default async function SolicitationDetailPage({
       )}
 
       {/* Add requirement */}
-      <div className={`${cardDashed} p-4`}>
-        <h3 className={`mb-3 ${sectionTitle}`}>Add requirement</h3>
+      <AddSection label="Add requirement">
         <form action={addRequirement} className="space-y-3">
           <input type="hidden" name="solId" value={sid} />
           <input type="hidden" name="sortOrder" value={requirements.length} />
@@ -1384,7 +1374,7 @@ export default async function SolicitationDetailPage({
             <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add requirement</button>
           </div>
         </form>
-      </div>
+      </AddSection>
     </div>
   );
 
@@ -1524,8 +1514,7 @@ export default async function SolicitationDetailPage({
         );
       })}
 
-      <div className={`${cardDashed} p-4`}>
-        <h3 className={`mb-3 ${sectionTitle}`}>New {ct.label}-team review</h3>
+      <AddSection label={`New ${ct.label}-team review`}>
         <form action={createReview} className="space-y-3">
           <input type="hidden" name="solId" value={sid} />
           <input type="hidden" name="colorTeam" value={focusColor} />
@@ -1542,7 +1531,7 @@ export default async function SolicitationDetailPage({
             <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Create {ct.label} review</button>
           </div>
         </form>
-      </div>
+      </AddSection>
     </div>
     );
   };
@@ -1736,6 +1725,38 @@ export default async function SolicitationDetailPage({
         versioned; removed ones are retained but struck).
       </p>
 
+      {/* Amendment log */}
+      {amendments.length > 0 && (
+        <div>
+          <h3 className={`mb-2 ${sectionTitle}`}>Amendment log</h3>
+          <div className={`${card} overflow-x-auto`}>
+            <table className="w-full border-collapse text-left text-[12px]">
+              <thead>
+                <tr className="bg-surf2">
+                  {['Amendment', 'Title', 'Effective', 'Docs', 'Changes', 'Status'].map((h, i) => (
+                    <th key={h} className={`px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5 ${i >= 3 ? 'text-center' : ''}`}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {amendments.map((a) => (
+                  <tr key={a.id.toString()} className="border-t border-line">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono font-semibold text-t2">#{a.number || '—'}</td>
+                    <td className="px-3 py-2 text-t3">{a.title || <span className="text-t5">—</span>}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-t4">{a.effectiveDate ? fmtDate(a.effectiveDate) : '—'}</td>
+                    <td className="px-3 py-2 text-center text-t4">{a.documents.length}</td>
+                    <td className="px-3 py-2 text-center text-t4">{a.changes.length}</td>
+                    <td className="px-3 py-2 text-center"><StatusBadge status={a.reconciliationStatus} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {amendments.map((a) => {
         const proposedChanges = a.changes.filter((c) => c.status === 'proposed');
         const resolved = a.changes.filter((c) => c.status !== 'proposed');
@@ -1882,9 +1903,7 @@ export default async function SolicitationDetailPage({
         );
       })}
 
-      {/* New amendment */}
-      <div className={`${cardDashed} p-4`}>
-        <h3 className={`mb-3 ${sectionTitle}`}>New amendment</h3>
+      <AddSection label="Log new amendment">
         <form action={createAmendment} className="space-y-3">
           <input type="hidden" name="solId" value={sid} />
           <div className="grid gap-3 sm:grid-cols-12">
@@ -1905,7 +1924,7 @@ export default async function SolicitationDetailPage({
             <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add amendment</button>
           </div>
         </form>
-      </div>
+      </AddSection>
     </div>
   );
 
