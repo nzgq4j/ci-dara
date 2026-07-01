@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X } from 'lucide-react';
 
 // An "add" affordance: a compact button that opens the form in a MODAL — never a
@@ -28,7 +29,7 @@ export default function AddSection({
         {label}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-10"
           role="dialog"
@@ -52,7 +53,8 @@ export default function AddSection({
             </div>
             {children}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 // A "view full requirement" affordance for the dense compliance table: click the
@@ -48,7 +49,7 @@ export default function RequirementDetail({
         {abridged || 'View details'}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
@@ -84,7 +85,8 @@ export default function RequirementDetail({
               <Row label="Proposal ref" value={proposalRef} />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
