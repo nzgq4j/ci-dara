@@ -23,7 +23,7 @@ import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import PipelineStepper from '@/components/dara/PipelineStepper';
-import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
+import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
 import RunPanel, { type RunState } from '@/components/dara/RunPanel';
@@ -1124,10 +1124,6 @@ export default async function SolicitationDetailPage({
 
   const documentsPanel = (
     <div className="space-y-4">
-      <CuiBoundaryNotice
-        provider={daraUser.company.activeProvider}
-        mode={daraUser.company.aiKeyMode}
-      />
 
       <div className={`${card} p-5`}>
         <h2 className={`mb-1 ${sectionTitle}`}>Solicitation (RFP)</h2>
@@ -1168,10 +1164,6 @@ export default async function SolicitationDetailPage({
 
   const compliancePanel = (
     <div className="space-y-4">
-      <CuiBoundaryNotice
-        provider={daraUser.company.activeProvider}
-        mode={daraUser.company.aiKeyMode}
-      />
 
       {/* Generate + summary */}
       <div className={`${card} p-5`}>
@@ -1193,7 +1185,7 @@ export default async function SolicitationDetailPage({
               fields={{ solId: sid }}
               idle={<Sparkles className="h-4 w-4" />}
               label={requirements.length ? 'Generate more' : 'Generate from solicitation'}
-              pendingLabel="Shredding solicitation…"
+              pendingLabel="Reading the solicitation & extracting requirements…"
               noun="requirement"
               verb="added"
               className={btnPrimary}
@@ -1204,7 +1196,7 @@ export default async function SolicitationDetailPage({
                 fields={{ solId: sid }}
                 idle={<CheckSquare className="h-4 w-4" />}
                 label="Run compliance check"
-                pendingLabel="Checking compliance…"
+                pendingLabel={`Grading ${requirements.filter((r) => !r.isScored).length} pass/fail requirements against your proposal…`}
                 noun="requirement"
                 verb="checked"
                 className={btnGhost}
@@ -1438,10 +1430,6 @@ export default async function SolicitationDetailPage({
         <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-t4">{meta.desc}</p>
       </div>
 
-      <CuiBoundaryNotice
-        provider={daraUser.company.activeProvider}
-        mode={daraUser.company.aiKeyMode}
-      />
       {!canEvaluate && (
         <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
           To run a review you need at least one requirement (Compliance stage) and one active
@@ -1562,13 +1550,30 @@ export default async function SolicitationDetailPage({
   // Only 'running' = actively processing in a live request. 'pending' now means a
   // time-boxed run paused mid-way (resume by clicking Run again), so it must NOT spin
   // the live banner.
-  const runningCount = solicitation.evaluations.filter(
-    (e) => e.status === 'running'
-  ).length;
+  const runningEvals = solicitation.evaluations.filter((e) => e.status === 'running');
+  const runningCount = runningEvals.length;
+  // Live progress from the accumulating results: how many factor assessments are done
+  // across the running evaluations, and which factor is being reviewed right now.
+  let factorsDone = 0;
+  let currentFactorName = '';
+  for (const e of runningEvals) {
+    const doneForEval = e.results.filter((r) => !r.archivedAt);
+    factorsDone += doneForEval.length;
+    if (!currentFactorName) {
+      const doneIds = new Set(doneForEval.map((r) => r.requirementId.toString()));
+      const next = scoredFactors.find((f) => !doneIds.has(f.id.toString()));
+      if (next) currentFactorName = next.name;
+    }
+  }
+  const factorsTotal = runningEvals.length * scoredFactors.length;
+  const runLabel = currentFactorName
+    ? `Reviewing “${currentFactorName}”`
+    : factorsTotal > 0
+      ? 'Finishing factor reviews…'
+      : 'Checking compliance…';
 
   const reviewPanel = (
     <div className="space-y-6">
-      <RunningBanner count={runningCount} />
 
       {/* Scorecard: reviews × EVALUATION FACTORS (scored). The pass/fail administrative
           requirements are graded on the Compliance tab, not in this scorecard. */}
@@ -1724,10 +1729,6 @@ export default async function SolicitationDetailPage({
 
   const amendmentsPanel = (
     <div className="space-y-4">
-      <CuiBoundaryNotice
-        provider={daraUser.company.activeProvider}
-        mode={daraUser.company.aiKeyMode}
-      />
       <p className="text-[13px] text-t4">
         Upload an amendment, then reconcile it with AI: it diffs the amendment against the
         current compliance matrix and proposes additions, modifications, and removals for
@@ -1795,7 +1796,7 @@ export default async function SolicitationDetailPage({
                 fields={{ solId: sid, amendmentId: a.id.toString() }}
                 idle={<Sparkles className="h-4 w-4" />}
                 label={a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
-                pendingLabel="Reconciling…"
+                pendingLabel="Diffing the amendment against the compliance matrix…"
                 noun="change"
                 verb="proposed"
                 className={btnPrimary}
@@ -1950,16 +1951,31 @@ export default async function SolicitationDetailPage({
         <ArrowLeft className="h-4 w-4" />
         Back to Solicitations
       </Link>
-      <div className="mb-5">
-        <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
-          {solicitation.solNumber || 'No reference number'}
-          {solicitation.agency ? ` · ${solicitation.agency}` : ''}
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
+            {solicitation.solNumber || 'No reference number'}
+            {solicitation.agency ? ` · ${solicitation.agency}` : ''}
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
+          <p className="mt-1 text-[12px] text-t5">
+            Color review cycle — a suggested flow. Every stage is optional; jump to any stage.
+          </p>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
-        <p className="mt-1 text-[12px] text-t5">
-          Color review cycle — a suggested flow. Every stage is optional; jump to any stage.
-        </p>
+        <div className="flex-shrink-0 pt-1">
+          <CuiBoundaryModal
+            provider={daraUser.company.activeProvider}
+            mode={daraUser.company.aiKeyMode}
+          />
+        </div>
       </div>
+
+      <RunningBanner
+        count={runningCount}
+        done={factorsDone}
+        total={factorsTotal}
+        currentLabel={runLabel}
+      />
 
       <PipelineStepper stages={pipelineStages} tools={pipelineTools} views={pipelineViews} />
     </div>
