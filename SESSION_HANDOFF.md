@@ -1,6 +1,6 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-06-30 (end of session) · for: next session_
+_Prepared: 2026-07-01 (end of session) · for: next session_
 
 This is the "start here tomorrow" doc. Authoritative status lives in
 `BUILD_STATUS.md` (§2 decisions, §3 completed, §4 gaps, §7 session log); open
@@ -10,17 +10,27 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. The **color-team reframing is complete** — Phase 1
-  (Requirements/Compliance), Phase 2 (Color-team reviews), Phase 3 (Amendments + AI
-  reconciliation) all **migrated, deployed to prod, and pushed** this session. Earlier
-  commits this session, in order:
-  `4076ec7` (onboarding + Organization group + Company settings), `5ecc949` (Create
-  Account), `8fd5ac3` (invite email-verification gate), `d322114` (Application Admin),
-  `139368f` (Platform AI), `3d3b15b` (docs), `ae42c0c` (structured findings),
-  `e5a5bc7` (docs), `1bfb044` (non-BYOK AI lockdown + david demotion), `6a28608` (docs),
-  `f361d70` (eval progress/regenerate/archive/review-summary), `3441f34` (eval token
-  fix), `c81d576` (eval assessment formatting + suggested-changes), `d1836dc`
-  (reframing Phase 1: Requirements + Compliance matrix).
+- **Branch:** `main`, clean. Last commit `8125fd1` (**holistic review restore** — see
+  the core principle below). The **color-team reframing (Phases 1–3) is complete and
+  deployed**; the bulk of the 2026-07-01 session was **bug-fixing the review/eval flow on
+  real solicitation data** and a **course-correction back to a holistic review model**.
+- **Session arc 2026-07-01 (most recent first):**
+  `8125fd1` — **holistic review restored** + pass/fail → compliance matrix (the important
+  one; supersedes the "compliance-heavy" batching) · `d57eaa9` — duplicate-review guard +
+  redirect-after-create (fixes the create-crash → recreate loop) · `7e39b43`/`3e410a2` —
+  batched/tiered/resumable eval **[superseded by `8125fd1`]** · `f60017b` — amendment-diff
+  recall prompt · `f1155b3` — **two real prod bugs**: UTC-date `toLocaleDateString()`
+  hydration crash → `fmtDate`; shred returning nothing (8000-token truncation) → 16000 +
+  RFP-only + salvage parser + surfaced errors (`AiActionButton`) · `9a4e944` (Phase 2),
+  `aa46956` (Phase 3), `d1836dc` (Phase 1), `054a8e6` (docs).
+- **Design imported, not yet built:** `Color Review Cycle.dc.html` from the claude.ai
+  "SaaS conversion plan" project (read via the `DesignSync` MCP). It reframes the
+  solicitation workspace as a **9-stage pipeline** (Solicitation · Compliance · Kickoff ·
+  Pink · Red · Gold · White Glove · Compliance · Submit) with per-stage AI findings, a
+  multi-volume compliance matrix, and an amendment-workflow view. **Agreed approach:**
+  *hybrid* — adopt the pipeline UX but **reuse the existing engine**; end goal is the full
+  design. This is **Pass B** (top of the queue). Unescaped reference saved at
+  `…/scratchpad/ColorReviewCycle.html`.
 - **Prod:** https://dara.crucibleinsight.com
 - **Deploy method:** GitHub→Vercel auto-deploy is **not** firing. Manual flow:
   `edit → pnpm exec tsc --noEmit → pnpm build → git commit → vercel deploy --prod --yes → git push`.
@@ -34,6 +44,29 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ### Watch-outs (don't trip on these)
 
+- **⭐ CORE PRINCIPLE — a review is a HOLISTIC evaluation, not a per-requirement
+  checklist** (commit `8125fd1`). A color-team run does two distinct things:
+  **(1) holistic review** — the full structured assessment (review summary incl. *what it
+  was measured against* + how scored, rationale, strengths, weaknesses, compliance
+  commentary, suggested improvements w/ rationale, score/rating) per **evaluation factor**
+  (`isScored = true`, the few Section M factors), from each persona's perspective — the rich
+  `buildUserPrompt`/`parseResult` path (`runEvaluation`, scoped to `isScored`);
+  **(2) compliance matrix sweep** — `runComplianceSweep` runs a lean pass/fail determination
+  over the **administrative/pass-fail** requirements (`isScored = false`, the bulk) and sets
+  each requirement's `complianceStatus`. **DO NOT** turn the review back into a lean
+  per-requirement determination grind — that was the explicitly-corrected wrong turn. Mark
+  Section M factors as **Scored** on the Compliance tab so they get the holistic treatment.
+- **⚠️ Vercel deploy-skew traps open tabs.** After a `vercel --prod` deploy, an already-open
+  browser tab keeps running the *old* deployment (its server actions POST back to that
+  deployment) until a **hard refresh** (Ctrl+Shift+R). This bit us repeatedly during rapid
+  iteration — symptoms looked like "the fix didn't deploy" when it had. Always hard-refresh
+  after deploying before re-testing. (Optional future: disable Skew Protection or add a
+  "new version — reload" banner.)
+- **Large synchronous review runs are time-boxed + resumable.** `runReviewAction` runs under
+  a 200s budget; if it can't finish it leaves the eval `pending` and the RunPanel says
+  "click Run again to continue." With the holistic model the rich review only covers the few
+  scored factors, so this rarely triggers now — but the JobQueue + Vercel Cron worker remains
+  the proper "any size, zero clicks" fix (deferred).
 - **Product reframed: offerors → color-team gate reviews** (review *our own* proposal as
   it matures, not score competitors). The methodology is **never named** in UI/prompts/
   code/docs — use "color team review", gate names (Pink/Red/Gold/Blue/Green/Black/White),
@@ -75,25 +108,21 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   catalog: `utils/dara/ai-catalog.ts`. **Non-BYOK company accounts have no key/model
   choice** — Settings hides the provider/model/key inputs on platform mode (they appear
   only in BYOK mode; `app/app/settings/CompanyAIConfig.tsx`).
-- **Evaluation results are richer now and populate on the next run/regenerate.** Each
-  result: **Review summary** (how/what/measured-against, with citations) → **Assessment**
-  (formatted rationale) → strengths / weaknesses / compliance / **suggested changes**
-  (change + rationale). A "section" = one criterion: **Regenerate** (logs prior versions
-  in `dara_result_versions`, shows History(N) + a regen×N badge) and **Archive/Restore**
-  (retained, never deleted). Runs are synchronous with a live `RunPanel` spinner +
-  `RunningBanner` count. Output budget `EVAL_MAX_TOKENS=8000` (in `utils/dara/evaluator.ts`)
-  — if very long criteria ever truncate, raise it or move `suggested_changes` earlier in
-  the schema. Older results show only the rationale/findings until re-run.
+- **Review output lives in the `Review` tab** (the old "Matrix" tab, renamed Phase 2). Each
+  per-factor result: **Review summary** (how/what/measured-against, cited) → **Assessment**
+  (rationale) → strengths / weaknesses / compliance / **suggested changes** (change +
+  rationale), with a score/rating. Per result: **Regenerate** (snapshots prior values into
+  `dara_result_versions`, History(N) + regen×N badge) and **Archive/Restore** (retained,
+  never deleted). `EVAL_MAX_TOKENS=8000` per rich call (`utils/dara/evaluator.ts`).
+  **NOTE:** reviews run before `8125fd1` (on sol 5 etc.) hold *old* lean determination rows
+  for all requirements — delete + recreate the review (or use a fresh solicitation) to see
+  the restored holistic behavior cleanly.
 - **Demoting a platform admin takes two steps.** Removing the email from
   `PLATFORM_ADMIN_EMAILS` is NOT enough: `resolvePlatformAdmin` treats an active
   `dara_platform_admins` row as admin regardless of the env list, and the console
   **Deactivate** is blocked while the email is still env-pinned. To fully demote: remove
   from env **and** delete/deactivate the row. (`david@crucibleinsight.com` was demoted
   this way — row deleted; now a normal `company_admin` of "Proposal Foundry".)
-- **Structured evaluation findings are live** (strengths / weaknesses / compliance /
-  suggested changes + rationale; `ResultFindings.tsx` in the Matrix tab). They
-  **populate on the next evaluation run** — results from before this deploy show only
-  the rationale until re-run.
 - **Onboarding gate is live.** A brand-new org creator (un-onboarded company +
   `company_admin`) is routed to `/onboarding`; an invited member to `/welcome`.
   Existing companies/users were **backfilled as onboarded**, so current users are
@@ -112,6 +141,25 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
 
 ## 2. Queue for next session (suggested order)
 
+### ★ Top of queue — Pass B: build the Color Review Cycle design
+Implement `Color Review Cycle.dc.html` as the new solicitation workspace, **hybrid
+approach** (pipeline UX, reuse the existing engine), on top of the restored holistic
+engine. Scope (full design):
+- **9-stage pipeline stepper** at the top (Solicitation · Compliance · Kickoff · Pink ·
+  Red · Gold · White Glove · Compliance · Submit). Stages 4–7 (Pink/Red/Gold/White Glove)
+  = color-team reviews → the holistic engine; stages 1–3/8–9 map to Documents/Compliance/
+  Submit.
+- **Per-stage workspace**: AI Review Findings panel + AI Engine sidebar (model/stats/
+  overall score) + Analysis Log + "Accept Findings & Advance" gate.
+- **Multi-volume Compliance Matrix** view (Technical/Management/Price/Past-Perf columns,
+  Met/Partial/Gap/Not-Started status — maps to `complianceStatus`).
+- **Amendment workflow** view (intake → impact assessment → material? gate → revise).
+- Sidebar reorg (Proposals list, Tools).
+Design tokens already match the app (IBM Plex, `--c-*` vars, accent `#3b6ef0`). Reference
+HTML: `…/scratchpad/ColorReviewCycle.html`. New concepts in the design that have **no
+schema yet** (stage scheduling, advance-gate state, analysis-log/comments) — decide
+per-piece whether to persist or present; confirm scope before adding tables.
+
 ### A. Operator actions — browser/CLI (you)
 1. **Branch protection on `main`** (BUILD_STATUS #13 — the only thing keeping
    DARA-015 from "enforced"): GitHub → Settings → Branches → require the Security
@@ -129,9 +177,9 @@ security findings live on `/app/security` and in `utils/dara/security-content.ts
   `/onboarding`; existing accounts won't).
 - **Billing** page renders (prod has `STRIPE_PUBLISHABLE_KEY` but the client reads
   `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — confirm).
-- A real **multi-criteria evaluation** end-to-end — confirms both the platform
-  key/model path AND the new **structured findings** rendering (strengths /
-  weaknesses / compliance / suggested changes) in the Matrix tab.
+- A real **review run end-to-end on a fresh review** — confirms the restored holistic
+  model: rich per-factor assessments in the **Review** tab + the pass/fail sweep setting
+  statuses in the **Compliance** tab. (Mark Section M items **Scored** first.)
 
 ### C. Feature backlog (security-adjacent)
 1. **Per-company admin audit-log viewer** — `dara_audit_log` is per-company; build a

@@ -1,6 +1,6 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-06-30_
+_Last updated: 2026-07-01_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
 **Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
@@ -18,6 +18,16 @@ UID redesign were added. The app builds green and is deployed to production.
 The UI redesign was then completed across all pages, and a full NIST 800-171 /
 CMMC L2 / OWASP **security audit** was performed (2026-06-27) with an in-app
 Security page and the first wave of remediations shipped (see §3 / §5).
+
+The product was then **reframed from source-selection (scoring competing offerors) to
+proposal development (color-team gate reviews of the company's own proposal)** across three
+shipped phases — Requirements/Compliance, Color-team reviews, Amendments + AI reconciliation
+(§2). The evaluation model settled on **holistic review of the evaluation factors + a lean
+pass/fail compliance-matrix sweep of the administrative requirements** (⭐ §2, 2026-07-01) —
+after a course-correction away from an interim compliance-heavy checklist. Next major work is
+**Pass B: building the imported "Color Review Cycle" 9-stage pipeline design** on top of this
+engine (§7 / SESSION_HANDOFF §2). The underlying review methodology is **never named** in
+UI/prompts/code/docs.
 
 ---
 
@@ -51,6 +61,7 @@ Security page and the first wave of remediations shipped (see §3 / §5).
 | **Color-team reviews (Phase 2)** | `Response`→`Review` (`dara_responses`→`dara_reviews`; `offeror_name`→`name` + `color_team` label, `status`, `snapshot_at`), `ResponseFile`→`ReviewDocument` (per-review frozen draft snapshot), new `ReviewPersona` (chosen reviewers), `SolDocument.doc_type` (rfp/amendment/proposal). `Evaluation.response_id` remapped to `reviewId`. | The proposal working draft lives on the solicitation (`doc_type=proposal`); each review freezes it (`captureSnapshot`, `utils/dara/reviews.ts`). A run uses the review's chosen personas (fallback all active) vs the snapshot; shred/evaluator scope `doc_type=rfp`. DB columns kept where remapping avoids churn. |
 | **Amendments + AI reconciliation (Phase 3)** | New `Amendment` + `AmendmentChange` (proposed add/modify/remove) + `RequirementVersion`; `Requirement` gains amendment provenance (`removed_at`, `*_by_amendment_id`, `version`); `SolDocument.amendment_id`. **Amendments tab**: upload amendment doc → "Reconcile with AI" diffs it vs the matrix → accept/reject proposed changes. | Accepting folds into the matrix: add → new requirement; modify → version prior values + update in place; remove → `removed_at` (retained, struck). `utils/dara/amendments.ts` (`reconcileAmendment`, `applyAmendmentChange`) + `buildAmendmentDiffPrompt`/`parseAmendmentDiff`. Reviews snapshotted before an applied amendment are flagged **pre-amendment** (re-capture & re-run). |
 | **Requirements / Compliance matrix (Phase 1)** | `Criterion` evolved into **`Requirement`** (`dara_criteria`→`dara_requirements`): `source` (Section L instruction / M factor / SOW-PWS / FAR clause / other), `isScored`, `complianceStatus`, `proposalRef`. The **Compliance tab** replaces Criteria and adds an **AI shred** ("Generate from solicitation") that turns the RFP docs into a requirements list. | Requirements are the structured backbone every review scores/tracks. `dara_results.criterion_id` column kept (Prisma field remapped to `requirementId`) so the FK/unique index are untouched. Old `criterion_type` migrated into `source`+`isScored`. Table rename preserves RLS; DARA-004/005 source files updated for rebuilds + `2026-07-01_requirements_rls.sql`. |
+| **⭐ Review model: HOLISTIC evaluation + compliance matrix** (2026-07-01, commit `8125fd1`) | A color-team review run does **two** things: **(1) holistic review** — the full structured assessment (review summary incl. what-it-was-measured-against + how-scored, rationale, strengths, weaknesses, compliance commentary, suggested improvements, score/rating) per **evaluation factor** (`isScored=true`), from each persona's perspective (rich `buildUserPrompt`/`parseResult`, `runEvaluation` scoped to `isScored`); **(2) compliance sweep** — `runComplianceSweep` runs a lean pass/fail determination over the **administrative** requirements (`isScored=false`) and sets each `complianceStatus`. | Course-correction: an interim "compliance-heavy" batching (`3e410a2`) turned the whole review into a lean per-requirement checklist over all 125 shredded items — wrong. The review must stay a **holistic evaluation** of the few scored factors; the pass/fail bulk belongs in the matrix. `isScored=true` → holistic; `isScored=false` → matrix. No schema change. **Do not** regress to the checklist model. |
 
 ---
 
@@ -525,16 +536,47 @@ Security page and the first wave of remediations shipped (see §3 / §5).
   `removed_at`, retained). Reviews predating an applied amendment are flagged **pre-amendment**.
   New tables granted via `2026-07-01_amendments_rls.sql`. **The color-team reframing is complete.**
 
+**Session 2026-07-01 — shipped (bug-fixing the review/eval flow on real solicitation data +
+a course-correction to a holistic review model):**
+- **Two real prod bugs found via audit-log/runtime-log diagnosis** (commit `f1155b3`):
+  (1) a **client-side exception** on the solicitation page — `toLocaleDateString()` on a
+  UTC-midnight date renders a different day/locale on server vs client → hydration mismatch;
+  fixed with a deterministic UTC `fmtDate`. (2) **"Generate compliance matrix" produced
+  nothing** — the shred's requirements JSON overflowed the 8000-token cap and truncated;
+  fixed by raising to 16000, shredding **RFP docs only** (was also ingesting the 136 KB
+  proposal), a **salvage parser** (`extractArrayObjects` recovers complete items from a
+  truncated array), and surfacing AI-action errors in the UI (`AiActionButton`).
+- **Amendment-diff recall** (commit `f60017b`): reframed the prompt from "minimal set" to a
+  thorough per-requirement pass (prefers recall; the accept/reject UI filters false
+  positives) + sends full requirement text. Also flagged: platform model was **Haiku**;
+  reconciliation quality wants **Sonnet** (operator sets it in Platform AI).
+- **Review-run scaling** (commits `3e410a2`, `7e39b43` — **later superseded**): a shredded
+  RFP has 100+ requirements; one-call-per-requirement blew past the 300s function limit and
+  died ~8 in (surfaced as "Application error"). Made runs batched/tiered/time-boxed/resumable
+  + per-provider output-token clamp (Google 8192 / OpenAI 16384). **Then reverted the review
+  half** — see below.
+- **Duplicate-review + create-crash** (commit `d57eaa9`): a transient client render error
+  after `createReview` made a successful create look failed → users recreated → duplicates.
+  Fixed: `createReview` finishes with a **redirect** (fresh navigation, like the manual
+  refresh that always worked) instead of an in-place client patch, + a 120s duplicate guard.
+- **⭐ Holistic review restored** (commit `8125fd1`): reverted the "compliance-heavy" batching
+  of the review. `runEvaluation` is again the **rich per-evaluation-factor** assessment
+  (`isScored=true`, few); new `runComplianceSweep` does the **lean pass/fail sweep** over the
+  administrative requirements (`isScored=false`, bulk) → `complianceStatus`. Bundled into a
+  review run. No schema change. See the §2 review-model decision. **This is the intended model.**
+- **Color Review Cycle design imported** (via `DesignSync` MCP, read-only): a 9-stage
+  proposal-pipeline UI. **Not built yet — this is "Pass B", the top of the next queue**
+  (hybrid: pipeline UX, reuse engine). Reference at `…/scratchpad/ColorReviewCycle.html`.
+
 **Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
-1. **Operator actions (you):** (a) enable branch protection on `main` (item #13) —
-   the only thing gating DARA-015 from "enforced"; (b) set the Supabase Auth Site URL +
-   **Confirm email ON** (#1) so Team invite emails resolve and the verification gate is
-   real; (c) move the platform Anthropic key into **Application Admin → Platform AI** and
-   retire `PLATFORM_ANTHROPIC_KEY` (#14).
-2. **Verify in prod:** the full onboarding flow with a brand-new Google account; billing
-   page renders (the `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` note); a real multi-criteria
-   evaluation end-to-end.
-3. Feature backlog: per-company admin **audit-log viewer** (home in the Team page); the
-   AI codebase security-audit (back-office, platform key).
-4. Product backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron),
-   billing polish.
+1. **★ Pass B — build the Color Review Cycle design** (9-stage stepper + per-stage holistic
+   findings workspace + multi-volume compliance matrix + amendment workflow + sidebar reorg),
+   hybrid approach, on the restored holistic engine. See SESSION_HANDOFF §2 (top).
+2. **Verify in prod (fresh review):** rich per-factor assessments in the **Review** tab +
+   the pass/fail sweep setting statuses in the **Compliance** tab. Mark Section M items
+   **Scored** first. (Old reviews on sol 5 hold stale lean rows — delete + recreate.)
+3. **Operator actions (you):** (a) branch protection on `main` (#13); (b) Supabase Auth Site
+   URL + **Confirm email ON** (#1); (c) move the platform Anthropic key into the console (#14);
+   (d) set the platform model to **Sonnet** for review/reconciliation quality.
+4. Feature backlog: per-company **audit-log viewer**; AI codebase security-audit. Product
+   backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron), billing polish.
