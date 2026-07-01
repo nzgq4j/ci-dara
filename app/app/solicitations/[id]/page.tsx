@@ -22,7 +22,7 @@ import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import Tabs, { type TabDef } from '@/components/dara/Tabs';
+import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryNotice from '@/components/dara/CuiBoundaryNotice';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
@@ -88,6 +88,18 @@ const COLOR_TEAMS: { value: string; label: string; dot: string; text: string }[]
 ];
 const COLOR_TEAM_MAP: Record<string, { label: string; dot: string; text: string }> =
   Object.fromEntries(COLOR_TEAMS.map((c) => [c.value, c]));
+
+// What each color-team gate focuses on (for the pipeline stage headers). The pipeline
+// is a suggestion, not a hard workflow — every stage is optional and skippable.
+const STAGE_META: Record<string, { focus: string; desc: string }> = {
+  pink: { focus: 'Strategy & outline', desc: 'Early-draft review — is the approach sound and compliant, and are the win themes present in the outline/storyboards?' },
+  red: { focus: 'Full draft review', desc: 'Near-final review — assess the draft as the evaluator would: weaknesses, compliance gaps, and persuasiveness.' },
+  gold: { focus: 'Executive review', desc: 'Final leadership review before submission — go/no-go, risk, and top-level polish.' },
+  white: { focus: 'Production-ready', desc: 'Final production/quality pass — formatting, consistency, and submission readiness.' },
+  blue: { focus: 'Win strategy', desc: 'Capture / win-strategy review before writing begins.' },
+  green: { focus: 'Cost / price', desc: 'Pricing and cost-realism review.' },
+  black: { focus: 'Competitive', desc: 'Competitor and win-probability assessment.' }
+};
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -1410,26 +1422,46 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const colorTeamsPanel = (
+  const colorStage = (focusColor: string) => {
+    const meta = STAGE_META[focusColor] ?? { focus: '', desc: '' };
+    const ct = COLOR_TEAM_MAP[focusColor] ?? COLOR_TEAM_MAP.pink;
+    const stageReviews = reviews.filter((rv) => rv.colorTeam === focusColor);
+    return (
     <div className="space-y-4">
+      {/* Stage header */}
+      <div className={`${card} p-4`} style={{ borderLeft: `3px solid ${ct.dot}` }}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="h-3 w-3 rounded-full" style={{ backgroundColor: ct.dot }} />
+          <h2 className={`text-[15px] font-bold ${ct.text}`}>{ct.label} Team</h2>
+          <span className="text-[11px] text-t5">· {meta.focus}</span>
+        </div>
+        <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-t4">{meta.desc}</p>
+      </div>
+
       <CuiBoundaryNotice
         provider={daraUser.company.activeProvider}
         mode={daraUser.company.aiKeyMode}
       />
       {!canEvaluate && (
         <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
-          To run a review you need at least one requirement (Compliance tab) and one active
+          To run a review you need at least one requirement (Compliance stage) and one active
           persona ({activeRequirements.length} requirements, {activeCount} active personas).
         </p>
       )}
       {proposalDocs.length === 0 && (
         <p className="rounded-lg border border-line bg-surf px-4 py-2.5 text-[12px] text-t4">
-          Upload your proposal working draft on the <span className="text-t2">Documents</span> tab,
+          Upload your proposal working draft on the <span className="text-t2">Solicitation</span> stage,
           then capture a snapshot for each review.
         </p>
       )}
+      {stageReviews.length === 0 && (
+        <p className="rounded-lg border border-dashed border-line px-4 py-3 text-[12px] text-t4">
+          No {ct.label}-team reviews yet — create one below to run a holistic {ct.label.toLowerCase()}-team
+          review of your current draft.
+        </p>
+      )}
 
-      {reviews.map((rv) => {
+      {stageReviews.map((rv) => {
         const ct = COLOR_TEAM_MAP[rv.colorTeam] ?? COLOR_TEAM_MAP.pink;
         const sel = new Set(rv.reviewPersonas.map((rp) => rp.personaId.toString()));
         const runCount = sel.size
@@ -1505,20 +1537,13 @@ export default async function SolicitationDetailPage({
       })}
 
       <div className={`${cardDashed} p-4`}>
-        <h3 className={`mb-3 ${sectionTitle}`}>New color-team review</h3>
+        <h3 className={`mb-3 ${sectionTitle}`}>New {ct.label}-team review</h3>
         <form action={createReview} className="space-y-3">
           <input type="hidden" name="solId" value={sid} />
-          <div className="grid gap-3 sm:grid-cols-12">
-            <div className="space-y-1.5 sm:col-span-8">
-              <label className={labelClasses}>Review name <span className="text-[#3b6ef0]">*</span></label>
-              <input name="name" type="text" required placeholder="e.g. Pink — Vol II draft" className={fieldClasses} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-4">
-              <label className={labelClasses}>Color team</label>
-              <select name="colorTeam" defaultValue="pink" className={fieldClasses}>
-                {COLOR_TEAMS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
-              </select>
-            </div>
+          <input type="hidden" name="colorTeam" value={focusColor} />
+          <div className="space-y-1.5">
+            <label className={labelClasses}>Review name <span className="text-[#3b6ef0]">*</span></label>
+            <input name="name" type="text" required defaultValue={`${ct.label} Team review`} className={fieldClasses} />
           </div>
           <div className="space-y-1.5">
             <label className={labelClasses}>Notes</label>
@@ -1526,12 +1551,13 @@ export default async function SolicitationDetailPage({
           </div>
           {personaChips(new Set(personas.filter((p) => p.isActive).map((p) => p.id.toString())))}
           <div className="flex justify-end">
-            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Create review</button>
+            <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Create {ct.label} review</button>
           </div>
         </form>
       </div>
     </div>
-  );
+    );
+  };
 
   // Only 'running' = actively processing in a live request. 'pending' now means a
   // time-boxed run paused mid-way (resume by clicking Run again), so it must NOT spin
@@ -1882,17 +1908,41 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const tabs: TabDef[] = [
-    { id: 'overview', label: 'Overview', content: overviewPanel },
-    { id: 'documents', label: 'Documents', count: solicitation.solDocs.length, content: documentsPanel },
-    { id: 'compliance', label: 'Compliance', count: activeRequirements.length, content: compliancePanel },
-    { id: 'amendments', label: 'Amendments', count: amendments.length, content: amendmentsPanel },
-    { id: 'colorteams', label: 'Color Teams', count: reviews.length, content: colorTeamsPanel },
-    { id: 'review', label: 'Review', count: solicitation.evaluations.length, content: reviewPanel }
+  // Advisory "done" flags — the pipeline is a suggestion, so these only tint the dots.
+  const colorDone = (c: string) => reviews.some((rv) => rv.colorTeam === c && rv.status === 'complete');
+  const anyComplianceChecked = activeRequirements.some(
+    (r) => !r.isScored && r.complianceStatus !== 'not_assessed'
+  );
+  const anyReviewComplete = reviews.some((rv) => rv.status === 'complete');
+
+  const pipelineViews: Record<string, React.ReactNode> = {
+    documents: documentsPanel,
+    compliance: compliancePanel,
+    overview: overviewPanel,
+    pink: colorStage('pink'),
+    red: colorStage('red'),
+    gold: colorStage('gold'),
+    white: colorStage('white'),
+    review: reviewPanel,
+    amendments: amendmentsPanel
+  };
+
+  const pipelineStages = [
+    { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#3b6ef0', view: 'documents', done: rfpDocs.length > 0 },
+    { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#3b6ef0', view: 'compliance', done: activeRequirements.length > 0 },
+    { id: 's3', num: 3, label: 'Kickoff', sub: 'Setup & draft', color: '#3b6ef0', view: 'overview', done: proposalDocs.length > 0 },
+    { id: 's4', num: 4, label: 'Pink Team', sub: 'Strategy & outline', color: '#ec4899', view: 'pink', done: colorDone('pink') },
+    { id: 's5', num: 5, label: 'Red Team', sub: 'Full draft review', color: '#ef4444', view: 'red', done: colorDone('red') },
+    { id: 's6', num: 6, label: 'Gold Team', sub: 'Executive review', color: '#f59e0b', view: 'gold', done: colorDone('gold') },
+    { id: 's7', num: 7, label: 'White Glove', sub: 'Production ready', color: '#94a3b8', view: 'white', done: colorDone('white') },
+    { id: 's8', num: 8, label: 'Compliance', sub: 'Final check', color: '#3b6ef0', view: 'compliance', done: anyComplianceChecked },
+    { id: 's9', num: 9, label: 'Submit', sub: 'Proposal', color: '#22c55e', view: 'review', done: anyReviewComplete }
   ];
 
+  const pipelineTools = [{ id: 'amendments', label: 'Amendments', view: 'amendments', badge: amendments.length }];
+
   return (
-    <div className="mx-auto max-w-5xl fade">
+    <div className="mx-auto max-w-6xl fade">
       <Link
         href="/app/solicitations"
         className="mb-4 inline-flex items-center gap-2 text-[13px] text-t4 transition-colors hover:text-t1"
@@ -1900,15 +1950,18 @@ export default async function SolicitationDetailPage({
         <ArrowLeft className="h-4 w-4" />
         Back to Solicitations
       </Link>
-      <div className="mb-6">
+      <div className="mb-5">
         <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
           {solicitation.solNumber || 'No reference number'}
           {solicitation.agency ? ` · ${solicitation.agency}` : ''}
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
+        <p className="mt-1 text-[12px] text-t5">
+          Color review cycle — a suggested flow. Every stage is optional; jump to any stage.
+        </p>
       </div>
 
-      <Tabs tabs={tabs} />
+      <PipelineStepper stages={pipelineStages} tools={pipelineTools} views={pipelineViews} />
     </div>
   );
 }
