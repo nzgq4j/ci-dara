@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { btnPrimary } from '@/components/dara/theme';
+import ProgressBar from '@/components/dara/ProgressBar';
 
 export type RunState = {
   ok: boolean;
@@ -63,9 +64,13 @@ export default function RunPanel({
           <Play className="h-4 w-4" />
         )}
         {pending
-          ? `Evaluating… (${activeCount} ${plural})`
-          : `Run evaluation${activeCount > 0 ? ` (${activeCount} ${plural})` : ''}`}
+          ? `Reviewing… (${activeCount} ${plural})`
+          : `Run review${activeCount > 0 ? ` (${activeCount} ${plural})` : ''}`}
       </button>
+
+      {pending && (
+        <ProgressBar label="Holistic review + compliance sweep — this can take a minute." />
+      )}
 
       {state && !pending && (() => {
         const incomplete = state.total != null && state.total > 0 && (state.done ?? 0) < state.total;

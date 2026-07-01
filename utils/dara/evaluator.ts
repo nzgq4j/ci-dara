@@ -314,21 +314,40 @@ export async function runComplianceSweep(
   const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
   if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
 
+  const checked = await sweepRequirements(
+    companyId,
+    loaded.requirements,
+    documentText,
+    solText,
+    provider,
+    model,
+    apiKey,
+    deadlineMs
+  );
+  return { ok: true, checked };
+}
+
+// Shared sweep loop: lean pass/fail determinations over `requirements` against
+// `documentText`, writing each requirement's complianceStatus. Idempotent, time-boxed.
+async function sweepRequirements(
+  companyId: bigint,
+  requirements: { id: bigint; name: string; description: string | null; farReference: string }[],
+  documentText: string,
+  solText: string,
+  provider: string,
+  model: string,
+  apiKey: string,
+  deadlineMs: number
+): Promise<number> {
   let checked = 0;
-  for (let i = 0; i < loaded.requirements.length; i += BATCH_SIZE_COMPLIANCE) {
+  for (let i = 0; i < requirements.length; i += BATCH_SIZE_COMPLIANCE) {
     if (Date.now() > deadlineMs) break;
-    const batch = loaded.requirements.slice(i, i + BATCH_SIZE_COMPLIANCE);
+    const batch = requirements.slice(i, i + BATCH_SIZE_COMPLIANCE);
     const user = buildBatchUserPrompt(
-      batch.map((r) => ({
-        id: r.id.toString(),
-        name: r.name,
-        description: r.description,
-        isScored: false,
-        farReference: r.farReference
-      })),
+      batch.map((r) => ({ id: r.id.toString(), name: r.name, description: r.description, isScored: false, farReference: r.farReference })),
       documentText,
       solText,
-      true // lean determination schema
+      true
     );
     try {
       const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
@@ -349,7 +368,53 @@ export async function runComplianceSweep(
       /* skip a failed batch — a re-run re-sweeps */
     }
   }
+  return checked;
+}
 
+/**
+ * Standalone compliance check for the Compliance tab: sweeps the administrative
+ * (non-scored) requirements against the solicitation's CURRENT proposal draft
+ * (docType='proposal'), independent of any color-team review. Idempotent + time-boxed.
+ */
+export async function runComplianceCheck(
+  solicitationId: bigint,
+  companyId: bigint,
+  deadlineMs = Infinity
+): Promise<SweepSummary> {
+  const loaded = await withTenant(companyId, async (tx) => {
+    const company = await tx.company.findUnique({ where: { id: companyId } });
+    const requirements = await tx.requirement.findMany({
+      where: { solicitationId, companyId, removedAt: null, isScored: false },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+    });
+    const solDocs = await tx.solDocument.findMany({ where: { solicitationId, companyId } });
+    return { company, requirements, solDocs };
+  });
+
+  if (!loaded.company) return { ok: false, checked: 0, error: 'Company not found.' };
+  if (loaded.requirements.length === 0) {
+    return { ok: false, checked: 0, error: 'No administrative requirements to check. Generate the matrix and mark Section M items as Scored.' };
+  }
+  const documentText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'proposal'));
+  if (documentText.trim() === '') {
+    return { ok: false, checked: 0, error: 'No proposal draft. Upload your proposal on the Documents tab.' };
+  }
+  const solText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'rfp'));
+
+  const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
+  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
+
+  const checked = await sweepRequirements(
+    companyId,
+    loaded.requirements,
+    documentText,
+    solText,
+    provider,
+    model,
+    apiKey,
+    deadlineMs
+  );
   return { ok: true, checked };
 }
 

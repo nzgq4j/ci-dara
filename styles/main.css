@@ -90,6 +90,31 @@ body {
   animation: daraFadeUp 0.25s ease both;
 }
 
+/* Indeterminate progress bar — a highlight that sweeps across the track, for AI
+   actions whose duration isn't known ahead of time (shred, compliance, reconcile). */
+@keyframes daraIndeterminate {
+  0% {
+    left: -40%;
+    width: 40%;
+  }
+  50% {
+    left: 25%;
+    width: 55%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
+}
+.progress-indeterminate {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: inherit;
+  background: #3b6ef0;
+  animation: daraIndeterminate 1.25s ease-in-out infinite;
+}
+
 /* Login brand panel — theme-aware gradient (soft blue in light, navy in dark) so
    the token-based text stays readable in both themes. */
 .login-brand {

@@ -9,7 +9,8 @@ import {
   Upload,
   FileText,
   Inbox,
-  Sparkles
+  Sparkles,
+  CheckSquare
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
@@ -17,7 +18,7 @@ import { withTenant } from '@/utils/prisma';
 import { userTeamIds, canViewSolicitation, canManageDepartments } from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
-import { runEvaluation, runComplianceSweep, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
+import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
@@ -61,6 +62,9 @@ const COMPLIANCE_STATUSES: { value: string; label: string }[] = [
 ];
 const SOURCE_LABEL: Record<string, string> = Object.fromEntries(
   REQUIREMENT_SOURCES.map((s) => [s.value, s.label])
+);
+const COMPLIANCE_LABEL: Record<string, string> = Object.fromEntries(
+  COMPLIANCE_STATUSES.map((s) => [s.value, s.label])
 );
 // Compliance-status pill colors for the matrix.
 const STATUS_PILL: Record<string, string> = {
@@ -248,6 +252,33 @@ async function generateMatrixAction(formData: FormData): Promise<{ ok: boolean; 
   });
   revalidatePath(`/app/solicitations/${solId}`);
   return { ok: summary.ok, count: summary.count, error: summary.error };
+}
+
+// Standalone compliance sweep: check the pass/fail administrative requirements against
+// the current proposal draft and set their statuses (the compliance matrix).
+async function runComplianceCheckAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const res = await runComplianceCheck(solId, daraUser.companyId, Date.now() + 200_000);
+  await recordAudit({
+    action: 'requirement.compliance_check',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: solId,
+    metadata: {
+      ok: res.ok,
+      checked: res.checked,
+      error: res.error ?? null,
+      provider: daraUser.company.activeProvider,
+      mode: daraUser.company.aiKeyMode
+    }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: res.ok, count: res.checked, error: res.error };
 }
 
 async function addRequirement(formData: FormData) {
@@ -933,6 +964,9 @@ export default async function SolicitationDetailPage({
   // Active matrix excludes requirements struck by an amendment (retained, not deleted).
   const activeRequirements = solicitation.requirements.filter((r) => !r.removedAt);
   const removedRequirements = solicitation.requirements.filter((r) => r.removedAt);
+  // The Review-tab scorecard covers only the EVALUATION FACTORS (scored) — the holistic
+  // review. The pass/fail administrative bulk lives in the Compliance tab, not here.
+  const scoredFactors = activeRequirements.filter((r) => r.isScored);
   const canEvaluate = activeCount > 0 && activeRequirements.length > 0;
   const reviews = solicitation.reviews;
   const amendments = solicitation.amendments;
@@ -1133,22 +1167,37 @@ export default async function SolicitationDetailPage({
           <div>
             <h2 className={sectionTitle}>Compliance matrix</h2>
             <p className="mt-1 max-w-xl text-[13px] text-t4">
-              Shred the solicitation into discrete requirements (Section L instructions,
-              Section M factors, SOW/PWS tasks, FAR clauses), then track coverage and where
-              each is answered in your proposal.
+              <span className="font-semibold text-t2">1.</span> Shred the solicitation into
+              discrete requirements. <span className="font-semibold text-t2">2.</span> Mark
+              the Section&nbsp;M evaluation factors <span className="text-t2">Scored</span> —
+              those get a holistic color-team review. <span className="font-semibold text-t2">3.</span>{' '}
+              <span className="text-t2">Run compliance check</span> to grade the remaining
+              administrative / pass-fail items (Met / Partial / Gap) against your proposal draft.
             </p>
           </div>
-          <div className="flex-shrink-0">
+          <div className="flex flex-shrink-0 flex-col gap-2">
             <AiActionButton
               action={generateMatrixAction}
               fields={{ solId: sid }}
               idle={<Sparkles className="h-4 w-4" />}
               label={requirements.length ? 'Generate more' : 'Generate from solicitation'}
-              pendingLabel="Generating…"
+              pendingLabel="Shredding solicitation…"
               noun="requirement"
               verb="added"
               className={btnPrimary}
             />
+            {requirements.some((r) => !r.isScored) && (
+              <AiActionButton
+                action={runComplianceCheckAction}
+                fields={{ solId: sid }}
+                idle={<CheckSquare className="h-4 w-4" />}
+                label="Run compliance check"
+                pendingLabel="Checking compliance…"
+                noun="requirement"
+                verb="checked"
+                className={btnGhost}
+              />
+            )}
           </div>
         </div>
         {solicitation.solDocs.length === 0 && (
@@ -1191,20 +1240,22 @@ export default async function SolicitationDetailPage({
               </h3>
               {group.map((r) => (
                 <div key={r.id.toString()} className={`${card} p-4`}>
-                  {(r.addedByAmendmentId || r.changedByAmendmentId) && (
-                    <div className="mb-2 flex flex-wrap gap-1.5">
-                      {r.addedByAmendmentId && (
-                        <span className="rounded bg-[#1f5a31]/25 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#7de0a0]">
-                          added by amendment
-                        </span>
-                      )}
-                      {r.changedByAmendmentId && (
-                        <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
-                          amended · v{r.version}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${STATUS_PILL[r.complianceStatus]}`}>
+                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                      {r.isScored ? 'scored factor' : (COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus)}
+                    </span>
+                    {r.addedByAmendmentId && (
+                      <span className="rounded bg-[#1f5a31]/25 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#7de0a0]">
+                        added by amendment
+                      </span>
+                    )}
+                    {r.changedByAmendmentId && (
+                      <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+                        amended · v{r.version}
+                      </span>
+                    )}
+                  </div>
                   <form action={updateRequirement} className="space-y-3">
                     <input type="hidden" name="solId" value={sid} />
                     <input type="hidden" name="requirementId" value={r.id.toString()} />
@@ -1492,75 +1543,81 @@ export default async function SolicitationDetailPage({
   const reviewPanel = (
     <div className="space-y-6">
       <RunningBanner count={runningCount} />
-      {/* Score matrix: reviews × requirements */}
-      {hasResults && activeRequirements.length > 0 && reviews.length > 0 ? (
-        <div className={`${card} overflow-x-auto`}>
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr className="bg-surf3">
-                <th className="sticky left-0 z-10 bg-surf3 px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
-                  Review
-                </th>
-                {activeRequirements.map((c) => (
-                  <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
-                    {c.name}
+
+      {/* Scorecard: reviews × EVALUATION FACTORS (scored). The pass/fail administrative
+          requirements are graded on the Compliance tab, not in this scorecard. */}
+      {hasResults && scoredFactors.length > 0 && reviews.length > 0 ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className={sectionTitle}>Scorecard — evaluation factors</h2>
+            <span className="text-[11px] text-t5">
+              Pass/fail compliance → <span className="text-t3">Compliance</span> tab
+            </span>
+          </div>
+          <div className={`${card} overflow-x-auto`}>
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="bg-surf3">
+                  <th className="sticky left-0 z-10 bg-surf3 px-[18px] py-2.5 font-mono text-[10px] uppercase tracking-wide text-t5">
+                    Review
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {reviews.map((r) => {
-                const ct = COLOR_TEAM_MAP[r.colorTeam] ?? COLOR_TEAM_MAP.pink;
-                return (
-                <tr key={r.id.toString()} className="border-t border-line">
-                  <td className="sticky left-0 z-10 bg-surf px-[18px] py-3 text-[13px] font-semibold text-t2">
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: ct.dot }} />
-                      {r.name}
-                    </span>
-                  </td>
-                  {activeRequirements.map((c) => {
-                    const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
-                    let label = '—';
-                    let color = 'text-t5';
-                    if (cell && cell.scores.length > 0) {
-                      const avg = Math.round(
-                        cell.scores.reduce((a, b) => a + b, 0) / cell.scores.length
-                      );
-                      label = `${avg}`;
-                      color =
-                        avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-[#6f9bf5]' : 'text-[#e0a07d]';
-                    } else if (cell && cell.determinations.length > 0) {
-                      label = cell.determinations[0];
-                      color = 'text-t3';
-                    }
-                    return (
-                      <td key={c.id.toString()} className={`px-3.5 py-3 text-center text-[13px] font-semibold ${color}`}>
-                        {label}
-                      </td>
-                    );
-                  })}
+                  {scoredFactors.map((c) => (
+                    <th key={c.id.toString()} className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
+                      {c.name}
+                    </th>
+                  ))}
                 </tr>
-                );
-              })}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {reviews.map((r) => {
+                  const ct = COLOR_TEAM_MAP[r.colorTeam] ?? COLOR_TEAM_MAP.pink;
+                  return (
+                    <tr key={r.id.toString()} className="border-t border-line">
+                      <td className="sticky left-0 z-10 bg-surf px-[18px] py-3 text-[13px] font-semibold text-t2">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: ct.dot }} />
+                          {r.name}
+                        </span>
+                      </td>
+                      {scoredFactors.map((c) => {
+                        const cell = cellMap.get(`${r.id.toString()}:${c.id.toString()}`);
+                        let label = '—';
+                        let color = 'text-t5';
+                        if (cell && cell.scores.length > 0) {
+                          const avg = Math.round(cell.scores.reduce((a, b) => a + b, 0) / cell.scores.length);
+                          label = `${avg}`;
+                          color = avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-[#6f9bf5]' : 'text-[#e0a07d]';
+                        }
+                        return (
+                          <td key={c.id.toString()} className={`px-3.5 py-3 text-center text-[13px] font-semibold ${color}`}>
+                            {label}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-12 text-center`}>
           <Inbox className="h-9 w-9 text-t5" />
-          <p className="mt-3 text-[13px] text-t4">
-            No review results yet. Build the compliance matrix, upload your proposal draft,
-            then create a color-team review and run it from the Color Teams tab.
+          <p className="mt-3 max-w-md text-[13px] text-t4">
+            No holistic review results yet. On the <span className="text-t3">Compliance</span> tab,
+            generate the matrix and mark your Section&nbsp;M items <span className="text-t3">Scored</span>;
+            upload your proposal draft (Documents); then create and run a review from{' '}
+            <span className="text-t3">Color Teams</span>. The rich per-factor findings appear below.
           </p>
         </div>
       )}
 
-      {/* Detailed evaluation results */}
+      {/* Holistic findings, per reviewer (persona) */}
       {solicitation.evaluations.length > 0 && (
         <div className="space-y-4">
           <h2 className={sectionTitle}>
-            Detailed results{' '}
+            Holistic findings by reviewer{' '}
             <span className="font-mono text-[11px] font-normal text-t5">
               ({solicitation.evaluations.length})
             </span>

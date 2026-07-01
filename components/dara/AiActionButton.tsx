@@ -3,6 +3,7 @@
 import { useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import ProgressBar from './ProgressBar';
 
 export type AiActionResult = { ok: boolean; count: number; error?: string } | null;
 
@@ -51,6 +52,10 @@ export default function AiActionButton({
         {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : idle}
         {pending ? pendingLabel : label}
       </button>
+
+      {pending && (
+        <ProgressBar label={`${pendingLabel} — the AI is working, this can take up to a minute.`} />
+      )}
 
       {state && !pending && (
         <div
