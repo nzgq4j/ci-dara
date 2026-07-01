@@ -270,6 +270,7 @@ export interface BatchRequirement {
 
 export interface BatchResultItem extends ParsedResult {
   requirementId: string;
+  proposalRef?: string; // where in the proposal the requirement is addressed
 }
 
 /** Persona system prompt for a batch pass (solicitation-level vars; no single criterion). */
@@ -313,6 +314,7 @@ const COMPLIANCE_ITEM_SCHEMA =
   '{"id": "<the requirement id, exactly as given>", ' +
   '"determination": "<compliant|non_compliant|unable_to_determine>", ' +
   '"rationale": "<one sentence: is it satisfied, with a proposal/solicitation section cite>", ' +
+  '"proposal_ref": "<where in the proposal this is addressed, e.g. \\"Vol II §3.2, p.14\\" — empty if not found>", ' +
   '"compliance": "<short note, or empty>"}';
 
 /**
@@ -388,6 +390,7 @@ function mapBatchItem(it: any): BatchResultItem | null {
     aiConfidence: confidence,
     rating: it.rating ? String(it.rating) : null,
     review: null,
+    proposalRef: String(it.proposal_ref ?? it.proposalRef ?? '').trim().slice(0, 300),
     ...findings
   };
 }
@@ -431,6 +434,7 @@ export interface ShreddedRequirement {
   source: RequirementSourceValue;
   isScored: boolean;
   farReference: string;
+  citation: string;
   weight: number;
 }
 
@@ -439,6 +443,7 @@ const SHRED_SCHEMA =
   '"name": "<short handle, <= 12 words, e.g. \\"Page limit — Volume II\\">", ' +
   '"description": "<the full requirement / \\"shall\\" statement, quoted or closely paraphrased>", ' +
   '"source": "<one of: instruction | evaluation_factor | sow_pws | far_clause | other>", ' +
+  '"citation": "<where this requirement appears in the solicitation, e.g. \\"Section L.4.2\\", \\"PWS 3.1.2\\", \\"Section M.2(b)\\" — cite the section/paragraph>", ' +
   '"is_scored": <true only for Section M evaluation factors/subfactors that are scored; false otherwise>, ' +
   '"far_reference": "<FAR/DFARS clause or section reference if stated, else empty string>", ' +
   '"weight": <integer 0-100 relative importance if discernible for scored factors, else 0>' +
@@ -535,6 +540,7 @@ function mapShredItem(r: any): ShreddedRequirement {
     // Only evaluation factors are scored; honor an explicit true, else infer.
     isScored: r?.is_scored === true && source === 'evaluation_factor',
     farReference: String(r?.far_reference ?? '').trim().slice(0, 100),
+    citation: String(r?.citation ?? '').trim().slice(0, 200),
     weight: Math.max(0, Math.min(100, Math.round(Number(r?.weight ?? 0) || 0)))
   };
 }

@@ -27,6 +27,8 @@ import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
 import AddSection from '@/components/dara/AddSection';
+import RequirementDetail from '@/components/dara/RequirementDetail';
+import PrintButton from '@/components/dara/PrintButton';
 import RunPanel, { type RunState } from '@/components/dara/RunPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
 import {
@@ -1178,7 +1180,7 @@ export default async function SolicitationDetailPage({
               administrative / pass-fail items (Met / Partial / Gap) against your proposal draft.
             </p>
           </div>
-          <div className="flex flex-shrink-0 flex-col gap-2">
+          <div className="no-print flex flex-shrink-0 flex-col gap-2">
             <AiActionButton
               action={generateMatrixAction}
               fields={{ solId: sid }}
@@ -1201,6 +1203,7 @@ export default async function SolicitationDetailPage({
                 className={btnGhost}
               />
             )}
+            {requirements.length > 0 && <PrintButton label="Print matrix" className={btnGhost} />}
           </div>
         </div>
         {solicitation.solDocs.length === 0 && (
@@ -1261,16 +1264,26 @@ export default async function SolicitationDetailPage({
                   >
                     {COMPLIANCE_STATUSES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                   </select>
-                  <div className="min-w-0">
-                    <input
-                      name="name"
-                      defaultValue={r.name}
-                      className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-[#3b6ef0]/50"
+                  <div className="flex min-w-0 items-start gap-1.5">
+                    <RequirementDetail
+                      name={r.name}
+                      description={r.description ?? ''}
+                      citation={r.citation}
+                      source={SOURCE_LABEL[r.source] ?? r.source}
+                      farReference={r.farReference}
+                      status={COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus}
+                      proposalRef={r.proposalRef}
+                      scored={r.isScored}
                     />
-                    {(r.description || r.addedByAmendmentId || r.changedByAmendmentId) && (
+                    <div className="min-w-0 flex-1">
+                      <input
+                        name="name"
+                        defaultValue={r.name}
+                        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-[#3b6ef0]/50"
+                      />
                       <div className="flex items-center gap-1.5 px-1">
-                        {r.description && (
-                          <span className="truncate text-[10px] text-t5" title={r.description}>{r.description}</span>
+                        {r.citation && (
+                          <span className="truncate font-mono text-[10px] text-t5" title={r.citation}>{r.citation}</span>
                         )}
                         {r.addedByAmendmentId && (
                           <span className="flex-shrink-0 rounded bg-[#1f5a31]/25 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#7de0a0]">new</span>
@@ -1279,7 +1292,7 @@ export default async function SolicitationDetailPage({
                           <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#e0c97d]">amended v{r.version}</span>
                         )}
                       </div>
-                    )}
+                    </div>
                   </div>
                   <select
                     name="source"
@@ -1445,58 +1458,27 @@ export default async function SolicitationDetailPage({
         const runCount = sel.size
           ? personas.filter((p) => p.isActive && sel.has(p.id.toString())).length
           : activeCount;
+        const reviewEvals = solicitation.evaluations.filter((e) => e.reviewId === rv.id);
         return (
-          <div key={rv.id.toString()} className={`${card} p-4`}>
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ct.dot }} />
-              <span className={`text-[13px] font-semibold ${ct.text}`}>{ct.label} team</span>
+          <div key={rv.id.toString()} className={`${card} p-3`}>
+            {/* Header */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: ct.dot }} />
+              <span className="text-[13px] font-semibold text-t1">{rv.name}</span>
               <StatusBadge status={rv.status} />
               {isStale(rv) && (
                 <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
-                  pre-amendment — re-capture &amp; re-run
+                  pre-amendment
                 </span>
               )}
-            </div>
-            <form action={updateReview} className="space-y-3">
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="reviewId" value={rv.id.toString()} />
-              <div className="grid gap-3 sm:grid-cols-12">
-                <div className="space-y-1.5 sm:col-span-8">
-                  <label className={labelClasses}>Review name</label>
-                  <input name="name" type="text" defaultValue={rv.name} className={fieldClasses} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-4">
-                  <label className={labelClasses}>Color team</label>
-                  <select name="colorTeam" defaultValue={rv.colorTeam} className={fieldClasses}>
-                    {COLOR_TEAMS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
-                  </select>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className={labelClasses}>Notes</label>
-                <input name="notes" type="text" defaultValue={rv.notes ?? ''} className={fieldClasses} />
-              </div>
-              {personaChips(sel)}
-              <div className="flex justify-end">
-                <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save</button>
-              </div>
-            </form>
-
-            {/* Draft snapshot */}
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
-              <p className="text-[12px] text-t4">
-                {rv.snapshotAt
-                  ? `Draft snapshot: ${rv.documents.length} document(s), captured ${fmtDate(rv.snapshotAt)}`
-                  : 'No draft captured yet.'}
-              </p>
-              <form action={captureSnapshotAction}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />{rv.snapshotAt ? 'Re-capture draft' : 'Capture draft'}</button>
-              </form>
+              <span className="ml-auto text-[11px] text-t5">
+                {rv.snapshotAt ? `${rv.documents.length} doc snapshot · ${fmtDate(rv.snapshotAt)}` : 'no draft captured'}
+                {' · '}{sel.size || activeCount} reviewers
+              </span>
             </div>
 
-            <div className="mt-3 flex items-start justify-between gap-3 border-t border-line pt-3">
+            {/* Controls */}
+            <div className="no-print mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
               <RunPanel
                 action={runReviewAction}
                 solId={sid}
@@ -1504,12 +1486,85 @@ export default async function SolicitationDetailPage({
                 activeCount={runCount}
                 disabled={!canEvaluate || rv.documents.length === 0}
               />
-              <form action={deleteReview}>
+              <div className="flex items-center gap-2">
+                <form action={captureSnapshotAction}>
+                  <input type="hidden" name="solId" value={sid} />
+                  <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                  <button type="submit" className={`${btnGhost} !py-1.5 !text-[12px]`}><Upload className="h-3.5 w-3.5" />{rv.snapshotAt ? 'Re-capture' : 'Capture draft'}</button>
+                </form>
+                <form action={deleteReview}>
+                  <input type="hidden" name="solId" value={sid} />
+                  <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                  <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#e07d7d]"><Trash2 className="h-3.5 w-3.5" /></button>
+                </form>
+              </div>
+            </div>
+
+            {/* Holistic findings */}
+            {reviewEvals.length > 0 && (
+              <div className="mt-3 space-y-3 border-t border-line pt-3">
+                {reviewEvals.map((e) => {
+                  const active = e.results.filter((res) => !res.archivedAt);
+                  return (
+                    <div key={e.id.toString()}>
+                      <div className="mb-1.5 flex items-center gap-2 text-[12px]">
+                        <span className="font-semibold text-t2">{personaMap.get(e.personaId.toString()) ?? 'Reviewer'}</span>
+                        <StatusBadge status={e.status} />
+                      </div>
+                      {e.errorMessage && (
+                        <p className="mb-2 rounded-lg border border-[#5a1f1f]/50 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e07d7d]">{e.errorMessage}</p>
+                      )}
+                      {active.length === 0 ? (
+                        <p className="text-[12px] text-t5">No findings yet — run this review.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {active.map((res) => (
+                            <ResultCard
+                              key={res.id.toString()}
+                              res={res}
+                              solId={sid}
+                              regenerateAction={regenerateResultAction}
+                              archiveAction={archiveResultAction}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Settings (collapsed) */}
+            <details className="no-print mt-3 border-t border-line pt-2">
+              <summary className="cursor-pointer list-none font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                Review settings
+              </summary>
+              <form action={updateReview} className="mt-2 space-y-3">
                 <input type="hidden" name="solId" value={sid} />
                 <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete review</button>
+                <div className="grid gap-3 sm:grid-cols-12">
+                  <div className="space-y-1.5 sm:col-span-8">
+                    <label className={labelClasses}>Review name</label>
+                    <input name="name" type="text" defaultValue={rv.name} className={fieldClasses} />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-4">
+                    <label className={labelClasses}>Color team</label>
+                    <select name="colorTeam" defaultValue={rv.colorTeam} className={fieldClasses}>
+                      {COLOR_TEAMS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className={labelClasses}>Notes</label>
+                  <input name="notes" type="text" defaultValue={rv.notes ?? ''} className={fieldClasses} />
+                </div>
+                {personaChips(sel)}
+                <div className="flex justify-end">
+                  <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save settings</button>
+                </div>
               </form>
-            </div>
+            </details>
           </div>
         );
       })}
@@ -1563,6 +1618,10 @@ export default async function SolicitationDetailPage({
 
   const reviewPanel = (
     <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-[15px] font-bold text-t1">Review results</h2>
+        {solicitation.evaluations.length > 0 && <PrintButton label="Print results" className={`no-print ${btnGhost}`} />}
+      </div>
 
       {/* Scorecard: reviews × EVALUATION FACTORS (scored). The pass/fail administrative
           requirements are graded on the Compliance tab, not in this scorecard. */}

@@ -153,3 +153,30 @@ p a {
 .height-screen-helper {
   min-height: calc(100vh - 80px);
 }
+
+/* Print: drop the app chrome (sidebar, pipeline nav, action buttons) and print only
+   the active content (compliance matrix / review results) on a white background. */
+@media print {
+  aside,
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000 !important;
+  }
+  .hidden {
+    display: none !important;
+  }
+  /* Inputs/selects print as plain text-ish (readable values, no heavy borders). */
+  input,
+  select,
+  textarea {
+    border: none !important;
+    background: transparent !important;
+    color: #000 !important;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}

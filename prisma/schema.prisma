@@ -391,6 +391,8 @@ model Requirement {
   source           RequirementSource @default(evaluation_factor)
   isScored         Boolean           @default(true) @map("is_scored")
   farReference     String            @default("") @map("far_reference") @db.VarChar(100)
+  // Where this requirement is cited in the solicitation (e.g. "Section L.4.2", "PWS 3.1").
+  citation         String            @default("") @db.VarChar(200)
   weight           Int               @default(0)
   complianceStatus ComplianceStatus  @default(not_assessed) @map("compliance_status")
   proposalRef      String            @default("") @map("proposal_ref") @db.VarChar(300)

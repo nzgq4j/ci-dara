@@ -40,7 +40,7 @@ export default function PipelineStepper({
   return (
     <div>
       {/* Pipeline stepper */}
-      <div className="mb-4 overflow-x-auto rounded-lg border border-line bg-surf3">
+      <div className="no-print mb-4 overflow-x-auto rounded-lg border border-line bg-surf3">
         <div className="flex min-w-max items-stretch px-2 py-1.5">
           {stages.map((s, i) => {
             const on = s.id === active;
@@ -80,7 +80,7 @@ export default function PipelineStepper({
 
       {/* Cross-cutting tools (e.g. Amendments) */}
       {tools.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="no-print mb-4 flex flex-wrap gap-2">
           {tools.map((t) => {
             const on = t.id === active;
             return (

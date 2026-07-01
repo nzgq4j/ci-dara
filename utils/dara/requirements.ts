@@ -55,7 +55,17 @@ export async function shredRequirements(
       where: { solicitationId, companyId },
       _max: { sortOrder: true }
     });
-    return { solicitation, company, nextOrder: (agg._max.sortOrder ?? -1) + 1 };
+    // Existing requirement names — so a re-run doesn't duplicate what's already there.
+    const existing = await tx.requirement.findMany({
+      where: { solicitationId, companyId },
+      select: { name: true }
+    });
+    return {
+      solicitation,
+      company,
+      nextOrder: (agg._max.sortOrder ?? -1) + 1,
+      existingNames: new Set(existing.map((e) => e.name.trim().toLowerCase().replace(/\s+/g, ' ')))
+    };
   });
 
   if (!loaded?.solicitation) return { ok: false, count: 0, error: 'Solicitation not found.' };
@@ -91,10 +101,23 @@ export async function shredRequirements(
     return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
   }
 
+  // Dedupe: skip anything whose name already exists (so re-running does not duplicate),
+  // and dedupe within this batch too.
+  const seen = new Set(loaded.existingNames);
+  const fresh = shredded.filter((r) => {
+    const key = r.name.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (fresh.length === 0) {
+    return { ok: true, count: 0 };
+  }
+
   // Burst B: persist the new requirement rows.
   await withTenant(companyId, (tx) =>
     tx.requirement.createMany({
-      data: shredded.map((r, i) => ({
+      data: fresh.map((r, i) => ({
         companyId,
         solicitationId,
         name: r.name,
@@ -102,11 +125,12 @@ export async function shredRequirements(
         source: r.source,
         isScored: r.isScored,
         farReference: r.farReference,
+        citation: r.citation,
         weight: r.weight,
         sortOrder: loaded.nextOrder + i
       }))
     })
   );
 
-  return { ok: true, count: shredded.length };
+  return { ok: true, count: fresh.length };
 }

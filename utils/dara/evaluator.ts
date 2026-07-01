@@ -359,7 +359,11 @@ async function sweepRequirements(
           if (!it) continue;
           await tx.requirement.update({
             where: { id: r.id },
-            data: { complianceStatus: mapDetermination(it.aiDetermination) }
+            data: {
+              complianceStatus: mapDetermination(it.aiDetermination),
+              // Record where the proposal addresses it (don't wipe a manual entry).
+              ...(it.proposalRef ? { proposalRef: it.proposalRef } : {})
+            }
           });
           checked++;
         }
