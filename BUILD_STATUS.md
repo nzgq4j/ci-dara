@@ -24,10 +24,13 @@ proposal development (color-team gate reviews of the company's own proposal)** a
 shipped phases — Requirements/Compliance, Color-team reviews, Amendments + AI reconciliation
 (§2). The evaluation model settled on **holistic review of the evaluation factors + a lean
 pass/fail compliance-matrix sweep of the administrative requirements** (⭐ §2, 2026-07-01) —
-after a course-correction away from an interim compliance-heavy checklist. Next major work is
-**Pass B: building the imported "Color Review Cycle" 9-stage pipeline design** on top of this
-engine (§7 / SESSION_HANDOFF §2). The underlying review methodology is **never named** in
-UI/prompts/code/docs.
+after a course-correction away from an interim compliance-heavy checklist. The pipeline UI was
+then built, and — most recently — the review engine was reworked into a **3-pass async AI
+review** per the imported `DARA.dc.html` design (Pass 1 Compliance & Format → Pass 2 Technical
+Responsiveness → Pass 3 Risk & Competitive), with requirement **disposition** classification,
+compliance-matrix export/sync, dashboard pass badges, and multi-pass shred/amendment coverage
+(§7 "multi-pass session"). Next major work is the **full navy/gold visual reskin** (deferred).
+The underlying review methodology is **never named** in UI/prompts/code/docs.
 
 ---
 
@@ -568,15 +571,60 @@ a course-correction to a holistic review model):**
   proposal-pipeline UI. **Not built yet — this is "Pass B", the top of the next queue**
   (hybrid: pipeline UX, reuse engine). Reference at `…/scratchpad/ColorReviewCycle.html`.
 
-**Pick up next session — see `SESSION_HANDOFF.md` for the full plan.** Top of queue:
-1. **★ Pass B — build the Color Review Cycle design** (9-stage stepper + per-stage holistic
-   findings workspace + multi-volume compliance matrix + amendment workflow + sidebar reorg),
-   hybrid approach, on the restored holistic engine. See SESSION_HANDOFF §2 (top).
-2. **Verify in prod (fresh review):** rich per-factor assessments in the **Review** tab +
-   the pass/fail sweep setting statuses in the **Compliance** tab. Mark Section M items
-   **Scored** first. (Old reviews on sol 5 hold stale lean rows — delete + recreate.)
-3. **Operator actions (you):** (a) branch protection on `main` (#13); (b) Supabase Auth Site
-   URL + **Confirm email ON** (#1); (c) move the platform Anthropic key into the console (#14);
-   (d) set the platform model to **Sonnet** for review/reconciliation quality.
-4. Feature backlog: per-company **audit-log viewer**; AI codebase security-audit. Product
-   backlog (§5): Reporting phase 2, evaluation robustness (JobQueue + cron), billing polish.
+**Session 2026-07-01 (multi-pass) — shipped** (built the imported `DARA.dc.html` multi-pass
+design + requirement disposition + two prod bug fixes; all deployed & pushed):
+- **Requirement disposition** (commit `c895da8`): `Requirement.disposition` enum
+  (scored/compliance/administrative), AI-classified by the shred, kept in sync with `isScored`.
+  The shred prompt (`buildShredPrompt`) now auto-classifies AND **excludes non-requirements**
+  (evaluation/scoring methodology, rating-scale defs, boilerplate, Gov responsibilities) — the
+  user's "it captures the scoring mechanism as a requirement" complaint. Compliance sweep
+  (`runComplianceSweep`/`runComplianceCheck`) targets `disposition=compliance`; administrative
+  rows default N/A + skipped. Matrix "Type" dropdown replaces the Scored checkbox. Migration
+  `20260701050000`. Also fixed `RequirementVersion` `@map` drift (is_scored/far_reference/
+  compliance_status/proposal_ref).
+- **Matrix modal centering** (`f20b77e`): `RequirementDetail` + `AddSection` portal to
+  `document.body` — the active pipeline panel's `.fade` animation leaves `transform:
+  translateY(0)`, making it the containing block for `position:fixed` (modal centered on the
+  panel, not the viewport).
+- **Create-review crash + modal-not-closing** (`5c1bf8b`): `AddSection` now closes on submit
+  (capture-phase `submit` listener — submit doesn't bubble, capture reaches it), unmounting the
+  form before the server action re-renders; `createReview` **revalidates instead of redirect**.
+  The redirect + open portal modal was throwing a client-side exception (create succeeded — it
+  appeared on refresh) and never resetting the modal's open state.
+- **★ Multi-pass AI review** (`da370ed`): each color-team `Review` runs three sequential passes
+  — **Pass 1 Compliance & Format · Pass 2 Technical Responsiveness · Pass 3 Risk & Competitive**
+  — each a 0-100 score + severity-ranked findings (severity·finding·requirementRef·recommended
+  action). **Async**: `dara_review_passes` + `dara_findings` (migration `20260701060000` + RLS
+  `2026-07-01_review_passes_rls.sql`); engine `utils/dara/passes.ts` (`runPass`,
+  `runReviewPasses`, `enqueueReviewRun`/`enqueuePassRun`, `processReviewJobs` worker,
+  `triggerWorker`); prompts `PASS_LENS`/`buildPassPrompt`/`parsePassResult`; worker route
+  `app/api/cron/passes` + `vercel.json` cron (every minute). UI `ReviewPassPanel` polls live.
+  **Decision: layered onto color teams** (each review runs the 3 passes); the old per-persona
+  holistic `runEvaluation`/`Result` path is preserved but secondary (collapsed). **`after()` is
+  not available in Next 14.2.35** → fire-and-forget fetch + cron backstop. **User-verified in
+  prod.**
+- **Compliance matrix export + notes** (`4b0d4c1`): `Requirement.notes` (migration
+  `20260701070000`), editable Notes column + "Response loc." relabel, **CSV / Word export**
+  (`exportMatrixAction` + `MatrixExport`, Blob download, no dep).
+- **"Sync from AI review"** (`20d05b6`): `syncMatrixFromPasses` folds the latest completed
+  Pass-1 findings into the matrix (no LLM) — fuzzy match ref↔citation, idempotent `AI:` notes
+  block, status nudge on unassessed rows.
+- **Dashboard pass badges** (`2070c6c`): Recent-Solicitations table shows P1/P2/P3 status
+  aggregated across a solicitation's reviews + avg completed-pass score; "Avg Score" stat card.
+- **Multi-pass shred + amendment coverage** (`d55ccdf`): `shredRequirements` runs ≤2 coverage
+  passes (`buildShredGapPrompt`) after the initial extract to catch missed requirements (stop
+  when dry); `reconcileAmendment` runs 1 coverage pass (`buildAmendmentGapPrompt`). Completes
+  the original multi-pass ask (evaluations + matrix + amendment impact).
+
+**Pick up next session — see `SESSION_HANDOFF.md` + `CONTEXT_HANDOFF.md`.** Top of queue:
+1. **★ Full navy/gold reskin** — the imported `DARA.dc.html` visual system (navy #1B2A4A / gold
+   #B8952A / Inter, **light** theme, new top-nav) vs the current IBM Plex **dark** theme. The
+   big one, every page — do it deliberately: tokens first, then page-by-page. Deferred.
+2. **Operator actions (you):** (a) set platform model to **Sonnet** — now the biggest quality
+   lever (3 review passes + shred/amendment coverage passes); (b) optional `CRON_SECRET` in
+   Vercel to lock `/api/cron/passes`; (c) branch protection on `main` (#13); (d) Supabase Auth
+   Site URL + Confirm-email ON (#1).
+3. **Verify in prod:** a fresh matrix generate (watch coverage passes add reqs), an amendment
+   reconcile, the dashboard badges.
+4. Feature backlog: per-company **audit-log viewer**; AI codebase security-audit; migrate the
+   legacy shred/sweep onto the JobQueue+cron path if they hit the sync budget; billing polish.
