@@ -22,7 +22,7 @@ import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses } from '@/utils/dara/passes';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
@@ -307,6 +307,17 @@ async function runComplianceCheckAction(formData: FormData): Promise<{ ok: boole
   });
   revalidatePath(`/app/solicitations/${solId}`);
   return { ok: res.ok, count: res.checked, error: res.error };
+}
+
+// Fold the latest completed Compliance & Format pass's findings into the matrix (no LLM).
+async function syncMatrixAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const res = await syncMatrixFromPasses(solId, daraUser.companyId);
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: res.ok, count: res.synced, error: res.error };
 }
 
 async function addRequirement(formData: FormData) {
@@ -1203,6 +1214,18 @@ export default async function SolicitationDetailPage({
                 pendingLabel={`Grading ${requirements.filter((r) => r.disposition === 'compliance').length} pass/fail requirements against your proposal…`}
                 noun="requirement"
                 verb="checked"
+                className={btnGhost}
+              />
+            )}
+            {requirements.length > 0 && (
+              <AiActionButton
+                action={syncMatrixAction}
+                fields={{ solId: sid }}
+                idle={<Sparkles className="h-4 w-4" />}
+                label="Sync from AI review"
+                pendingLabel="Folding the AI review's Compliance &amp; Format findings into the matrix…"
+                noun="requirement"
+                verb="synced"
                 className={btnGhost}
               />
             )}

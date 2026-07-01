@@ -245,6 +245,87 @@ export async function runReviewPasses(
   return { done: remaining === 0 };
 }
 
+function normRef(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Fold the most recent completed Compliance & Format pass's findings into the compliance
+ * matrix — no new LLM call. Matches each finding to a requirement by its reference vs the
+ * requirement's citation, writes an "AI:" notes block (idempotent), and nudges the status
+ * of matched requirements that are still unassessed. Returns how many requirements changed.
+ */
+export async function syncMatrixFromPasses(
+  solicitationId: bigint,
+  companyId: bigint
+): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const loaded = await withTenant(companyId, async (tx) => {
+    const pass = await tx.reviewPass.findFirst({
+      where: { companyId, passType: 'compliance_format', status: 'complete', review: { solicitationId } },
+      orderBy: { completedAt: 'desc' },
+      include: { findings: { orderBy: { sortOrder: 'asc' } } }
+    });
+    if (!pass) return null;
+    const requirements = await tx.requirement.findMany({
+      where: { solicitationId, companyId, removedAt: null }
+    });
+    return { pass, requirements };
+  });
+  if (!loaded) {
+    return { ok: false, synced: 0, error: 'No completed Compliance & Format pass yet — run an AI review first.' };
+  }
+
+  // Group findings by the requirement they reference (fuzzy: normalized containment).
+  type Fnd = { severity: 'critical' | 'high' | 'medium' | 'low'; text: string; recommendedAction: string };
+  type Req = (typeof loaded.requirements)[number];
+  const sevRank: Record<Fnd['severity'], number> = { critical: 3, high: 2, medium: 1, low: 0 };
+  const groups = new Map<string, Fnd[]>();
+  const reqById = new Map<string, Req>(loaded.requirements.map((r) => [r.id.toString(), r] as const));
+
+  for (const f of loaded.pass.findings) {
+    const fr = normRef(f.requirementRef);
+    if (fr.length < 3) continue;
+    const match = loaded.requirements.find((r) => {
+      const cite = normRef(r.citation);
+      return cite.length >= 3 && (cite.includes(fr) || fr.includes(cite));
+    });
+    if (!match) continue;
+    const key = match.id.toString();
+    const list = groups.get(key) ?? [];
+    list.push({ severity: f.severity, text: f.text, recommendedAction: f.recommendedAction });
+    groups.set(key, list);
+  }
+  if (groups.size === 0) return { ok: true, synced: 0 };
+
+  const entries = Array.from(groups.entries());
+  let synced = 0;
+  await withTenant(companyId, async (tx) => {
+    for (const [key, findings] of entries) {
+      const req = reqById.get(key);
+      if (!req) continue;
+      let worst = 0;
+      for (const f of findings) worst = Math.max(worst, sevRank[f.severity]);
+      // Rebuild the AI notes block: keep the user's lines, replace prior "AI:" lines.
+      const userLines = (req.notes ?? '').split('\n').filter((l) => l.trim() !== '' && !l.trimStart().startsWith('AI:'));
+      const aiLines = findings.map(
+        (f) => `AI: [${f.severity.toUpperCase()}] ${f.text}${f.recommendedAction ? ` → ${f.recommendedAction}` : ''}`
+      );
+      const notes = [...userLines, ...aiLines].join('\n').slice(0, 4000);
+      const nudged = worst >= 2 ? 'non_compliant' : 'partial';
+      await tx.requirement.update({
+        where: { id: req.id },
+        data: {
+          notes,
+          // Only set status when the user/sweep hasn't already assessed it.
+          ...(req.complianceStatus === 'not_assessed' ? { complianceStatus: nudged as any } : {})
+        }
+      });
+      synced++;
+    }
+  });
+  return { ok: true, synced };
+}
+
 /**
  * Best-effort immediate kick of the worker route so a run starts without waiting for the
  * next cron tick. Fire-and-forget — never awaited, never throws; the every-minute cron is
