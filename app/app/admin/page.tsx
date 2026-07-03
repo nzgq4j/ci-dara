@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { Save, Building2, Users, ShieldCheck, Ban, Trash2, Plus, Cpu } from 'lucide-react';
+import { Prisma } from '@prisma/client';
+import { Save, Building2, Users, ShieldCheck, Ban, Trash2, Plus, Cpu, SlidersHorizontal } from 'lucide-react';
 import { prismaAdmin } from '@/utils/prisma';
 import {
   requirePlatformAdmin,
@@ -17,6 +18,19 @@ import { savePlatformKeys } from './ai-actions';
 import PlatformAISelect from './PlatformAISelect';
 import { recordAudit } from '@/utils/dara/audit';
 import { secretHint } from '@/utils/dara/crypto';
+import {
+  TRIAL_RESOURCES,
+  FEATURE_FLAGS,
+  FEATURE_LABELS,
+  DEFAULT_TRIAL_LIMITS,
+  resolveEntitlements,
+  buildEntitlements,
+  getPlatformDefaultEntitlements,
+  setPlatformDefaultEntitlements,
+  type TrialResource,
+  type FeatureFlag,
+  type Entitlements
+} from '@/utils/dara/trial';
 import PageHeader from '@/components/dara/PageHeader';
 import ConfirmButton from '@/components/dara/ConfirmButton';
 import {
@@ -64,6 +78,71 @@ async function updateCompany(formData: FormData) {
     entityType: 'company',
     entityId: id,
     metadata: { plan: formData.get('plan'), planStatus: formData.get('planStatus') }
+  });
+  revalidatePath('/app/admin');
+}
+
+// Read limit + feature form fields into an entitlements pair (shared by the platform-default
+// and per-company entitlement forms).
+function readEntitlementsForm(formData: FormData) {
+  const limits = {} as Record<TrialResource, number>;
+  for (const r of TRIAL_RESOURCES) {
+    const v = Number(formData.get(`limit_${r}`));
+    limits[r] = Number.isFinite(v) ? Math.max(0, Math.floor(v)) : DEFAULT_TRIAL_LIMITS[r];
+  }
+  const features = {} as Record<FeatureFlag, boolean>;
+  for (const f of FEATURE_FLAGS) features[f] = formData.get(`feature_${f}`) != null;
+  return { limits, features };
+}
+
+// Platform-wide default gating — inherited by every company without an override.
+async function saveDefaultGating(formData: FormData) {
+  'use server';
+  const admin = await requirePlatformAdmin();
+  const { limits, features } = readEntitlementsForm(formData);
+  await setPlatformDefaultEntitlements(limits, features);
+  await recordAudit({
+    action: 'admin.default_gating.update',
+    actorId: admin.userId,
+    actorEmail: admin.email,
+    entityType: 'platform',
+    metadata: { limits, features }
+  });
+  revalidatePath('/app/admin');
+}
+
+// Per-company entitlement override (opt-in; only written here, never on a plain account save).
+async function updateCompanyEntitlements(formData: FormData) {
+  'use server';
+  const admin = await requirePlatformAdmin();
+  const id = BigInt(String(formData.get('companyId')));
+  const { limits, features } = readEntitlementsForm(formData);
+  await prismaAdmin.company.update({ where: { id }, data: { entitlements: buildEntitlements(limits, features) as object } });
+  await recordAudit({
+    action: 'admin.company.entitlements.set',
+    companyId: id,
+    actorId: admin.userId,
+    actorEmail: admin.email,
+    entityType: 'company',
+    entityId: id,
+    metadata: { limits, features }
+  });
+  revalidatePath('/app/admin');
+}
+
+// Clear a company's override so it follows the platform default again.
+async function clearCompanyEntitlements(formData: FormData) {
+  'use server';
+  const admin = await requirePlatformAdmin();
+  const id = BigInt(String(formData.get('companyId')));
+  await prismaAdmin.company.update({ where: { id }, data: { entitlements: Prisma.DbNull } });
+  await recordAudit({
+    action: 'admin.company.entitlements.clear',
+    companyId: id,
+    actorId: admin.userId,
+    actorEmail: admin.email,
+    entityType: 'company',
+    entityId: id
   });
   revalidatePath('/app/admin');
 }
@@ -132,6 +211,37 @@ async function removeAdmin(formData: FormData) {
   revalidatePath('/app/admin');
 }
 
+// Shared limit + feature inputs (names limit_<resource> / feature_<flag>), pre-filled from
+// `ent`. Used by both the platform-default form and each per-company override form.
+function EntitlementFields({ ent }: { ent: Entitlements }) {
+  return (
+    <>
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+        Trial limits <span className="normal-case text-t4">· apply on the trial plan</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {TRIAL_RESOURCES.map((r) => (
+          <div key={r} className="space-y-1.5">
+            <label className={`${labelClasses} normal-case`}>{r.replace('_', ' ')}s</label>
+            <input name={`limit_${r}`} type="number" min={0} defaultValue={ent.limits[r]} className={fieldClasses} />
+          </div>
+        ))}
+      </div>
+      <div className="mb-2 mt-3 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+        Features <span className="normal-case text-t4">· uncheck to fence off</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {FEATURE_FLAGS.map((f) => (
+          <label key={f} className="flex items-center gap-2 text-[13px] text-t3">
+            <input type="checkbox" name={`feature_${f}`} defaultChecked={ent.features[f]} className={checkboxClasses} />
+            {FEATURE_LABELS[f]}
+          </label>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export default async function AdminPage() {
   const me = await requirePlatformAdmin();
 
@@ -147,6 +257,7 @@ export default async function AdminPage() {
   });
   const admins = await listPlatformAdmins();
   const ai = await getPlatformAIView();
+  const platformDefaults = await getPlatformDefaultEntitlements();
 
   return (
     <div className="mx-auto max-w-5xl fade">
@@ -230,81 +341,132 @@ export default async function AdminPage() {
           </div>
         </section>
 
+        {/* Default gating — platform-wide entitlements every company inherits */}
+        <section id="gating" className="space-y-4 scroll-mt-6">
+          <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
+            <SlidersHorizontal className="h-4 w-4 text-t5" />Default gating
+          </h2>
+          <p className="text-[12px] text-t4">
+            Platform-wide defaults inherited by every company that has no per-account override.
+            Trial limits apply on the <span className="text-t2">trial</span> plan; unchecking a
+            feature fences it off for all accounts.
+          </p>
+          <form action={saveDefaultGating} className={`${card} space-y-1 p-5`}>
+            <EntitlementFields ent={platformDefaults} />
+            <div className="flex justify-end pt-2">
+              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save defaults</button>
+            </div>
+          </form>
+        </section>
+
         {/* Companies */}
         <section className="space-y-4">
           <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
             <Building2 className="h-4 w-4 text-t5" />Accounts
           </h2>
-          {companies.map((c) => (
-            <form key={c.id.toString()} action={updateCompany} className={`${card} p-4`}>
-              <input type="hidden" name="companyId" value={c.id.toString()} />
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="text-[13px] font-semibold text-t1">{c.name}</span>
-                  <span className="ml-2 font-mono text-[11px] text-t5">/{c.slug}</span>
-                </div>
-                <div className="font-mono text-[11px] text-t5">
-                  {c._count.users} users · {c._count.solicitations} solicitations · {c._count.evaluations} evals
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Plan</label>
-                  <select name="plan" defaultValue={c.plan} className={fieldClasses}>
-                    {PLANS.map((p) => (<option key={p} value={p}>{p}</option>))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Plan status</label>
-                  <select name="planStatus" defaultValue={c.planStatus} className={fieldClasses}>
-                    {PLAN_STATUSES.map((p) => (<option key={p} value={p}>{p}</option>))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Trial ends</label>
-                  <input
-                    name="trialEndsAt"
-                    type="date"
-                    defaultValue={c.trialEndsAt ? c.trialEndsAt.toISOString().slice(0, 10) : ''}
-                    className={fieldClasses}
-                  />
-                </div>
-              </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-4">
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Key mode</label>
-                  <select name="aiKeyMode" defaultValue={c.aiKeyMode} className={fieldClasses}>
-                    {KEY_MODES.map((m) => (<option key={m} value={m}>{m}</option>))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Provider</label>
-                  <select name="activeProvider" defaultValue={c.activeProvider} className={fieldClasses}>
-                    {PROVIDERS.map((p) => (<option key={p} value={p}>{p}</option>))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Model</label>
-                  <input name="activeModel" type="text" defaultValue={c.activeModel} className={fieldClasses} />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelClasses}>Keys</label>
-                  <div className="px-1 py-2 font-mono text-[11px] text-t4">
-                    {[
-                      ['A', secretHint(c.anthropicKeyEnc)],
-                      ['O', secretHint(c.openaiKeyEnc)],
-                      ['G', secretHint(c.googleKeyEnc)]
-                    ]
-                      .map(([k, h]) => `${k}:${h ? '✓' : '–'}`)
-                      .join('  ')}
+          {companies.map((c) => {
+            const eff = resolveEntitlements(c.entitlements, platformDefaults);
+            const isCustom = c.entitlements != null;
+            return (
+              <div key={c.id.toString()} className={`${card} p-4`}>
+                <form action={updateCompany}>
+                  <input type="hidden" name="companyId" value={c.id.toString()} />
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="text-[13px] font-semibold text-t1">{c.name}</span>
+                      <span className="ml-2 font-mono text-[11px] text-t5">/{c.slug}</span>
+                    </div>
+                    <div className="font-mono text-[11px] text-t5">
+                      {c._count.users} users · {c._count.solicitations} solicitations · {c._count.evaluations} evals
+                    </div>
                   </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Plan</label>
+                      <select name="plan" defaultValue={c.plan} className={fieldClasses}>
+                        {PLANS.map((p) => (<option key={p} value={p}>{p}</option>))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Plan status</label>
+                      <select name="planStatus" defaultValue={c.planStatus} className={fieldClasses}>
+                        {PLAN_STATUSES.map((p) => (<option key={p} value={p}>{p}</option>))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Trial ends</label>
+                      <input
+                        name="trialEndsAt"
+                        type="date"
+                        defaultValue={c.trialEndsAt ? c.trialEndsAt.toISOString().slice(0, 10) : ''}
+                        className={fieldClasses}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Key mode</label>
+                      <select name="aiKeyMode" defaultValue={c.aiKeyMode} className={fieldClasses}>
+                        {KEY_MODES.map((m) => (<option key={m} value={m}>{m}</option>))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Provider</label>
+                      <select name="activeProvider" defaultValue={c.activeProvider} className={fieldClasses}>
+                        {PROVIDERS.map((p) => (<option key={p} value={p}>{p}</option>))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Model</label>
+                      <input name="activeModel" type="text" defaultValue={c.activeModel} className={fieldClasses} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelClasses}>Keys</label>
+                      <div className="px-1 py-2 font-mono text-[11px] text-t4">
+                        {[
+                          ['A', secretHint(c.anthropicKeyEnc)],
+                          ['O', secretHint(c.openaiKeyEnc)],
+                          ['G', secretHint(c.googleKeyEnc)]
+                        ]
+                          .map(([k, h]) => `${k}:${h ? '✓' : '–'}`)
+                          .join('  ')}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save account</button>
+                  </div>
+                </form>
+
+                {/* Per-company entitlements override (opt-in; independent of the account save) */}
+                <div className="mt-4 border-t border-line pt-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
+                      Entitlements{' '}
+                      <span className={`normal-case ${isCustom ? 'text-[#e0c97d]' : 'text-t4'}`}>
+                        · {isCustom ? 'custom override' : 'inheriting platform defaults'}
+                      </span>
+                    </div>
+                    {isCustom && (
+                      <form action={clearCompanyEntitlements}>
+                        <input type="hidden" name="companyId" value={c.id.toString()} />
+                        <button type="submit" className="font-mono text-[10px] uppercase tracking-wide text-t5 transition-colors hover:text-t2">
+                          Reset to defaults
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                  <form action={updateCompanyEntitlements} className="space-y-1">
+                    <input type="hidden" name="companyId" value={c.id.toString()} />
+                    <EntitlementFields ent={eff} />
+                    <div className="flex justify-end pt-2">
+                      <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save overrides</button>
+                    </div>
+                  </form>
                 </div>
               </div>
-              <div className="mt-3 flex justify-end">
-                <button type="submit" className={btnGhost}><Save className="h-4 w-4" />Save account</button>
-              </div>
-            </form>
-          ))}
+            );
+          })}
         </section>
 
         {/* Users */}

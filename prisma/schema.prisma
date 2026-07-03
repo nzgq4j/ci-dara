@@ -193,6 +193,10 @@ model Company {
   googleKeyEnc     String?    @map("google_key_enc")
   onboardedAt      DateTime?  @map("onboarded_at")
 
+  // Per-company entitlements (managed by platform admins in /app/admin): trial usage
+  // limit overrides + feature capability flags. Null = all defaults. See utils/dara/trial.ts.
+  entitlements     Json?
+
   // Company profile (editable on /app/company by company admins)
   legalName        String?    @map("legal_name") @db.VarChar(255)
   website          String?    @db.VarChar(255)
@@ -281,6 +285,9 @@ model PlatformSetting {
   anthropicKeyEnc String?    @map("anthropic_key_enc")
   openaiKeyEnc    String?    @map("openai_key_enc")
   googleKeyEnc    String?    @map("google_key_enc")
+  // Platform-wide default entitlements (trial limits + feature flags) every company
+  // inherits unless it has a per-company override. See utils/dara/trial.ts.
+  defaultEntitlements Json?  @map("default_entitlements")
   updatedAt       DateTime   @updatedAt @map("updated_at")
 
   @@map("dara_platform_settings")

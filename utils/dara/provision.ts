@@ -76,7 +76,7 @@ export async function provisionNewUser(
         slug,
         plan: 'trial',
         planStatus: 'trialing',
-        trialEndsAt: new Date(Date.now() + 14 * 86400 * 1000),
+        trialEndsAt: new Date(Date.now() + 30 * 86400 * 1000),
       },
     });
 
