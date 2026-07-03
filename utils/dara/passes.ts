@@ -22,6 +22,17 @@ import { getPlatformAI } from '@/utils/dara/platform-ai';
 
 const PASS_MAX_TOKENS = 6000;
 
+// Don't START a pass unless at least this much of the worker's deadline remains — a full
+// single-document pass can take a couple of minutes, and a pass killed mid-call (function
+// timeout) orphans the job. With too little headroom we leave the pass `queued` for the
+// next worker tick instead, where it runs with a full budget.
+const PASS_BUDGET_MS = 160_000;
+
+// A JobQueue row / ReviewPass stuck in `running` longer than this is orphaned: the owning
+// function was killed mid-run (no catch ran to requeue it). The cron route's maxDuration is
+// 300s, so anything running past this margin is certainly dead and safe to reap.
+const STALE_MS = 6 * 60_000;
+
 // Passes run in this fixed order; a review can't start pass N+1 before pass N.
 const PASS_ORDER: PassTypeValue[] = [...PASS_TYPES];
 
@@ -225,11 +236,13 @@ export async function runReviewPasses(
 ): Promise<{ done: boolean }> {
   await ensurePasses(reviewId, companyId);
   for (const passType of PASS_ORDER) {
-    if (Date.now() > deadlineMs) break;
     const pass = await withTenant(companyId, (tx) =>
       tx.reviewPass.findFirst({ where: { reviewId, companyId, passType } })
     );
     if (!pass || pass.status === 'complete' || pass.status === 'error') continue;
+    // Not enough headroom to finish this pass before the function is killed — stop and leave
+    // it queued; the next worker tick picks it up (passes 1-2 already done) with a full budget.
+    if (deadlineMs - Date.now() < PASS_BUDGET_MS) break;
     await runPass(pass.id, companyId, deadlineMs);
   }
 
@@ -342,12 +355,67 @@ export function triggerWorker(): void {
 // ===================== JobQueue worker =====================
 
 /**
+ * Recover work orphaned by a killed function. A serverless timeout mid-pass leaves the
+ * JobQueue row stuck in `running` (no catch ran to requeue it) and the in-flight ReviewPass
+ * stuck in `running` — and the worker only claims `pending` jobs, so the review hangs forever.
+ * Anything `running` past STALE_MS is certainly dead: requeue the job (or fail it if it's out
+ * of attempts, marking its passes errored), and reset orphaned passes so they re-run.
+ * Cross-tenant maintenance sweep — runs on prismaAdmin like the rest of the worker.
+ */
+async function reapOrphanedJobs(): Promise<void> {
+  const staleBefore = new Date(Date.now() - STALE_MS);
+
+  const staleJobs = await prismaAdmin.jobQueue.findMany({
+    where: { status: 'running', startedAt: { lt: staleBefore } },
+    select: { id: true, attempts: true, maxAttempts: true, payload: true }
+  });
+
+  for (const j of staleJobs) {
+    if (j.attempts < j.maxAttempts) {
+      // Retry: passes 1-2 are already complete, so the retry runs the stuck pass with a
+      // full budget. Its `running` row is reset below so it re-runs.
+      await prismaAdmin.jobQueue.update({
+        where: { id: j.id },
+        data: { status: 'pending', availableAt: new Date() }
+      });
+    } else {
+      // Out of attempts — give up and surface the failure instead of spinning forever.
+      await prismaAdmin.jobQueue.update({
+        where: { id: j.id },
+        data: { status: 'failed', finishedAt: new Date(), error: 'Worker timed out before the review finished.' }
+      });
+      const payload = (j.payload ?? {}) as { passId?: string; reviewId?: string };
+      const where = payload.passId
+        ? { id: BigInt(payload.passId) }
+        : payload.reviewId
+          ? { reviewId: BigInt(payload.reviewId) }
+          : null;
+      if (where) {
+        await prismaAdmin.reviewPass.updateMany({
+          where: { ...where, status: { in: ['queued', 'running'] } },
+          data: { status: 'error', progress: 0, progressLabel: '', errorMessage: 'Timed out — retry this pass.' }
+        });
+      }
+    }
+  }
+
+  // Any remaining `running` pass whose job we requeued (or whose job is already gone) is
+  // reset to `queued` so it re-runs and the UI shows a live status instead of a frozen bar.
+  await prismaAdmin.reviewPass.updateMany({
+    where: { status: 'running', startedAt: { lt: staleBefore } },
+    data: { status: 'queued', progress: 0, progressLabel: '' }
+  });
+}
+
+/**
  * Drain pending review-pass jobs until the deadline. Claims one job at a time across all
  * tenants (prismaAdmin), runs its passes under the job's company tenant, and either
  * completes the job or requeues it (deadline hit mid-run) for the next tick. Called by the
  * cron route and by the immediate post-enqueue trigger.
  */
 export async function processReviewJobs(deadlineMs: number): Promise<{ processed: number }> {
+  await reapOrphanedJobs();
+
   let processed = 0;
   while (Date.now() < deadlineMs) {
     const pending = await prismaAdmin.jobQueue.findFirst({
