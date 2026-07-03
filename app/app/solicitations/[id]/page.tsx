@@ -22,12 +22,13 @@ import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, isShredActive, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
 import ComplianceCheckControl from '@/components/dara/ComplianceCheckControl';
+import AsyncJobControl from '@/components/dara/AsyncJobControl';
 import AddSection, { CloseModalOnComplete } from '@/components/dara/AddSection';
 import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
@@ -258,12 +259,15 @@ const VALID_SOURCES = new Set(REQUIREMENT_SOURCES.map((s) => s.value));
 const VALID_STATUSES = new Set(COMPLIANCE_STATUSES.map((s) => s.value));
 
 // AI-shred the solicitation documents into requirement rows (appended).
-async function generateMatrixAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  const summary = await shredRequirements(solId, daraUser.companyId);
+  // Shred in the background worker (multiple AI passes) instead of a long synchronous
+  // request that stalls the UI and can time out on a large solicitation.
+  const res = await enqueueShred(solId, daraUser.companyId);
+  if (res.ok) triggerWorker();
   await recordAudit({
     action: 'requirement.shred',
     companyId: daraUser.companyId,
@@ -272,15 +276,14 @@ async function generateMatrixAction(formData: FormData): Promise<{ ok: boolean; 
     entityType: 'solicitation',
     entityId: solId,
     metadata: {
-      ok: summary.ok,
-      count: summary.count,
-      error: summary.error ?? null,
+      enqueued: res.ok,
+      error: res.error ?? null,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
-  return { ok: summary.ok, count: summary.count, error: summary.error };
+  return res;
 }
 
 // Standalone compliance sweep: check the pass/fail administrative requirements against
@@ -768,13 +771,15 @@ async function deleteAmendment(formData: FormData) {
 }
 
 // AI-diff the amendment against the current compliance matrix → proposed changes.
-async function reconcileAmendmentAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+async function enqueueReconcileAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('amendmentId')));
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  const summary = await reconcileAmendment(id, daraUser.companyId);
+  // Reconcile in the background worker (AI diff + coverage pass) instead of synchronously.
+  const res = await enqueueReconcile(id, daraUser.companyId);
+  if (res.ok) triggerWorker();
   await recordAudit({
     action: 'amendment.reconcile',
     companyId: daraUser.companyId,
@@ -783,15 +788,14 @@ async function reconcileAmendmentAction(formData: FormData): Promise<{ ok: boole
     entityType: 'amendment',
     entityId: id,
     metadata: {
-      ok: summary.ok,
-      changes: summary.changes,
-      error: summary.error ?? null,
+      enqueued: res.ok,
+      error: res.error ?? null,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
-  return { ok: summary.ok, count: summary.changes, error: summary.error };
+  return res;
 }
 
 async function applyChangeAction(formData: FormData) {
@@ -1003,6 +1007,9 @@ export default async function SolicitationDetailPage({
   const complianceTotal = complianceReqs.length;
   const complianceGraded = complianceReqs.filter((r) => r.complianceStatus !== 'not_assessed').length;
   const complianceActive = await isComplianceCheckActive(solicitation.id, daraUser.companyId);
+  // Async shred / amendment-reconcile poll state (background worker jobs).
+  const shredActive = await isShredActive(solicitation.id, daraUser.companyId);
+  const reconcileActiveIds = new Set(await activeReconcileAmendmentIds(daraUser.companyId));
   const reviews = solicitation.reviews;
   const amendments = solicitation.amendments;
   const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');
@@ -1225,19 +1232,15 @@ export default async function SolicitationDetailPage({
             </ol>
           </div>
           <div className="no-print flex flex-shrink-0 flex-col gap-2">
-            <AiActionButton
-              action={generateMatrixAction}
+            <AsyncJobControl
+              action={enqueueShredAction}
               fields={{ solId: sid }}
-              idle={<Sparkles className="h-4 w-4" />}
-              label={requirements.length ? 'Generate more' : 'Generate from solicitation'}
-              pendingLabel="Reading the solicitation & extracting requirements…"
-              steps={[
-                'Reading the solicitation documents…',
-                'Extracting and classifying requirements…',
-                'Running coverage passes to catch anything missed…'
-              ]}
-              noun="requirement"
-              verb="added"
+              idleIcon={<Sparkles className="h-4 w-4" />}
+              idleLabel={requirements.length ? 'Generate more' : 'Generate from solicitation'}
+              activeLabel="Reading the solicitation & extracting requirements…"
+              active={shredActive}
+              count={requirements.length}
+              countNoun="requirement"
               className={btnPrimary}
             />
             {complianceTotal > 0 && (
@@ -1976,19 +1979,15 @@ export default async function SolicitationDetailPage({
 
             {/* Reconcile */}
             <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
-              <AiActionButton
-                action={reconcileAmendmentAction}
+              <AsyncJobControl
+                action={enqueueReconcileAction}
                 fields={{ solId: sid, amendmentId: a.id.toString() }}
-                idle={<Sparkles className="h-4 w-4" />}
-                label={a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
-                pendingLabel="Diffing the amendment against the compliance matrix…"
-                steps={[
-                  'Reading the amendment document…',
-                  'Diffing it against the compliance matrix…',
-                  'Proposing add / modify / remove changes…'
-                ]}
-                noun="change"
-                verb="proposed"
+                idleIcon={<Sparkles className="h-4 w-4" />}
+                idleLabel={a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
+                activeLabel="Diffing the amendment against the compliance matrix…"
+                active={reconcileActiveIds.has(a.id.toString())}
+                count={a.changes.length}
+                countNoun="proposed change"
                 className={btnPrimary}
                 disabled={a.documents.length === 0}
               />

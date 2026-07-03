@@ -20,6 +20,8 @@ import {
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
+import { shredRequirements } from '@/utils/dara/requirements';
+import { reconcileAmendment } from '@/utils/dara/amendments';
 
 const PASS_MAX_TOKENS = 6000;
 
@@ -111,7 +113,7 @@ export async function enqueueComplianceCheck(
       where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
       select: { payload: true }
     });
-    if (activeJobs.some((j) => isComplianceJobFor(j.payload, solicitationId))) {
+    if (activeJobs.some((j) => jobPayloadMatches(j.payload, 'compliance_check', 'solicitationId', solicitationId))) {
       return { ok: true }; // already in progress — the UI is polling it
     }
     await tx.jobQueue.create({
@@ -126,21 +128,75 @@ export async function enqueueComplianceCheck(
   });
 }
 
-/** Does this JobQueue payload represent a compliance check for the given solicitation? */
-function isComplianceJobFor(payload: unknown, solicitationId: bigint): boolean {
-  const p = (payload ?? {}) as { kind?: string; solicitationId?: string };
-  return p.kind === 'compliance_check' && p.solicitationId === solicitationId.toString();
+// ---- Async background jobs (compliance check / shred / amendment reconcile) ----
+// All three run in the worker instead of a long synchronous request. They share the
+// `evaluate` job type; the payload `kind` + entity id distinguish them.
+
+/** Does a JobQueue payload match a given kind + entity id (e.g. kind='shred', field='solicitationId')? */
+function jobPayloadMatches(payload: unknown, kind: string, field: string, id: bigint): boolean {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  return p.kind === kind && p[field] === id.toString();
 }
 
-/** True when a compliance check is queued/running for this solicitation (drives the UI poll). */
-export async function isComplianceCheckActive(solicitationId: bigint, companyId: bigint): Promise<boolean> {
-  const jobs = await withTenant(companyId, (tx) =>
+/** The (small) set of active evaluate-job payloads for a company. */
+function activeEvaluatePayloads(companyId: bigint) {
+  return withTenant(companyId, (tx) =>
     tx.jobQueue.findMany({
       where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
       select: { payload: true }
     })
   );
-  return jobs.some((j) => isComplianceJobFor(j.payload, solicitationId));
+}
+
+/** Enqueue a background job of `kind` for one entity, unless an identical one is already active. */
+async function enqueueUniqueJob(
+  companyId: bigint,
+  kind: string,
+  field: string,
+  id: bigint
+): Promise<{ ok: boolean; error?: string }> {
+  return withTenant(companyId, async (tx) => {
+    const active = await tx.jobQueue.findMany({
+      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
+      select: { payload: true }
+    });
+    if (active.some((j) => jobPayloadMatches(j.payload, kind, field, id))) return { ok: true };
+    await tx.jobQueue.create({
+      data: { companyId, jobType: 'evaluate', payload: { kind, [field]: id.toString() }, status: 'pending' }
+    });
+    return { ok: true };
+  });
+}
+
+/** True when a compliance check is queued/running for this solicitation (drives the UI poll). */
+export async function isComplianceCheckActive(solicitationId: bigint, companyId: bigint): Promise<boolean> {
+  const jobs = await activeEvaluatePayloads(companyId);
+  return jobs.some((j) => jobPayloadMatches(j.payload, 'compliance_check', 'solicitationId', solicitationId));
+}
+
+/** Enqueue an async matrix shred ("Generate from solicitation") for a solicitation. */
+export function enqueueShred(solicitationId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
+  return enqueueUniqueJob(companyId, 'shred', 'solicitationId', solicitationId);
+}
+
+/** True when a shred is queued/running for this solicitation. */
+export async function isShredActive(solicitationId: bigint, companyId: bigint): Promise<boolean> {
+  const jobs = await activeEvaluatePayloads(companyId);
+  return jobs.some((j) => jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId));
+}
+
+/** Enqueue an async amendment reconcile ("Reconcile with AI") for an amendment. */
+export function enqueueReconcile(amendmentId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
+  return enqueueUniqueJob(companyId, 'reconcile', 'amendmentId', amendmentId);
+}
+
+/** Ids of amendments with a reconcile queued/running (for per-amendment poll state). */
+export async function activeReconcileAmendmentIds(companyId: bigint): Promise<string[]> {
+  const jobs = await activeEvaluatePayloads(companyId);
+  return jobs
+    .map((j) => (j.payload ?? {}) as { kind?: string; amendmentId?: string })
+    .filter((p) => p.kind === 'reconcile' && !!p.amendmentId)
+    .map((p) => p.amendmentId as string);
 }
 
 /** Enqueue a single pass re-run / retry (leaves the other passes untouched). */
@@ -504,7 +560,7 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
     if (claim.count === 0) continue;
 
     const companyId = pending.companyId;
-    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string };
+    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string; amendmentId?: string };
 
     try {
       let done = true;
@@ -512,6 +568,11 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
         await runPass(BigInt(payload.passId), companyId, deadlineMs);
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
+      } else if (payload.kind === 'shred' && payload.solicitationId) {
+        // Shred runs its own passes (initial + coverage) to completion within one tick.
+        await shredRequirements(BigInt(payload.solicitationId), companyId);
+      } else if (payload.kind === 'reconcile' && payload.amendmentId) {
+        await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.reviewId) {
         ({ done } = await runReviewPasses(BigInt(payload.reviewId), companyId, deadlineMs));
       }
