@@ -67,11 +67,17 @@ export interface SweepSummary {
   error?: string;
 }
 
-// The pass/fail compliance sweep checks the administrative requirements (the bulk) in
-// big batches — each item is a one-line determination, so they pack cheaply. The
-// holistic review (below) runs one rich call per evaluation factor, not batched.
-const BATCH_SIZE_COMPLIANCE = 40;
-const BATCH_MAX_TOKENS = 16000;
+// The pass/fail compliance sweep checks the compliance requirements (the bulk) in small
+// batches. Batches are kept modest so each call finishes fast and its JSON never truncates
+// — a 40-item / 16k-token batch was overrunning the function limit AND truncating past the
+// parser, which silently graded nothing. The holistic review (below) runs one rich call per
+// evaluation factor, not batched.
+const BATCH_SIZE_COMPLIANCE = 12;
+const BATCH_MAX_TOKENS = 8000;
+// Don't START a batch unless this much of the deadline remains. The deadline is only
+// checked between batches, so without this a single call can overrun the function's hard
+// limit and be killed mid-write — the "quiet timeout" where progress is lost.
+const BATCH_BUDGET_MS = 90_000;
 
 // Adapt a Requirement row to the prompt builder's criterion shape. Scored Section M
 // factors use the 0-100 scoring schema; everything else uses the determination
@@ -307,9 +313,16 @@ export async function runComplianceSweep(
     if (!review) return null;
     const company = await tx.company.findUnique({ where: { id: companyId } });
     const requirements = await tx.requirement.findMany({
-      // Only the pass/fail compliance requirements are graded against the proposal.
-      // Scored factors get the holistic review; administrative items are not written up.
-      where: { solicitationId: review.solicitationId, companyId, removedAt: null, disposition: 'compliance' },
+      // Only the pass/fail compliance requirements are graded against the proposal, and only
+      // the ones not yet assessed — so a re-run resumes where the last one stopped instead of
+      // re-grading everything. Scored factors get the holistic review; administrative are N/A.
+      where: {
+        solicitationId: review.solicitationId,
+        companyId,
+        removedAt: null,
+        disposition: 'compliance',
+        complianceStatus: 'not_assessed'
+      },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
     const solDocs = await tx.solDocument.findMany({
@@ -330,21 +343,33 @@ export async function runComplianceSweep(
   const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
   if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
 
-  const checked = await sweepRequirements(
-    companyId,
-    loaded.requirements,
-    documentText,
-    solText,
-    provider,
-    model,
-    apiKey,
-    deadlineMs
+  return finishSweep(
+    loaded.requirements.length,
+    await sweepRequirements(companyId, loaded.requirements, documentText, solText, provider, model, apiKey, deadlineMs)
   );
-  return { ok: true, checked };
+}
+
+// Translate a sweep result into a user-facing summary: full success, a clear
+// grade-the-rest prompt when the budget ran out partway, or the actual failure reason
+// when nothing was graded — never a silent "0 checked".
+function finishSweep(total: number, res: { checked: number; error?: string }): SweepSummary {
+  const remaining = total - res.checked;
+  if (res.checked === 0) {
+    return { ok: false, checked: 0, error: res.error ?? 'No requirements were graded. Check the AI provider/model and try again.' };
+  }
+  if (remaining > 0) {
+    return {
+      ok: false,
+      checked: res.checked,
+      error: `Graded ${res.checked} of ${total} requirements. ${remaining} still to grade — click Run compliance check again to continue.`
+    };
+  }
+  return { ok: true, checked: res.checked };
 }
 
 // Shared sweep loop: lean pass/fail determinations over `requirements` against
-// `documentText`, writing each requirement's complianceStatus. Idempotent, time-boxed.
+// `documentText`, writing each requirement's complianceStatus. Idempotent, time-boxed, and
+// resumable — it grades as many as fit before the budget runs out and reports the rest.
 async function sweepRequirements(
   companyId: bigint,
   requirements: { id: bigint; name: string; description: string | null; farReference: string }[],
@@ -354,10 +379,13 @@ async function sweepRequirements(
   model: string,
   apiKey: string,
   deadlineMs: number
-): Promise<number> {
+): Promise<{ checked: number; error?: string }> {
   let checked = 0;
+  let lastError: string | undefined;
   for (let i = 0; i < requirements.length; i += BATCH_SIZE_COMPLIANCE) {
-    if (Date.now() > deadlineMs) break;
+    // Only start a batch if it can finish before the function is killed. Otherwise stop and
+    // let the caller report partial progress — the user re-runs to grade the remainder.
+    if (deadlineMs - Date.now() < BATCH_BUDGET_MS) break;
     const batch = requirements.slice(i, i + BATCH_SIZE_COMPLIANCE);
     const user = buildBatchUserPrompt(
       batch.map((r) => ({ id: r.id.toString(), name: r.name, description: r.description, isScored: false, farReference: r.farReference })),
@@ -368,6 +396,10 @@ async function sweepRequirements(
     try {
       const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
       const { items } = parseBatchResults(ai.text);
+      if (items.length === 0) {
+        lastError = 'The AI returned no parseable determinations — the model may be truncating output. Try a stronger platform model (e.g. Sonnet).';
+        continue; // a later batch may still succeed; don't abort the whole sweep
+      }
       const byId = new Map(items.map((it) => [it.requirementId, it]));
       await withTenant(companyId, async (tx) => {
         for (const r of batch) {
@@ -384,11 +416,13 @@ async function sweepRequirements(
           checked++;
         }
       });
-    } catch {
-      /* skip a failed batch — a re-run re-sweeps */
+    } catch (e) {
+      // Surface the reason instead of hiding it; keep going so one bad batch doesn't
+      // abort progress on the rest.
+      lastError = e instanceof Error ? e.message.slice(0, 300) : 'AI request failed.';
     }
   }
-  return checked;
+  return { checked, error: lastError };
 }
 
 /**
@@ -403,17 +437,27 @@ export async function runComplianceCheck(
 ): Promise<SweepSummary> {
   const loaded = await withTenant(companyId, async (tx) => {
     const company = await tx.company.findUnique({ where: { id: companyId } });
+    // Grade only the not-yet-assessed compliance requirements so a re-run resumes the
+    // remainder instead of starting over (209 items can't finish in one function budget).
     const requirements = await tx.requirement.findMany({
-      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance' },
+      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance', complianceStatus: 'not_assessed' },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
+    // Whether ANY compliance requirements exist at all (to distinguish "all done" from "none").
+    const totalCompliance = await tx.requirement.count({
+      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance' }
+    });
     const solDocs = await tx.solDocument.findMany({ where: { solicitationId, companyId } });
-    return { company, requirements, solDocs };
+    return { company, requirements, totalCompliance, solDocs };
   });
 
   if (!loaded.company) return { ok: false, checked: 0, error: 'Company not found.' };
-  if (loaded.requirements.length === 0) {
+  if (loaded.totalCompliance === 0) {
     return { ok: false, checked: 0, error: 'No pass/fail compliance requirements to check. Generate the matrix — the shred classifies each requirement as Scored, Compliance, or Administrative.' };
+  }
+  if (loaded.requirements.length === 0) {
+    // Compliance rows exist but all are already graded — nothing to do.
+    return { ok: true, checked: 0 };
   }
   const documentText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'proposal'));
   if (documentText.trim() === '') {
@@ -425,17 +469,10 @@ export async function runComplianceCheck(
   const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
   if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
 
-  const checked = await sweepRequirements(
-    companyId,
-    loaded.requirements,
-    documentText,
-    solText,
-    provider,
-    model,
-    apiKey,
-    deadlineMs
+  return finishSweep(
+    loaded.requirements.length,
+    await sweepRequirements(companyId, loaded.requirements, documentText, solText, provider, model, apiKey, deadlineMs)
   );
-  return { ok: true, checked };
 }
 
 /**
