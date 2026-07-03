@@ -72,7 +72,10 @@ export interface SweepSummary {
 // — a 40-item / 16k-token batch was overrunning the function limit AND truncating past the
 // parser, which silently graded nothing. The holistic review (below) runs one rich call per
 // evaluation factor, not batched.
-const BATCH_SIZE_COMPLIANCE = 12;
+// The full proposal + RFP are re-sent with every batch, so fewer/larger batches mean fewer
+// re-sends (cheaper and faster) — the output is one lean line per requirement, so 30 items
+// fit comfortably under the token cap. (Smaller batches only multiply the document cost.)
+const BATCH_SIZE_COMPLIANCE = 30;
 const BATCH_MAX_TOKENS = 8000;
 // Don't START a batch unless this much of the deadline remains. The deadline is only
 // checked between batches, so without this a single call can overrun the function's hard

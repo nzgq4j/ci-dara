@@ -376,7 +376,11 @@ export function buildBatchUserPrompt(
 }
 
 function mapBatchItem(it: any): BatchResultItem | null {
-  const id = it?.id != null && /^\d+$/.test(String(it.id)) ? String(it.id) : null;
+  // Tolerate ids returned as "#1022", " 1022", or 1022 — the prompt lists requirements as
+  // "#<id>" and models faithfully echo the "#" (per "exactly as given"). Extract the digits.
+  // Without this, EVERY item is dropped and the batch grades nothing.
+  const idMatch = String(it?.id ?? '').match(/\d+/);
+  const id = idMatch ? idMatch[0] : null;
   if (!id) return null;
   const findings = parseFindings(it);
   const hasScore = it.score != null && String(it.score).trim() !== '' && !isNaN(Number(it.score));
