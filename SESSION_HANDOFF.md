@@ -1,116 +1,119 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-01 (end of the multi-pass session) · for: next session_
+_Prepared: 2026-07-03 · HEAD `980cc13` · branch `main` (clean, deployed) · for: next session_
 
 Start-here-tomorrow doc. Authoritative status: `BUILD_STATUS.md` (§2 decisions, §3 completed,
-§4 gaps, §7 session log). Fuller architecture: `CONTEXT_HANDOFF.md`. Open security findings:
-`/app/security` + `utils/dara/security-content.ts`. Agent memory: `multi-pass-review.md`,
+§4 gaps, §7 session log — the 2026-07-03 entry covers this session in full). The MVP-launch plan:
+`DARA_BUILD_PLAN.md` + the sequenced `DARA_CC_PROMPT_CHAIN.md`. Fuller architecture:
+`CONTEXT_HANDOFF.md`. Security: `/app/security`. Agent memory: `multi-pass-review.md`,
 `color-team-reframing.md`.
 
 ---
 
 ## 1. Where we are
 
-- **Branch:** `main`, clean. HEAD `d55ccdf`. Everything below is deployed to prod and pushed.
-- **This session delivered the imported `DARA.dc.html` multi-pass design** (screens 1/3/4:
-  dashboard, AI review panel, compliance matrix) plus requirement disposition and two prod
-  bug fixes. In order (most recent first):
-  - `d55ccdf` — **multi-pass shred + amendment coverage passes** (recall). `shredRequirements`
-    runs ≤2 coverage passes hunting missed requirements; `reconcileAmendment` runs 1 coverage
-    pass. Completes the original "multi-pass for matrix + amendment + evaluations" ask.
-  - `2070c6c` — **dashboard** P1/P2/P3 pass badges (aggregated per solicitation) + Avg Score stat.
-  - `20d05b6` — compliance **"Sync from AI review"** — folds latest Pass-1 findings into the
-    matrix (no LLM), idempotent `AI:` notes block + status nudge.
-  - `4b0d4c1` — matrix **Notes** column + "Response loc." relabel + **CSV/Word export**.
-  - `da370ed` — **★ multi-pass AI review**: each color-team review runs Pass 1 Compliance &
-    Format → Pass 2 Technical Responsiveness → Pass 3 Risk & Competitive, **async** (JobQueue +
-    Vercel cron worker), scored, severity-ranked findings. `ReviewPassPanel` polls live.
-  - `5c1bf8b` — create-review client crash + modal-not-closing fix.
-  - `f20b77e` — matrix modal centering (portal to body vs `.fade` transform trap).
-  - `c895da8` — requirement **disposition** (scored/compliance/administrative) auto-classified
-    by the shred; shred excludes non-requirements (scoring methodology/boilerplate);
-    `RequirementVersion` `@map` drift fixed.
-- **Verified in prod by the user:** a full multi-pass review run (passes go
-  queued→running→complete with scores + findings).
+- **Branch `main`, clean, HEAD `980cc13`. All deployed to prod + pushed.**
+- **We are executing `DARA_CC_PROMPT_CHAIN.md`** — an 11-prompt MVP-launch hardening pass.
+  - **Prompt 1 (read-only audit): DONE.** Codebase matches the build plan; the one real gap is
+    the **Enterprise plan still creating a Stripe Checkout Session** (Task 8 — fix in Prompt 9).
+    The CRON_SECRET guard is already present. Docs page doesn't exist yet (Prompt 7 creates it).
+  - **Prompt 2 (trial fencing): DONE + extended into an entitlements/gating system** (see §2).
+  - **Prompts 3–11: remaining.**
+- **This session** was mostly an unplanned run of **prod bug-fixes** on the multi-pass/matrix
+  flow (7 deploys) that surfaced while exercising it, capped by Prompt 2. The headline fix:
+  the compliance check **never graded anything** because the batch parser (`mapBatchItem`)
+  rejected every `"#<id>"` the model returned — found by running a real batch against prod data.
 - **Prod:** https://dara.crucibleinsight.com · deploy is manual (`vercel deploy --prod --yes`
-  after push; GitHub→Vercel auto-deploy still not firing).
-- **Security posture:** no audit findings open (DARA-007 risk-accepted). SSP at
-  `/app/security/plan`.
+  after `migrate deploy` if schema changed, then `git push`). Auto-deploy still off.
+- **User constraint:** credential rotation (Task 0) is **deferred to public-release time**, so we
+  run Prompts 3–9 as dev sessions and **hold before the Prompt 10 deploy/operator boundary**.
 
 ### Watch-outs (don't trip on these)
 
-- **⭐ Reviews are now MULTI-PASS (3 fixed lenses), layered onto color teams** (`da370ed`).
-  Run enqueues 3 passes (async); `ReviewPassPanel` shows them. The **old per-persona holistic
-  `runEvaluation`/`Result` path is preserved but secondary** (collapsed "Earlier per-reviewer
-  findings"). Do not wire the Run button back to `runEvaluation`.
-- **`after()` is unavailable in Next 14.2.35.** Worker kicks via fire-and-forget `fetch` to
-  `/api/cron/passes` (`triggerWorker`); **cron every minute** (`vercel.json`) is the backstop.
-  If a run seems stuck, the cron picks it up within ~60s. `CRON_SECRET` optional (route allows
-  if unset — set it in Vercel to lock the worker route down).
-- **Vercel deploy-skew** — hard-refresh (Ctrl+Shift+R) after every deploy before re-testing.
-- **`AddSection` closes on submit** (capture-phase `submit` listener) and `createReview`
-  **revalidates instead of redirecting** — this fixed a recurring client-side exception +
-  modal-stay-open. Keep both; the combo (open portal modal + server-action re-render) is what
-  crashed.
-- **Requirement `disposition`** governs the compliance sweep (`disposition=compliance` only;
-  administrative → N/A, skipped; scored ⇔ isScored). The shred auto-classifies + excludes the
-  scoring methodology / boilerplate / Gov responsibilities.
-- **Multi-pass adds LLM calls** (3 review passes; ≤2 shred coverage passes; 1 amendment coverage
-  pass) — all best-effort/bounded, but **set the platform model to Sonnet** for quality (see §2).
-- **Schema deploy order** — `migrate deploy` → apply new RLS (only for new tables) → `vercel
-  deploy` → push. New `dara_*` tables (`dara_review_passes`, `dara_findings`) are fail-closed
-  until granted; column adds (disposition, notes) need only `migrate deploy`.
+- **⚠️ Entitlements/gating is DEPLOYED but INERT.** The admin can set trial limits + feature
+  flags (amendments/personas/team) in `/app/admin` → **Gating**, but **nothing enforces them
+  yet** — that's Prompt 3. Don't assume a set flag blocks anything until you wire it.
+- **All long AI actions are now ASYNC** (JobQueue + `/api/cron/passes` cron worker): review
+  passes, compliance check, shred, amendment reconcile. Pattern: an `enqueueX` + an
+  `isXActive`/`activeXIds` poll flag + a client control that polls `router.refresh()`. Orphaned
+  jobs (function killed mid-run) are reaped after 6 min by `reapOrphanedJobs()`. **No synchronous
+  AI requests remain in the solicitation workspace** — don't reintroduce one.
+- **Batch id parsing:** `mapBatchItem` now tolerates `"#1022"` / `1022`. The prompt intentionally
+  lists requirements as `#<id>`; keep the parser tolerant, don't "fix" the prompt.
+- **`AddSection` modals:** use `<CloseModalOnComplete/>` (a `useFormStatus` child) to close on
+  action completion. Do NOT go back to a capture-phase submit listener — it swallows the submit.
+- **`after()` unavailable in Next 14.2.35** — worker kicks via `triggerWorker()` fire-and-forget
+  fetch; the every-minute cron is the backstop. Hard-refresh after every deploy (deploy skew).
+- **Schema deploy order:** `pnpm prisma migrate deploy` (owner/DIRECT_URL) → apply new RLS (only
+  for NEW tables) → `vercel deploy` → `git push`. Column-only adds need only `migrate deploy`.
+- **Local `withTenant` reads P2028 from this machine** (interactive-transaction latency to
+  Supabase). Not a prod issue — verify DB things via `prismaAdmin` in a throwaway tsx script, or
+  in prod. (That's how the compliance bug was diagnosed.)
 
 ---
 
-## 2. Queue for next session (suggested order)
+## 2. The entitlements/gating system (built this session — read before Prompt 3)
 
-### ★ Top of queue — Full navy/gold reskin (design's visual system)
-The imported design is a full reskin: navy `#1B2A4A` / gold `#B8952A` / Inter, **light** theme,
-new top-nav — vs the current IBM Plex **dark** theme. Explicitly deferred as its own effort.
-Approach deliberately: **adopt the token system first** (extend `tailwind.config.js` /
-`styles/main.css` with the navy/gold light palette), then convert **page-by-page** (shell/nav →
-dashboard → solicitation workspace → matrix → settings/admin). Do NOT do it as one giant diff.
-Reference HTML: `…/scratchpad/DARA_design.html`.
+**Engine: `utils/dara/trial.ts`.** Resolution chain: **code defaults → platform default →
+per-company override**.
+- `requireTrialCapacity(companyId, resource)` — `resource ∈ {solicitation, review_run, seat}`,
+  default limits 2/3/2. No-op on paid plans; throws `TrialLimitError` when over, or (used=limit=0)
+  when the trial window has expired.
+- `requireFeature(companyId, feature)` — `feature ∈ {amendments, personas, team}`. Applies to ALL
+  plans; throws `FeatureDisabledError` when off. Features default ON.
+- Platform defaults live in `PlatformSetting.defaultEntitlements`; per-company overrides in
+  `Company.entitlements` (both JSON). `resolveEntitlements(raw, base)` merges; `getPlatformDefault
+  Entitlements()` / `setPlatformDefaultEntitlements()` for the singleton.
+- Admin UI in `app/app/admin/page.tsx`: `saveDefaultGating` (platform), `updateCompanyEntitlements`
+  / `clearCompanyEntitlements` (per-company, opt-in — NOT written on a plain account save, so
+  platform-default changes propagate). Sidebar item added in `PlatformAdminSidebar.tsx`.
 
-### A. Operator actions — browser/CLI (you)
-1. **Platform model → Sonnet** (Application Admin → Platform AI). Now the biggest quality lever:
-   the 3 review passes + shred/amendment coverage passes all use it.
-2. **Optional `CRON_SECRET`** in Vercel (all envs) → locks `/api/cron/passes`. Requires redeploy.
-3. **Branch protection on `main`** (BUILD_STATUS #13) — the only thing keeping DARA-015 from
-   "enforced".
-4. **Supabase Auth** (BUILD_STATUS #1): Site URL + Confirm-email ON.
-
-### B. Verify in prod
-- A fresh **matrix generate** → watch the coverage passes add requirements (2-3 rounds).
-- An **amendment reconcile** against a populated matrix (coverage pass merges extra changes).
-- The **dashboard** AI-pass badges + Avg Score render.
-
-### C. Feature backlog
-- Per-company **audit-log viewer** (company-admin, on the Team page).
-- **AI codebase security-audit** (app-admin, platform key → findings register).
-- Migrate the legacy shred/compliance-sweep to the **JobQueue + cron** path too (it exists and
-  works now) if they start hitting the synchronous function budget at scale.
-- Billing polish (`starter`→"Base"; handle `subscription.paused`).
+**★ Prompt 3 = wire the enforcement (currently inert):**
+1. `requireTrialCapacity` into `createSolicitation` (`app/app/solicitations/new/page.tsx`),
+   `enqueueReviewRun` (`utils/dara/passes.ts`), `inviteUser` (`app/app/team/actions.ts`).
+   Placement gotchas from the Prompt 1 audit: call it **before** the `withTenant` tx in
+   createSolicitation (it opens its own); seat check only in the **new-invitation** branch of
+   inviteUser (not when re-assigning an existing member). Catch `TrialLimitError` → redirect
+   `/app/billing?limit=<resource>` (or return the form error for invites).
+2. Dashboard trial status bar (`app/app/dashboard/page.tsx`) — days left + used/limit per the plan.
+3. `requireFeature` at feature entry points: **amendments** (Amendments panel + `enqueueReconcile`
+   / upload), **personas** (`/app/personas` + persona actions), **team** (`/app/team` + invite).
+   Decide UX for a fenced feature (hide the nav/section + block the action).
+4. Follow the build plan's Prompt 3 (Task 1.2–1.4, 1.6) for the trial parts; the feature-gate
+   parts are the extension — mirror the same catch/redirect or hide pattern.
 
 ---
 
-## 3. Offline / non-code follow-ups
-- **ZDR agreements** on platform LLM keys (Anthropic DPA+ZDR primary; OpenAI ZDR on approval;
-  Google paid/Vertex ZDR). On signing, update the DARA-007 CUI notice copy. Tracked in
-  `prisma/security/DARA-007-data-boundary.md`.
+## 3. Queue for next session (suggested order)
+
+1. **★ Prompt 3 — enforcement wiring** (above). Ends at `pnpm build` clean; commit + push
+   (deploy is fine here — no operator prereqs — but you may batch with Prompt 4).
+2. **Prompt 4** — onboarding wizard 6 → 3 steps (`profile`, `ai`, `done`); plain-language AI copy.
+3. **Prompt 5** — solicitation workspace 3-tab nav (Compliance/Review/Export) + sidebar simplify.
+4. **Prompts 6–8** — navy/gold/Inter light reskin (tokens → shell/auth → dashboard/solicitation →
+   remaining pages). The big one; page-by-page. Ref: `…/scratchpad/DARA_design.html`.
+5. **Prompt 9** — CUI modal copy, image-only-PDF failure message, in-app docs page, **Enterprise
+   Stripe guard** (the real Prompt-1 gap: `billing/page.tsx` renders a Checkout button for
+   `enterprise` via `PLAN_CATALOG.enterprise` — make it a contact-us link).
+6. **Prompts 10–11** — CRON_SECRET guard (already present, confirm) + quality gates + launch.
+   **Hold here** until the user is ready for release (credential rotation, operator checklist).
+
+### Operator actions (you) — unchanged, still open
+- Platform model → **Sonnet** (biggest quality lever across all AI passes).
+- Optional `CRON_SECRET` in Vercel (all envs) to lock `/api/cron/passes`.
+- Branch protection on `main` (BUILD_STATUS #13). Supabase Auth Site URL + Confirm-email (#1).
 
 ---
 
 ## 4. Fast restart commands
 ```bash
-git status                 # expect clean main, HEAD d55ccdf
-git log --oneline -10
+git status                 # expect clean main, HEAD 980cc13
+git log --oneline -12
 pnpm install               # if needed
 pnpm exec tsc --noEmit
 pnpm build
 # New dara_* table/column? DB BEFORE deploy:
 #   pnpm prisma migrate deploy
 #   npx tsx prisma/security/apply-sql.ts prisma/security/<new>_rls.sql   # only if new table
-# deploy: vercel deploy --prod --yes  then  git push  then HARD-REFRESH
+# deploy: vercel deploy --prod --yes  then  git push  then HARD-REFRESH (Ctrl+Shift+R)
 ```
