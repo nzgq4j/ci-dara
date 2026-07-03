@@ -1182,17 +1182,38 @@ export default async function SolicitationDetailPage({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className={sectionTitle}>Compliance matrix</h2>
-            <p className="mt-1 max-w-xl text-[13px] text-t4">
-              <span className="font-semibold text-t2">1.</span> Shred the solicitation — each
-              requirement is auto-classified as <span className="text-t2">Scored</span> (Section&nbsp;M
-              factors → holistic color-team review), <span className="text-t2">Compliance</span>{' '}
-              (pass/fail, addressed in your proposal), or <span className="text-t2">Administrative</span>{' '}
-              (complied with but not written up — reps &amp; certs, submission logistics).
-              <span className="font-semibold text-t2"> 2.</span> Adjust any row's type if needed.
-              <span className="font-semibold text-t2"> 3.</span>{' '}
-              <span className="text-t2">Run compliance check</span> to grade the Compliance items
-              (Met / Partial / Gap) against your proposal draft.
-            </p>
+            <ol className="mt-2 max-w-xl space-y-2 text-[13px] leading-relaxed text-t4">
+              <li className="flex gap-2.5">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-surf3 font-mono text-[11px] font-bold text-t3">
+                  1
+                </span>
+                <span>
+                  <span className="font-semibold text-t2">Shred the solicitation</span> — each
+                  requirement is auto-classified as <span className="font-medium text-t2">Scored</span>{' '}
+                  (Section&nbsp;M factors → holistic color-team review),{' '}
+                  <span className="font-medium text-t2">Compliance</span> (pass/fail, addressed in your
+                  proposal), or <span className="font-medium text-t2">Administrative</span> (complied
+                  with but not written up — reps &amp; certs, submission logistics).
+                </span>
+              </li>
+              <li className="flex gap-2.5">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-surf3 font-mono text-[11px] font-bold text-t3">
+                  2
+                </span>
+                <span>
+                  <span className="font-semibold text-t2">Adjust</span> any row&apos;s type if needed.
+                </span>
+              </li>
+              <li className="flex gap-2.5">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-surf3 font-mono text-[11px] font-bold text-t3">
+                  3
+                </span>
+                <span>
+                  <span className="font-semibold text-t2">Run compliance check</span> to grade the
+                  Compliance items (Met / Partial / Gap) against your proposal draft.
+                </span>
+              </li>
+            </ol>
           </div>
           <div className="no-print flex flex-shrink-0 flex-col gap-2">
             <AiActionButton
@@ -1201,6 +1222,11 @@ export default async function SolicitationDetailPage({
               idle={<Sparkles className="h-4 w-4" />}
               label={requirements.length ? 'Generate more' : 'Generate from solicitation'}
               pendingLabel="Reading the solicitation & extracting requirements…"
+              steps={[
+                'Reading the solicitation documents…',
+                'Extracting and classifying requirements…',
+                'Running coverage passes to catch anything missed…'
+              ]}
               noun="requirement"
               verb="added"
               className={btnPrimary}
@@ -1212,6 +1238,11 @@ export default async function SolicitationDetailPage({
                 idle={<CheckSquare className="h-4 w-4" />}
                 label="Run compliance check"
                 pendingLabel={`Grading ${requirements.filter((r) => r.disposition === 'compliance').length} pass/fail requirements against your proposal…`}
+                steps={[
+                  'Loading your proposal draft…',
+                  `Grading ${requirements.filter((r) => r.disposition === 'compliance').length} pass/fail requirements against the proposal…`,
+                  'Recording Met / Partial / Gap results…'
+                ]}
                 noun="requirement"
                 verb="checked"
                 className={btnGhost}
@@ -1224,6 +1255,11 @@ export default async function SolicitationDetailPage({
                 idle={<Sparkles className="h-4 w-4" />}
                 label="Sync from AI review"
                 pendingLabel="Folding the AI review's Compliance &amp; Format findings into the matrix…"
+                steps={[
+                  'Loading the latest AI review findings…',
+                  'Matching findings to matrix rows…',
+                  'Writing notes and updating statuses…'
+                ]}
                 noun="requirement"
                 verb="synced"
                 className={btnGhost}
@@ -1942,6 +1978,11 @@ export default async function SolicitationDetailPage({
                 idle={<Sparkles className="h-4 w-4" />}
                 label={a.changes.length ? 'Re-reconcile with AI' : 'Reconcile with AI'}
                 pendingLabel="Diffing the amendment against the compliance matrix…"
+                steps={[
+                  'Reading the amendment document…',
+                  'Diffing it against the compliance matrix…',
+                  'Proposing add / modify / remove changes…'
+                ]}
                 noun="change"
                 verb="proposed"
                 className={btnPrimary}

@@ -1,21 +1,28 @@
 'use client';
 
-import { useState, useTransition, type ReactNode } from 'react';
+import { useState, useTransition, useEffect, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import ProgressBar from './ProgressBar';
 
 export type AiActionResult = { ok: boolean; count: number; error?: string } | null;
 
+// Progress easing: the bar climbs toward this ceiling while the AI works, then snaps
+// to 100% on finish. Server actions are opaque (no streamed progress), so we simulate
+// a decelerating percentage that never looks stuck and never claims to be done early.
+const CEILING = 92;
+
 // Button that invokes a server action returning {ok,count,error}, shows a live
-// pending state, then a success/failure notice — so AI actions (shred, reconcile)
-// never fail silently. Refreshes the route on completion so new data renders.
+// pending state with a stepped progress bar, then a success/failure notice — so AI
+// actions (shred, reconcile) never fail silently. Refreshes the route on completion
+// so new data renders.
 export default function AiActionButton({
   action,
   fields,
   idle,
   label,
   pendingLabel,
+  steps,
   noun,
   verb,
   className,
@@ -26,6 +33,10 @@ export default function AiActionButton({
   idle?: ReactNode;
   label: string;
   pendingLabel: string;
+  // Ordered sub-step messages describing what's running (reading → extracting →
+  // coverage pass…). Shown under the bar and advanced in step with the percentage.
+  // Falls back to a single generic line when omitted.
+  steps?: string[];
   noun: string; // singular, e.g. "requirement"
   verb: string; // past tense, e.g. "added"
   className?: string;
@@ -33,7 +44,28 @@ export default function AiActionButton({
 }) {
   const [state, setState] = useState<AiActionResult>(null);
   const [pending, startTransition] = useTransition();
+  const [progress, setProgress] = useState(0);
   const router = useRouter();
+
+  // Drive the simulated percentage while pending: decelerate toward CEILING so the bar
+  // keeps moving without ever finishing before the action actually resolves.
+  useEffect(() => {
+    if (!pending) return;
+    setProgress(0);
+    const id = setInterval(() => {
+      setProgress((p) => {
+        if (p >= CEILING) return p; // holding at the ceiling (or 100 after finish) — stop
+        return Math.min(CEILING, p + Math.max(0.4, (CEILING - p) * 0.06));
+      });
+    }, 350);
+    return () => clearInterval(id);
+  }, [pending]);
+
+  const stepList = steps && steps.length ? steps : [`${pendingLabel} — the AI is working, this can take up to a minute.`];
+  // Tie the current sub-step to the bar: as the percentage advances toward CEILING it
+  // walks through the steps, dwelling on the last one while the AI finishes.
+  const stepIdx = Math.min(stepList.length - 1, Math.floor((progress / CEILING) * stepList.length));
+  const currentStep = stepList[stepIdx];
 
   const run = () => {
     setState(null);
@@ -41,6 +73,7 @@ export default function AiActionButton({
       const fd = new FormData();
       for (const [k, v] of Object.entries(fields)) fd.set(k, v);
       const res = await action(fd);
+      setProgress(100);
       setState(res);
       router.refresh();
     });
@@ -53,9 +86,7 @@ export default function AiActionButton({
         {pending ? pendingLabel : label}
       </button>
 
-      {pending && (
-        <ProgressBar label={`${pendingLabel} — the AI is working, this can take up to a minute.`} />
-      )}
+      {pending && <ProgressBar value={progress} max={100} label={currentStep} />}
 
       {state && !pending && (
         <div
