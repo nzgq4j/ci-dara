@@ -1,13 +1,49 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react';
 import { createPortal } from 'react-dom';
+import { useFormStatus } from 'react-dom';
 import { Plus, X } from 'lucide-react';
 
+// Lets a form inside the modal close it once its server action has finished.
+const ModalCloseContext = createContext<() => void>(() => {});
+
+// Drop this inside a server-action <form> rendered within an AddSection modal. It keeps
+// the form mounted while the action is dispatching and running, then closes the modal the
+// moment the action resolves.
+//
+// This REPLACES the previous capture-phase `submit` listener, which unmounted the form
+// during the submit event — a race that could tear the form down before React dispatched
+// the server action, swallowing the submission entirely (symptom: "clicked Create, nothing
+// happened, no review created"). Waiting on useFormStatus guarantees the action fires first.
+export function CloseModalOnComplete() {
+  const close = useContext(ModalCloseContext);
+  const { pending } = useFormStatus();
+  const wasPending = useRef(false);
+
+  useEffect(() => {
+    if (pending) {
+      wasPending.current = true;
+    } else if (wasPending.current) {
+      wasPending.current = false;
+      close();
+    }
+  }, [pending, close]);
+
+  return null;
+}
+
 // An "add" affordance: a compact button that opens the form in a MODAL — never a
-// persistent blank card/object in the list. The form (a server-action form) is passed
-// as children. The modal closes the moment its form submits, so the server action's
-// re-render never has to reconcile the open modal (which could throw a client-side error).
+// persistent blank card/object in the list. The form (a server-action form) is passed as
+// children. Include <CloseModalOnComplete /> inside that form to auto-close on success.
 export default function AddSection({
   label,
   children,
@@ -18,19 +54,17 @@ export default function AddSection({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
 
-  // Close on submit. `submit` doesn't bubble, so listen in the CAPTURE phase on the modal
-  // body — a capturing ancestor still receives a descendant form's submit event. Closing
-  // here unmounts the heavy form before the server action's revalidate re-renders the page.
+  // Close on Escape for keyboard users.
   useEffect(() => {
     if (!open) return;
-    const el = bodyRef.current;
-    if (!el) return;
-    const onSubmit = () => setOpen(false);
-    el.addEventListener('submit', onSubmit, true);
-    return () => el.removeEventListener('submit', onSubmit, true);
-  }, [open]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, close]);
 
   return (
     <>
@@ -48,10 +82,9 @@ export default function AddSection({
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-10"
           role="dialog"
           aria-modal="true"
-          onClick={() => setOpen(false)}
+          onClick={close}
         >
           <div
-            ref={bodyRef}
             className="w-full max-w-lg rounded-xl border border-line bg-surf p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -59,14 +92,16 @@ export default function AddSection({
               <h2 className="text-[15px] font-bold text-t1">{label}</h2>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 className="text-t5 transition-colors hover:text-t2"
                 aria-label="Cancel"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {children}
+            <ModalCloseContext.Provider value={close}>
+              {children}
+            </ModalCloseContext.Provider>
           </div>
         </div>,
         document.body

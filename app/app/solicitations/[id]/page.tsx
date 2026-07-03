@@ -27,7 +27,7 @@ import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
-import AddSection from '@/components/dara/AddSection';
+import AddSection, { CloseModalOnComplete } from '@/components/dara/AddSection';
 import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
 import MatrixExport from '@/components/dara/MatrixExport';
@@ -1464,6 +1464,7 @@ export default async function SolicitationDetailPage({
               <input name="weight" type="number" defaultValue={0} className={fieldClasses} />
             </div>
           </div>
+          <CloseModalOnComplete />
           <div className="flex justify-end">
             <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add requirement</button>
           </div>
@@ -1683,6 +1684,7 @@ export default async function SolicitationDetailPage({
             <input name="notes" type="text" className={fieldClasses} />
           </div>
           {personaChips(new Set(personas.filter((p) => p.isActive).map((p) => p.id.toString())))}
+          <CloseModalOnComplete />
           <div className="flex justify-end">
             <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Create {ct.label} review</button>
           </div>
@@ -2085,6 +2087,7 @@ export default async function SolicitationDetailPage({
               <input name="effectiveDate" type="date" className={fieldClasses} />
             </div>
           </div>
+          <CloseModalOnComplete />
           <div className="flex justify-end">
             <button type="submit" className={btnPrimary}><Plus className="h-4 w-4" />Add amendment</button>
           </div>
