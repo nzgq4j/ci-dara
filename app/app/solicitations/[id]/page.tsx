@@ -22,11 +22,12 @@ import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult
 import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive } from '@/utils/dara/passes';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
 import AiActionButton from '@/components/dara/AiActionButton';
+import ComplianceCheckControl from '@/components/dara/ComplianceCheckControl';
 import AddSection, { CloseModalOnComplete } from '@/components/dara/AddSection';
 import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
@@ -284,12 +285,15 @@ async function generateMatrixAction(formData: FormData): Promise<{ ok: boolean; 
 
 // Standalone compliance sweep: check the pass/fail administrative requirements against
 // the current proposal draft and set their statuses (the compliance matrix).
-async function runComplianceCheckAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+async function enqueueComplianceCheckAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  const res = await runComplianceCheck(solId, daraUser.companyId, Date.now() + 760_000);
+  // Grade in the background worker (resumable) instead of a long synchronous request that
+  // stalls the UI and can time out on a large matrix.
+  const res = await enqueueComplianceCheck(solId, daraUser.companyId);
+  if (res.ok) triggerWorker();
   await recordAudit({
     action: 'requirement.compliance_check',
     companyId: daraUser.companyId,
@@ -298,15 +302,14 @@ async function runComplianceCheckAction(formData: FormData): Promise<{ ok: boole
     entityType: 'solicitation',
     entityId: solId,
     metadata: {
-      ok: res.ok,
-      checked: res.checked,
+      enqueued: res.ok,
       error: res.error ?? null,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
-  return { ok: res.ok, count: res.checked, error: res.error };
+  return res;
 }
 
 // Fold the latest completed Compliance & Format pass's findings into the matrix (no LLM).
@@ -994,6 +997,12 @@ export default async function SolicitationDetailPage({
   // review. The pass/fail administrative bulk lives in the Compliance tab, not here.
   const scoredFactors = activeRequirements.filter((r) => r.isScored);
   const canEvaluate = activeCount > 0 && activeRequirements.length > 0;
+  // Compliance-check progress (async, background worker). `complianceActive` drives the live
+  // poll; graded/total feed the real progress bar.
+  const complianceReqs = activeRequirements.filter((r) => r.disposition === 'compliance');
+  const complianceTotal = complianceReqs.length;
+  const complianceGraded = complianceReqs.filter((r) => r.complianceStatus !== 'not_assessed').length;
+  const complianceActive = await isComplianceCheckActive(solicitation.id, daraUser.companyId);
   const reviews = solicitation.reviews;
   const amendments = solicitation.amendments;
   const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');
@@ -1231,20 +1240,13 @@ export default async function SolicitationDetailPage({
               verb="added"
               className={btnPrimary}
             />
-            {requirements.some((r) => r.disposition === 'compliance') && (
-              <AiActionButton
-                action={runComplianceCheckAction}
-                fields={{ solId: sid }}
-                idle={<CheckSquare className="h-4 w-4" />}
-                label="Run compliance check"
-                pendingLabel={`Grading ${requirements.filter((r) => r.disposition === 'compliance').length} pass/fail requirements against your proposal…`}
-                steps={[
-                  'Loading your proposal draft…',
-                  `Grading ${requirements.filter((r) => r.disposition === 'compliance').length} pass/fail requirements against the proposal…`,
-                  'Recording Met / Partial / Gap results…'
-                ]}
-                noun="requirement"
-                verb="checked"
+            {complianceTotal > 0 && (
+              <ComplianceCheckControl
+                solId={sid}
+                total={complianceTotal}
+                graded={complianceGraded}
+                active={complianceActive}
+                action={enqueueComplianceCheckAction}
                 className={btnGhost}
               />
             )}

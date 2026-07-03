@@ -19,6 +19,7 @@ import {
 } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { runComplianceCheck } from '@/utils/dara/evaluator';
 
 const PASS_MAX_TOKENS = 6000;
 
@@ -85,6 +86,61 @@ export async function enqueueReviewRun(reviewId: bigint, companyId: bigint): Pro
       }
     });
   });
+}
+
+/**
+ * Enqueue an async compliance-matrix check for a solicitation. The pass/fail compliance
+ * requirements are graded against the current proposal draft in the background worker
+ * (resumable across ticks) rather than in a long synchronous request that would time out on
+ * a large matrix. Idempotent — no-ops if a check is already queued/running for this sol.
+ */
+export async function enqueueComplianceCheck(
+  solicitationId: bigint,
+  companyId: bigint
+): Promise<{ ok: boolean; error?: string }> {
+  return withTenant(companyId, async (tx) => {
+    const total = await tx.requirement.count({
+      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance' }
+    });
+    if (total === 0) {
+      return { ok: false, error: 'No pass/fail compliance requirements to check. Generate the matrix first.' };
+    }
+    // Filter the (small) set of active jobs in JS rather than a JSON-path SQL filter — robust
+    // across driver adapters.
+    const activeJobs = await tx.jobQueue.findMany({
+      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
+      select: { payload: true }
+    });
+    if (activeJobs.some((j) => isComplianceJobFor(j.payload, solicitationId))) {
+      return { ok: true }; // already in progress — the UI is polling it
+    }
+    await tx.jobQueue.create({
+      data: {
+        companyId,
+        jobType: 'evaluate',
+        payload: { kind: 'compliance_check', solicitationId: solicitationId.toString() },
+        status: 'pending'
+      }
+    });
+    return { ok: true };
+  });
+}
+
+/** Does this JobQueue payload represent a compliance check for the given solicitation? */
+function isComplianceJobFor(payload: unknown, solicitationId: bigint): boolean {
+  const p = (payload ?? {}) as { kind?: string; solicitationId?: string };
+  return p.kind === 'compliance_check' && p.solicitationId === solicitationId.toString();
+}
+
+/** True when a compliance check is queued/running for this solicitation (drives the UI poll). */
+export async function isComplianceCheckActive(solicitationId: bigint, companyId: bigint): Promise<boolean> {
+  const jobs = await withTenant(companyId, (tx) =>
+    tx.jobQueue.findMany({
+      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
+      select: { payload: true }
+    })
+  );
+  return jobs.some((j) => isComplianceJobFor(j.payload, solicitationId));
 }
 
 /** Enqueue a single pass re-run / retry (leaves the other passes untouched). */
@@ -408,6 +464,22 @@ async function reapOrphanedJobs(): Promise<void> {
 }
 
 /**
+ * Grade a chunk of a solicitation's pass/fail compliance requirements within this tick's
+ * budget. Returns true when the job is finished — either every compliance requirement is
+ * graded, or a whole tick graded nothing new (a stall; stop rather than loop forever). The
+ * next tick resumes the remainder (runComplianceCheck grades only not-yet-assessed rows).
+ */
+async function runComplianceJob(solicitationId: bigint, companyId: bigint, deadlineMs: number): Promise<boolean> {
+  const res = await runComplianceCheck(solicitationId, companyId, deadlineMs);
+  const remaining = await withTenant(companyId, (tx) =>
+    tx.requirement.count({
+      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance', complianceStatus: 'not_assessed' }
+    })
+  );
+  return remaining === 0 || res.checked === 0;
+}
+
+/**
  * Drain pending review-pass jobs until the deadline. Claims one job at a time across all
  * tenants (prismaAdmin), runs its passes under the job's company tenant, and either
  * completes the job or requeues it (deadline hit mid-run) for the next tick. Called by the
@@ -432,12 +504,14 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
     if (claim.count === 0) continue;
 
     const companyId = pending.companyId;
-    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string };
+    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string };
 
     try {
       let done = true;
       if (payload.kind === 'single_pass' && payload.passId) {
         await runPass(BigInt(payload.passId), companyId, deadlineMs);
+      } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
+        done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
       } else if (payload.reviewId) {
         ({ done } = await runReviewPasses(BigInt(payload.reviewId), companyId, deadlineMs));
       }
