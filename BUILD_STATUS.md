@@ -1,6 +1,6 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-01_
+_Last updated: 2026-07-03_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
 **Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
@@ -616,15 +616,69 @@ design + requirement disposition + two prod bug fixes; all deployed & pushed):
   when dry); `reconcileAmendment` runs 1 coverage pass (`buildAmendmentGapPrompt`). Completes
   the original multi-pass ask (evaluations + matrix + amendment impact).
 
+**Session 2026-07-03 — shipped (MVP-launch prompt chain kickoff: a run of prod bug-fixes on
+the multi-pass/matrix flow, then Prompt 2 of the launch chain extended into an entitlements
+system). All deployed & pushed; HEAD `980cc13`.**
+
+Context: this session runs `DARA_CC_PROMPT_CHAIN.md` (an 11-prompt MVP-launch hardening pass
+against `DARA_BUILD_PLAN.md`). **Prompt 1 (read-only audit) done** — one real gap found:
+Enterprise plan still creates a Stripe Checkout (Task 8, fix in Prompt 9). **Prompt 2 done +
+extended** (below). Prompts 3–11 remain.
+
+Bug-fixes (real prod issues hit while exercising the flow, most recent first):
+- `bcc8463` — **shred + amendment reconcile made async** (background worker + live progress),
+  the last two synchronous AI actions. New `AsyncJobControl`; worker handles `kind:'shred'` /
+  `'reconcile'`. No blocking AI requests remain in the solicitation workspace.
+- `29f8f52` — **★ the real compliance-check bug**: the batch prompt lists requirements as
+  `#<id>` and says "return the id exactly as given", so Sonnet returns `"id":"#1022"`, but
+  `mapBatchItem` required `/^\d+$/` → **every item dropped, 0 graded** (independent of batch
+  size / doc size / sync-vs-async — all prior red herrings). Fixed: `mapBatchItem` extracts the
+  digit run. **Found by running a real batch against prod data via a throwaway read-only tsx
+  script** (`.env.local`); verified 12/12 parse. Batch size 12→30 (fewer full-doc re-sends).
+- `750a70c` — **compliance check made async** (JobQueue + live graded/total progress) —
+  replaced the synchronous request that stalled the AiActionButton at its 92% simulated ceiling.
+  New `ComplianceCheckControl` + `enqueueComplianceCheck` / `isComplianceCheckActive`.
+- `0919f79` — compliance sweep hardening (smaller batches, per-batch time budget so a call
+  can't overrun the function limit, stop swallowing batch errors, resumable not-assessed-only).
+- `14c8b0d` — **multi-pass review hang fixed**: 3 sequential full-doc passes in one worker
+  invocation; a pass killed mid-call left the JobQueue row + pass stuck `running` forever (worker
+  only claims `pending`). Fixes: `runReviewPasses` won't START a pass without `PASS_BUDGET_MS`
+  headroom (else leaves it `queued`); **`reapOrphanedJobs()`** requeues/fails anything `running`
+  past 6 min. Self-heals stuck reviews.
+- `7973a55` — **AddSection modals not creating on submit** (create review/requirement/amendment):
+  the capture-phase `submit` listener unmounted the form mid-dispatch, swallowing the server
+  action. Replaced with a `useFormStatus`-based `CloseModalOnComplete` (form stays mounted through
+  dispatch, modal closes on completion). **Supersedes the `5c1bf8b` close-on-submit approach.**
+- `d7d47c9` — compliance-matrix instructions reformatted (numbered list) + `AiActionButton`
+  stepped progress (determinate %, rotating sub-step messages).
+
+★ **Trial fencing + per-company entitlements/gating** (`980cc13`, migrated + deployed) —
+**Prompt 2 core + an admin-management extension the user asked for:**
+- `utils/dara/trial.ts` — `requireTrialCapacity` (metered trial limits: solicitations 2 / review
+  runs 3 / seats 2) + `requireFeature`/`FeatureDisabledError` (feature flags: **amendments,
+  personas, team**). **Resolution chain: code defaults → platform default → per-company override.**
+- `provision.ts` — trial period **14 → 30 days** (PRD).
+- Schema: `Company.entitlements` + `PlatformSetting.defaultEntitlements` JSON columns (migrations
+  `20260703000000`, `20260703010000` — column-only, no RLS change; **applied to prod**).
+- Admin console (`/app/admin`): new **"Gating"** left-sidebar menu → platform-wide **Default
+  gating** (limits + feature toggles every company inherits); per-company **override** forms
+  (opt-in, inherit/custom badge, reset-to-defaults) inline in Accounts.
+- ⚠️ **NOT YET ENFORCED.** Setting a limit/flag stores it and the admin UI works, but nothing
+  blocks until **Prompt 3** wires `requireTrialCapacity`/`requireFeature` into the create actions
+  (createSolicitation / enqueueReviewRun / inviteUser) + feature entry points (amendments /
+  personas / team). Deployed the management surface early because the user wanted to see it.
+
 **Pick up next session — see `SESSION_HANDOFF.md` + `CONTEXT_HANDOFF.md`.** Top of queue:
-1. **★ Full navy/gold reskin** — the imported `DARA.dc.html` visual system (navy #1B2A4A / gold
-   #B8952A / Inter, **light** theme, new top-nav) vs the current IBM Plex **dark** theme. The
-   big one, every page — do it deliberately: tokens first, then page-by-page. Deferred.
-2. **Operator actions (you):** (a) set platform model to **Sonnet** — now the biggest quality
-   lever (3 review passes + shred/amendment coverage passes); (b) optional `CRON_SECRET` in
-   Vercel to lock `/api/cron/passes`; (c) branch protection on `main` (#13); (d) Supabase Auth
-   Site URL + Confirm-email ON (#1).
-3. **Verify in prod:** a fresh matrix generate (watch coverage passes add reqs), an amendment
-   reconcile, the dashboard badges.
-4. Feature backlog: per-company **audit-log viewer**; AI codebase security-audit; migrate the
-   legacy shred/sweep onto the JobQueue+cron path if they hit the sync budget; billing polish.
+1. **★ Prompt 3 — wire trial-fencing + feature-gating enforcement** (the flags/limits are
+   deployed but inert). `requireTrialCapacity` into `createSolicitation`, `enqueueReviewRun`,
+   `inviteUser` (+ dashboard trial bar); `requireFeature` into amendments / personas / team.
+   Placement gotchas noted in the Prompt 1 audit (put `requireTrialCapacity` OUTSIDE the
+   `withTenant` tx in createSolicitation; seat check only in the new-invitation branch).
+2. Continue the chain: **Prompt 4** onboarding 6→3 steps · **5** solicitation 3-tab nav + sidebar
+   · **6–8** navy/gold/Inter reskin · **9** CUI copy + PDF-fail msg + docs page + **Enterprise
+   Stripe guard (Task 8, real gap)** · **10–11** CRON_SECRET + quality gates + launch. Hold before
+   the Prompt 10 deploy/operator boundary per the user (credential rotation deferred to release).
+3. **Operator actions (you):** platform model → **Sonnet** (biggest quality lever); optional
+   `CRON_SECRET`; branch protection on `main` (#13); Supabase Auth Site URL + Confirm-email (#1).
+4. Backlog: per-company audit-log viewer; AI codebase security-audit; billing polish
+   (`starter`→"Base"; `subscription.paused`).
