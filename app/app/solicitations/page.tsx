@@ -1,13 +1,56 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, FileText } from 'lucide-react';
+import { revalidatePath } from 'next/cache';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
-import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
+import { userTeamIds, solAccessWhere, canViewSolicitation } from '@/utils/dara/sol-access';
+import { recordAudit } from '@/utils/dara/audit';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, cardDashed, btnPrimary } from '@/components/dara/theme';
 import { ModeChip, AiReviewStatus, AiReviewAction } from '@/components/dara/ReviewModeBits';
+import DeleteSolButton from '@/components/dara/DeleteSolButton';
+
+// Delete a solicitation from the central list. Gated to users who can see it (RLS + the
+// department-access rule), audited, and done inside the tenant transaction.
+async function deleteSolicitationAction(formData: FormData) {
+  'use server';
+  const supabase = createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/signin');
+  const daraUser = await getDaraUser(user.id);
+  if (!daraUser) redirect('/signin');
+  const id = BigInt(String(formData.get('solId')));
+
+  const deleted = await withTenant(daraUser.companyId, async (tx) => {
+    const sol = await tx.solicitation.findFirst({
+      where: { id, companyId: daraUser.companyId },
+      include: { departments: { select: { teamId: true } } }
+    });
+    if (!sol) return false;
+    const teamSet = new Set(await userTeamIds(tx, daraUser.id));
+    if (!canViewSolicitation(daraUser.id, daraUser.role, sol.createdBy, sol.departments.map((d) => d.teamId), teamSet)) {
+      return false;
+    }
+    await tx.solicitation.delete({ where: { id } });
+    return true;
+  });
+
+  if (deleted) {
+    await recordAudit({
+      action: 'solicitation.delete',
+      companyId: daraUser.companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email,
+      entityType: 'solicitation',
+      entityId: id
+    });
+  }
+  revalidatePath('/app/solicitations');
+}
 
 export default async function SolicitationsPage() {
   const supabase = createClient();
@@ -161,17 +204,24 @@ export default async function SolicitationsPage() {
                       <span className="font-mono text-[11px] text-t5">Color Team</span>
                     )}
                   </td>
-                  <td className="px-3.5 py-3 text-right">
-                    {sol.mode === 'direct_ai' ? (
-                      <AiReviewAction solId={sol.id.toString()} status={sol.directReviews[0]?.status} />
-                    ) : (
-                      <Link
-                        href={`/app/solicitations/${sol.id}`}
-                        className="inline-flex items-center whitespace-nowrap rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-t4 transition-colors hover:border-navy/50 hover:text-t1"
-                      >
-                        Open
-                      </Link>
-                    )}
+                  <td className="px-3.5 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      {sol.mode === 'direct_ai' ? (
+                        <AiReviewAction solId={sol.id.toString()} status={sol.directReviews[0]?.status} />
+                      ) : (
+                        <Link
+                          href={`/app/solicitations/${sol.id}`}
+                          className="inline-flex items-center whitespace-nowrap rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-t4 transition-colors hover:border-navy/50 hover:text-t1"
+                        >
+                          Open
+                        </Link>
+                      )}
+                      <DeleteSolButton
+                        solId={sol.id.toString()}
+                        title={sol.title}
+                        action={deleteSolicitationAction}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
