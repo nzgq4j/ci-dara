@@ -23,6 +23,7 @@ import { shredRequirements } from '@/utils/dara/requirements';
 import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, isShredActive, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
+import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
@@ -34,7 +35,9 @@ import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
 import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
+import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
 import RunningBanner from '@/components/dara/RunningBanner';
+import { ModeChip } from '@/components/dara/ReviewModeBits';
 import {
   card,
   cardDashed,
@@ -131,6 +134,13 @@ function fmtSize(n: number): string {
 // that crashes the page. ISO-from-UTC is identical on both sides.
 function fmtDate(d: Date): string {
   return new Date(d).toISOString().slice(0, 10);
+}
+
+// Deterministic UTC date+time ("YYYY-MM-DD HH:MM UTC") — same reasoning as fmtDate; used
+// for the Direct AI "Last run" timestamp so server and client render identically.
+function fmtDateTime(d: Date): string {
+  const iso = new Date(d).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 }
 
 async function authedUser() {
@@ -851,6 +861,32 @@ async function runReviewAction(formData: FormData): Promise<{ ok: boolean }> {
   return { ok: true };
 }
 
+// Run / re-run the unified Direct AI review for a solicitation (non-process mode).
+async function runDirectReviewAction(formData: FormData): Promise<{ ok: boolean }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  await enqueueDirectReview(solId, daraUser.companyId);
+  await recordAudit({
+    action: 'review.run',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: solId,
+    // CUI egress trail for the data boundary (DARA-007).
+    metadata: {
+      kind: 'direct_review',
+      provider: daraUser.company.activeProvider,
+      aiMode: daraUser.company.aiKeyMode
+    }
+  });
+  triggerWorker();
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
+}
+
 // Re-run / retry a single pass (leaves the review's other passes untouched).
 async function rerunPassAction(formData: FormData): Promise<{ ok: boolean }> {
   'use server';
@@ -949,6 +985,9 @@ export default async function SolicitationDetailPage({
             }
           }
         },
+        directReviews: {
+          include: { findings: { orderBy: { sortOrder: 'asc' } } }
+        },
         evaluations: {
           orderBy: { createdAt: 'desc' },
           include: {
@@ -1014,6 +1053,9 @@ export default async function SolicitationDetailPage({
   const amendments = solicitation.amendments;
   const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');
   const proposalDocs = solicitation.solDocs.filter((d) => d.docType === 'proposal');
+  // Direct AI mode: the single unified review for this solicitation (0 or 1 per sol).
+  const isDirect = solicitation.mode === 'direct_ai';
+  const directReview = solicitation.directReviews[0] ?? null;
   // Latest moment the matrix was changed by an applied amendment — a review snapshotted
   // before this saw an outdated matrix (flagged stale in the Color Teams / Review tabs).
   const latestAmendmentAt = amendments
@@ -2104,29 +2146,74 @@ export default async function SolicitationDetailPage({
   );
   const anyReviewComplete = reviews.some((rv) => rv.status === 'complete');
 
-  const pipelineViews: Record<string, React.ReactNode> = {
-    documents: documentsPanel,
-    compliance: compliancePanel,
-    overview: overviewPanel,
-    pink: colorStage('pink'),
-    red: colorStage('red'),
-    gold: colorStage('gold'),
-    white: colorStage('white'),
-    review: reviewPanel,
-    amendments: amendmentsPanel
-  };
+  // Direct AI review view (Screen 3) — a single unified findings panel; the score summary
+  // (Screen 2's "left panel") is folded into it since the workspace has no persistent rail.
+  const directFindings = (directReview?.findings ?? []).map((f) => ({
+    id: f.id.toString(),
+    severity: f.severity as 'critical' | 'high' | 'medium' | 'low',
+    text: f.text,
+    requirementRef: f.requirementRef,
+    recommendedAction: f.recommendedAction
+  }));
+  const directReviewPanel = (
+    <DirectReviewPanel
+      solId={sid}
+      solNumber={solicitation.solNumber}
+      status={directReview?.status ?? 'not_started'}
+      score={directReview?.score ?? null}
+      progress={directReview?.progress ?? 0}
+      progressLabel={directReview?.progressLabel ?? ''}
+      errorMessage={directReview?.errorMessage ?? null}
+      runAtLabel={directReview?.runAt ? fmtDateTime(directReview.runAt) : null}
+      findings={directFindings}
+      runAction={runDirectReviewAction}
+      canRun={proposalDocs.length > 0}
+      disabledReason={
+        proposalDocs.length === 0
+          ? 'Upload your proposal draft in the Solicitation stage to run a review.'
+          : undefined
+      }
+    />
+  );
 
-  const pipelineStages = [
-    { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#3b6ef0', view: 'documents', done: rfpDocs.length > 0 },
-    { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#3b6ef0', view: 'compliance', done: activeRequirements.length > 0 },
-    { id: 's3', num: 3, label: 'Kickoff', sub: 'Setup & draft', color: '#3b6ef0', view: 'overview', done: proposalDocs.length > 0 },
-    { id: 's4', num: 4, label: 'Pink Team', sub: 'Strategy & outline', color: '#ec4899', view: 'pink', done: colorDone('pink') },
-    { id: 's5', num: 5, label: 'Red Team', sub: 'Full draft review', color: '#ef4444', view: 'red', done: colorDone('red') },
-    { id: 's6', num: 6, label: 'Gold Team', sub: 'Executive review', color: '#f59e0b', view: 'gold', done: colorDone('gold') },
-    { id: 's7', num: 7, label: 'White Glove', sub: 'Production ready', color: '#94a3b8', view: 'white', done: colorDone('white') },
-    { id: 's8', num: 8, label: 'Compliance', sub: 'Final check', color: '#3b6ef0', view: 'compliance', done: anyComplianceChecked },
-    { id: 's9', num: 9, label: 'Submit', sub: 'Proposal', color: '#22c55e', view: 'review', done: anyReviewComplete }
-  ];
+  // Direct AI mode collapses the 9-stage color pipeline to Solicitation → Compliance → AI
+  // Review; color-team mode keeps the full gated pipeline unchanged.
+  const pipelineViews: Record<string, React.ReactNode> = isDirect
+    ? {
+        documents: documentsPanel,
+        compliance: compliancePanel,
+        aiReview: directReviewPanel,
+        amendments: amendmentsPanel
+      }
+    : {
+        documents: documentsPanel,
+        compliance: compliancePanel,
+        overview: overviewPanel,
+        pink: colorStage('pink'),
+        red: colorStage('red'),
+        gold: colorStage('gold'),
+        white: colorStage('white'),
+        review: reviewPanel,
+        amendments: amendmentsPanel
+      };
+
+  const pipelineStages = isDirect
+    ? [
+        { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#3b6ef0', view: 'documents', done: rfpDocs.length > 0 },
+        { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#3b6ef0', view: 'compliance', done: activeRequirements.length > 0 },
+        { id: 's3', num: 3, label: 'AI Review', sub: 'Unified findings', color: '#22c55e', view: 'aiReview', done: directReview?.status === 'complete' }
+      ]
+    : [
+        { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#3b6ef0', view: 'documents', done: rfpDocs.length > 0 },
+        { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#3b6ef0', view: 'compliance', done: activeRequirements.length > 0 },
+        { id: 's3', num: 3, label: 'Kickoff', sub: 'Setup & draft', color: '#3b6ef0', view: 'overview', done: proposalDocs.length > 0 },
+        { id: 's4', num: 4, label: 'Pink Team', sub: 'Strategy & outline', color: '#ec4899', view: 'pink', done: colorDone('pink') },
+        { id: 's5', num: 5, label: 'Red Team', sub: 'Full draft review', color: '#ef4444', view: 'red', done: colorDone('red') },
+        { id: 's6', num: 6, label: 'Gold Team', sub: 'Executive review', color: '#f59e0b', view: 'gold', done: colorDone('gold') },
+        { id: 's7', num: 7, label: 'White Glove', sub: 'Production ready', color: '#94a3b8', view: 'white', done: colorDone('white') },
+        { id: 's8', num: 8, label: 'Compliance', sub: 'Final check', color: '#3b6ef0', view: 'compliance', done: anyComplianceChecked },
+        { id: 's9', num: 9, label: 'Submit', sub: 'Proposal', color: '#22c55e', view: 'review', done: anyReviewComplete }
+      ];
 
   const pipelineTools = [{ id: 'amendments', label: 'Amendments', view: 'amendments', badge: amendments.length }];
 
@@ -2145,9 +2232,14 @@ export default async function SolicitationDetailPage({
             {solicitation.solNumber || 'No reference number'}
             {solicitation.agency ? ` · ${solicitation.agency}` : ''}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
+            <ModeChip mode={solicitation.mode} />
+          </div>
           <p className="mt-1 text-[12px] text-t5">
-            Color review cycle — a suggested flow. Every stage is optional; jump to any stage.
+            {isDirect
+              ? 'Direct AI review — upload, run a single unified review, and read the findings.'
+              : 'Color review cycle — a suggested flow. Every stage is optional; jump to any stage.'}
           </p>
         </div>
         <div className="flex-shrink-0 pt-1">
@@ -2165,7 +2257,12 @@ export default async function SolicitationDetailPage({
         currentLabel={runLabel}
       />
 
-      <PipelineStepper stages={pipelineStages} tools={pipelineTools} views={pipelineViews} />
+      <PipelineStepper
+        stages={pipelineStages}
+        tools={pipelineTools}
+        views={pipelineViews}
+        initial={isDirect ? 's3' : undefined}
+      />
     </div>
   );
 }

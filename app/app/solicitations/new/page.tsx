@@ -1,80 +1,137 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { recordAudit } from '@/utils/dara/audit';
-import {
-  card,
-  fieldClasses,
-  labelClasses,
-  btnPrimary,
-  btnGhost
-} from '@/components/dara/theme';
+import { uploadAndExtract } from '@/utils/dara/documents';
+import { enqueueDirectReview } from '@/utils/dara/direct-review';
+import { triggerWorker } from '@/utils/dara/passes';
+import UploadAndReview from '@/components/dara/UploadAndReview';
 
-async function createSolicitation(formData: FormData) {
+type CreateResult = { ok: boolean; error?: string };
+
+function stripExt(name: string): string {
+  return name.replace(/\.[^.]+$/, '').trim();
+}
+
+// Screen 4 — create the solicitation, store its documents, and (for Direct AI mode) kick off
+// the unified review, then land the user on the workspace. Color Team mode creates the
+// solicitation and opens the workspace to configure passes (no auto-run).
+async function createAndRunReview(formData: FormData): Promise<CreateResult> {
   'use server';
 
   const supabase = createClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
-
   if (!user) redirect('/signin');
-
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
+  const companyId = daraUser.companyId;
 
-  const title = String(formData.get('title') ?? '').trim();
-  const solNumber = String(formData.get('sol_number') ?? '').trim();
+  const mode = String(formData.get('mode') ?? 'direct_ai') === 'color_team' ? 'color_team' : 'direct_ai';
+  const solNumber = String(formData.get('solNumber') ?? '').trim();
   const agency = String(formData.get('agency') ?? '').trim();
-  const notes = String(formData.get('notes') ?? '').trim();
 
-  if (!title) redirect('/app/solicitations/new');
+  const rfpFiles = formData.getAll('rfpFiles').filter((f): f is File => f instanceof File && f.size > 0);
+  const proposalFiles = formData
+    .getAll('proposalFiles')
+    .filter((f): f is File => f instanceof File && f.size > 0);
 
-  const teamIds = formData
-    .getAll('dept')
-    .map((v) => String(v))
-    .filter((v) => /^\d+$/.test(v))
-    .map((v) => BigInt(v));
+  if (rfpFiles.length === 0 && proposalFiles.length === 0 && !solNumber) {
+    return { ok: false, error: 'Add at least one document or a solicitation number to get started.' };
+  }
+  if (mode === 'direct_ai' && proposalFiles.length === 0) {
+    return { ok: false, error: 'Add your proposal draft — the Direct AI review scores it against the solicitation.' };
+  }
 
-  const solicitation = await withTenant(daraUser.companyId, async (tx) => {
-    const sol = await tx.solicitation.create({
-      data: {
-        companyId: daraUser.companyId,
-        title,
-        solNumber,
-        agency,
-        notes: notes || null,
-        createdBy: daraUser.id
-      }
-    });
-    if (teamIds.length) {
-      const valid = await tx.team.findMany({
-        where: { id: { in: teamIds }, companyId: daraUser.companyId },
-        select: { id: true }
-      });
-      if (valid.length) {
-        await tx.solicitationDepartment.createMany({
-          data: valid.map((t) => ({ companyId: daraUser.companyId, solicitationId: sol.id, teamId: t.id }))
-        });
-      }
-    }
-    return sol;
-  });
+  // Title isn't a field on Screen 4; derive it from the sol number or the first uploaded file.
+  const title =
+    solNumber ||
+    (rfpFiles[0] ? stripExt(rfpFiles[0].name) : '') ||
+    (proposalFiles[0] ? stripExt(proposalFiles[0].name) : '') ||
+    'New solicitation';
+
+  const sol = await withTenant(companyId, (tx) =>
+    tx.solicitation.create({
+      data: { companyId, title: title.slice(0, 500), solNumber, agency, mode, createdBy: daraUser.id }
+    })
+  );
 
   await recordAudit({
     action: 'solicitation.create',
-    companyId: daraUser.companyId,
+    companyId,
     actorId: daraUser.id,
     actorEmail: daraUser.email,
     entityType: 'solicitation',
-    entityId: solicitation.id,
-    metadata: { title }
+    entityId: sol.id,
+    metadata: { title, mode }
   });
 
-  redirect(`/app/solicitations/${solicitation.id}`);
+  // Store documents (upload + extraction outside any transaction, one row per file).
+  const uploads: { file: File; docType: 'rfp' | 'proposal' }[] = [
+    ...rfpFiles.map((file) => ({ file, docType: 'rfp' as const })),
+    ...proposalFiles.map((file) => ({ file, docType: 'proposal' as const }))
+  ];
+  for (const { file, docType } of uploads) {
+    try {
+      const doc = await uploadAndExtract(file, companyId, 'sol', Date.now());
+      const created = await withTenant(companyId, (tx) =>
+        tx.solDocument.create({
+          data: {
+            companyId,
+            solicitationId: sol.id,
+            docType,
+            originalFilename: doc.originalFilename,
+            storedFilename: doc.storedFilename,
+            fileSize: doc.fileSize,
+            extractionStatus: doc.extractionStatus,
+            extractedText: doc.extractedText || null,
+            uploadedBy: daraUser.id
+          }
+        })
+      );
+      await recordAudit({
+        action: 'document.upload',
+        companyId,
+        actorId: daraUser.id,
+        actorEmail: daraUser.email,
+        entityType: 'sol_document',
+        entityId: created.id,
+        metadata: { solicitationId: sol.id.toString(), filename: doc.originalFilename, docType }
+      });
+    } catch (e) {
+      // Surface the failure but keep the created solicitation — the user can retry the upload
+      // from the workspace rather than losing everything.
+      return {
+        ok: false,
+        error: e instanceof Error ? `Upload failed: ${e.message}` : 'A document failed to upload.'
+      };
+    }
+  }
+
+  if (mode === 'direct_ai') {
+    await enqueueDirectReview(sol.id, companyId);
+    await recordAudit({
+      action: 'review.run',
+      companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email,
+      entityType: 'solicitation',
+      entityId: sol.id,
+      // CUI egress trail for the data boundary (DARA-007).
+      metadata: {
+        kind: 'direct_review',
+        provider: daraUser.company.activeProvider,
+        aiMode: daraUser.company.aiKeyMode
+      }
+    });
+    triggerWorker();
+  }
+
+  redirect(`/app/solicitations/${sol.id}`);
 }
 
 export default async function NewSolicitationPage() {
@@ -85,9 +142,6 @@ export default async function NewSolicitationPage() {
   if (!user) redirect('/signin');
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
-  const teams = await withTenant(daraUser.companyId, (tx) =>
-    tx.team.findMany({ where: { companyId: daraUser.companyId }, orderBy: { name: 'asc' } })
-  );
 
   return (
     <div className="mx-auto max-w-2xl fade">
@@ -98,101 +152,12 @@ export default async function NewSolicitationPage() {
         <ArrowLeft className="h-4 w-4" />
         Back to Solicitations
       </Link>
-      <h1 className="text-2xl font-bold tracking-tight text-t1">
-        New Solicitation
-      </h1>
+      <h1 className="text-2xl font-bold tracking-tight text-t1">New Solicitation</h1>
       <p className="mb-7 text-[13px] text-t4">
-        Create a solicitation to start evaluating proposals.
+        Upload a solicitation and your proposal draft to run an instant AI review.
       </p>
 
-      <form action={createSolicitation} className={`${card} space-y-5 p-6`}>
-        <div className="space-y-1.5">
-          <label htmlFor="title" className={labelClasses}>
-            Title <span className="text-[#3b6ef0]">*</span>
-          </label>
-          <input
-            id="title"
-            name="title"
-            type="text"
-            required
-            placeholder="e.g. IT Modernization Services"
-            className={fieldClasses}
-          />
-        </div>
-
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <label htmlFor="sol_number" className={labelClasses}>
-              Solicitation Number
-            </label>
-            <input
-              id="sol_number"
-              name="sol_number"
-              type="text"
-              placeholder="e.g. RFP-2026-0042"
-              className={fieldClasses}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="agency" className={labelClasses}>
-              Agency
-            </label>
-            <input
-              id="agency"
-              name="agency"
-              type="text"
-              placeholder="e.g. Department of Defense"
-              className={fieldClasses}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="notes" className={labelClasses}>
-            Notes
-          </label>
-          <textarea
-            id="notes"
-            name="notes"
-            rows={4}
-            placeholder="Optional context or internal notes"
-            className={fieldClasses}
-          />
-        </div>
-
-        {teams.length > 0 && (
-          <div className="space-y-1.5">
-            <label className={labelClasses}>Departments</label>
-            <p className="text-[12px] text-t5">
-              Choose which departments can see this solicitation. Leave empty and only
-              you (and company admins) will see it until you assign one.
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {teams.map((t) => (
-                <label
-                  key={t.id.toString()}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-t3 transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1"
-                >
-                  <input type="checkbox" name="dept" value={t.id.toString()} className="peer sr-only" />
-                  <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
-                  {t.name}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-3 pt-1">
-          <Link href="/app/solicitations" className={btnGhost}>
-            Cancel
-          </Link>
-          <button type="submit" className={btnPrimary}>
-            <Plus className="h-4 w-4" />
-            Create Solicitation
-          </button>
-        </div>
-      </form>
+      <UploadAndReview action={createAndRunReview} />
     </div>
   );
 }
