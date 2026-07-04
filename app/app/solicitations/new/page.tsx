@@ -34,6 +34,10 @@ async function createAndRunReview(formData: FormData): Promise<CreateResult> {
   const mode = String(formData.get('mode') ?? 'direct_ai') === 'color_team' ? 'color_team' : 'direct_ai';
   const solNumber = String(formData.get('solNumber') ?? '').trim();
   const agency = String(formData.get('agency') ?? '').trim();
+  const naics = String(formData.get('naics') ?? '').trim().slice(0, 20);
+  const dueRaw = String(formData.get('dueDate') ?? '').trim();
+  const dueParsed = dueRaw ? new Date(dueRaw) : null;
+  const dueDate = dueParsed && !isNaN(dueParsed.getTime()) ? dueParsed : null;
 
   const rfpFiles = formData.getAll('rfpFiles').filter((f): f is File => f instanceof File && f.size > 0);
   const proposalFiles = formData
@@ -53,7 +57,7 @@ async function createAndRunReview(formData: FormData): Promise<CreateResult> {
 
   const sol = await withTenant(companyId, (tx) =>
     tx.solicitation.create({
-      data: { companyId, title: title.slice(0, 500), solNumber, agency, mode, createdBy: daraUser.id }
+      data: { companyId, title: title.slice(0, 500), solNumber, agency, naics, dueDate, mode, createdBy: daraUser.id }
     })
   );
 

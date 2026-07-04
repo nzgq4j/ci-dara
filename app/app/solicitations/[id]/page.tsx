@@ -39,6 +39,7 @@ import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
 import DocUploader from '@/components/dara/DocUploader';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
+import SolMetaEditor from '@/components/dara/SolMetaEditor';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
 import {
@@ -912,6 +913,30 @@ async function renameSolicitationAction(formData: FormData): Promise<{ ok: boole
     entityId: solId,
     metadata: { title }
   });
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
+}
+
+// Update solicitation metadata (reference number, agency, NAICS, due date) — feeds the
+// dashboard countdown/KPIs.
+async function updateSolMetaAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const dueRaw = String(formData.get('dueDate') ?? '').trim();
+  const dueParsed = dueRaw ? new Date(dueRaw) : null;
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.solicitation.update({
+      where: { id: solId },
+      data: {
+        solNumber: String(formData.get('solNumber') ?? '').trim().slice(0, 100),
+        agency: String(formData.get('agency') ?? '').trim().slice(0, 255),
+        naics: String(formData.get('naics') ?? '').trim().slice(0, 20),
+        dueDate: dueParsed && !isNaN(dueParsed.getTime()) ? dueParsed : null
+      }
+    })
+  );
   revalidatePath(`/app/solicitations/${solId}`);
   return { ok: true };
 }
@@ -2182,10 +2207,14 @@ export default async function SolicitationDetailPage({
       </Link>
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
-            {solicitation.solNumber || 'No reference number'}
-            {solicitation.agency ? ` · ${solicitation.agency}` : ''}
-          </div>
+          <SolMetaEditor
+            solId={sid}
+            solNumber={solicitation.solNumber}
+            agency={solicitation.agency}
+            naics={solicitation.naics}
+            dueDate={solicitation.dueDate ? new Date(solicitation.dueDate).toISOString().slice(0, 10) : ''}
+            updateAction={updateSolMetaAction}
+          />
           <div className="flex items-center gap-2.5">
             <EditableSolTitle solId={sid} title={solicitation.title} renameAction={renameSolicitationAction} />
             <ModeChip mode={solicitation.mode} />

@@ -1,55 +1,38 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Plus } from 'lucide-react';
+import { Plus, DownloadCloud } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
-import { ModeChip, AiReviewStatus } from '@/components/dara/ReviewModeBits';
+import { ModeChip, AiReviewStatus, CountdownChip, ColorTeamStatus } from '@/components/dara/ReviewModeBits';
 
-const planLabels: Record<string, string> = {
-  trial: 'Trial',
-  starter: 'Base',
-  pro: 'Pro',
-  enterprise: 'Enterprise'
-};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Deterministic UTC formatters (locale/tz-dependent formatters mismatch server↔client).
+function fmtDay(d: Date): string {
+  const x = new Date(d);
+  return `${MONTHS[x.getUTCMonth()]} ${x.getUTCDate()}, ${x.getUTCFullYear()}`;
+}
+function daysUntil(d: Date | null, now: number): number | null {
+  if (!d) return null;
+  return Math.ceil((new Date(d).getTime() - now) / 86_400_000);
+}
 
-const evBadge: Record<string, string> = {
-  pending: 'bg-line text-t4',
-  running: 'bg-navy/20 text-navy',
-  complete: 'bg-[#DCFCE7] text-[#166534]',
-  failed: 'bg-[#FEE2E2] text-[#991B1B]'
-};
-
-// Aggregate a solicitation's review passes into a P1/P2/P3 status + avg score. A pass type
-// counts complete if ANY of the solicitation's reviews has it complete.
-const PASS_TYPES_ORDER = ['compliance_format', 'technical_responsiveness', 'risk_competitive'] as const;
-const passPill: Record<string, string> = {
-  complete: 'bg-[#DCFCE7] text-[#166534]',
-  running: 'bg-navy/20 text-navy',
-  error: 'bg-[#FEE2E2] text-[#991B1B]',
-  not_run: 'bg-surf3 text-t5'
-};
-function aggPasses(
-  reviews: { passes: { passType: string; status: string; score: number | null }[] }[]
-) {
+// Roll a solicitation's reviews into a P1/P2/P3 status map (a pass counts at its strongest
+// state across all the sol's reviews).
+const PASS_TYPES = ['compliance_format', 'technical_responsiveness', 'risk_competitive'] as const;
+function aggPasses(reviews: { passes: { passType: string; status: string }[] }[]): Record<string, string> {
   const rank: Record<string, number> = { not_run: 0, error: 1, running: 2, complete: 3 };
-  const byType: Record<string, string> = {
-    compliance_format: 'not_run',
-    technical_responsiveness: 'not_run',
-    risk_competitive: 'not_run'
-  };
-  const scores: number[] = [];
+  const byType: Record<string, string> = { compliance_format: 'not_run', technical_responsiveness: 'not_run', risk_competitive: 'not_run' };
   for (const rv of reviews) {
     for (const p of rv.passes) {
-      const cur = byType[p.passType] ?? 'not_run';
+      if (!(p.passType in byType)) continue;
       const next = p.status === 'queued' ? 'running' : p.status === 'not_started' ? 'not_run' : p.status;
-      if ((rank[next] ?? 0) > (rank[cur] ?? 0)) byType[p.passType] = next;
-      if (p.status === 'complete' && p.score != null) scores.push(p.score);
+      const cur = rank[byType[p.passType]] ?? 0;
+      if ((rank[next] ?? 0) > cur) byType[p.passType] = next;
     }
   }
-  const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
-  return { byType, avg };
+  return byType;
 }
 
 export default async function DashboardPage() {
@@ -58,262 +41,163 @@ export default async function DashboardPage() {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) redirect('/signin');
-
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
   const companyId = daraUser.companyId;
 
-  const [
-    solicitationCount,
-    reviewCount,
-    passScoreAgg,
-    activePersonaCount,
-    recentSolicitations,
-    recentEvaluations,
-    personas
-  ] = await withTenant(companyId, async (tx) => {
-    // Stats reflect only solicitations this user can see (department-scoped).
+  const [sols, findingAgg, passAgg, directAgg] = await withTenant(companyId, async (tx) => {
     const teamIds = await userTeamIds(tx, daraUser.id);
     const access = solAccessWhere(daraUser.id, daraUser.role, teamIds);
     const solWhere = { companyId, ...access };
     return Promise.all([
-      // companyId filters kept as defense-in-depth alongside RLS (DARA-004).
-      tx.solicitation.count({ where: solWhere }),
-      tx.review.count({ where: { companyId, solicitation: access } }),
-      tx.reviewPass.aggregate({ where: { companyId, status: 'complete' }, _avg: { score: true } }),
-      tx.persona.count({ where: { companyId, isActive: true } }),
       tx.solicitation.findMany({
         where: solWhere,
-        orderBy: { createdAt: 'desc' },
-        take: 5,
+        orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
         include: {
-          _count: { select: { requirements: true, reviews: true } },
-          reviews: { select: { passes: { select: { passType: true, status: true, score: true } } } },
+          reviews: { select: { passes: { select: { passType: true, status: true } } } },
           directReviews: { select: { status: true, score: true } }
         }
       }),
-      tx.evaluation.findMany({
-        where: { companyId, solicitation: access },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: { review: true }
-      }),
-      tx.persona.findMany({ where: { companyId }, select: { id: true, displayName: true } })
+      // Company-wide finding severity breakdown (RLS keeps it tenant-scoped).
+      tx.finding.groupBy({ by: ['severity'], where: { companyId }, _count: { _all: true } }),
+      tx.reviewPass.aggregate({ where: { companyId, status: 'complete' }, _avg: { score: true }, _count: { score: true } }),
+      tx.directReview.aggregate({ where: { companyId, status: 'complete' }, _avg: { score: true }, _count: { score: true } })
     ]);
   });
 
-  const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
+  const now = Date.now();
+  const today = fmtDay(new Date(now));
 
-  const firstName = (daraUser.name || daraUser.email).split(/[\s@]/)[0];
-  const hour = new Date().getUTCHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  const today = new Date().toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
+  // Per-sol derived data.
+  const rows = sols.map((s) => {
+    const days = daysUntil(s.dueDate, now);
+    const dr = s.directReviews[0];
+    const byType = aggPasses(s.reviews);
+    const started =
+      s.mode === 'direct_ai'
+        ? dr != null && dr.status !== 'not_started'
+        : Object.values(byType).some((v) => v !== 'not_run');
+    return { s, days, dr, byType, started };
   });
 
-  const avgScore = passScoreAgg._avg.score;
-  const stats = [
-    { label: 'Solicitations', value: solicitationCount, color: '#1B2A4A', sub: 'total packages' },
-    { label: 'Reviews', value: reviewCount, color: '#7c3aed', sub: 'across solicitations' },
-    { label: 'Avg Score', value: avgScore != null ? Math.round(avgScore) : '—', color: '#f59e0b', sub: 'completed AI passes' },
-    { label: 'Active Personas', value: activePersonaCount, color: '#10b981', sub: 'evaluator panel' }
+  // KPIs.
+  const activeReviews = rows.filter((r) => r.started).length;
+  const dueSoonRows = rows.filter((r) => r.days != null && r.days <= 7);
+  const dueSoon = dueSoonRows.length;
+  const dueSoonAgencies = Array.from(new Set(dueSoonRows.map((r) => r.s.agency).filter(Boolean))).slice(0, 3).join(' · ');
+
+  const passSum = (passAgg._avg.score ?? 0) * passAgg._count.score;
+  const directSum = (directAgg._avg.score ?? 0) * directAgg._count.score;
+  const scoredN = passAgg._count.score + directAgg._count.score;
+  const avgCompliance = scoredN > 0 ? Math.round((passSum + directSum) / scoredN) : null;
+
+  const sevCount = (sev: string) => findingAgg.find((f) => f.severity === sev)?._count._all ?? 0;
+  const openFindings = findingAgg.reduce((n, f) => n + f._count._all, 0);
+  const critFindings = sevCount('critical');
+  const highFindings = sevCount('high');
+
+  const kpis = [
+    { label: 'Active Reviews', value: activeReviews, color: '#1B2A4A', sub: `${dueSoon} approaching deadline` },
+    { label: 'Due ≤ 7 Days', value: dueSoon, color: '#991B1B', sub: dueSoonAgencies || 'none' },
+    { label: 'Avg Compliance Score', value: avgCompliance ?? '—', color: '#166534', sub: `${scoredN} completed review${scoredN === 1 ? '' : 's'}` },
+    { label: 'Open Findings', value: openFindings, color: '#B45309', sub: `${critFindings} critical / ${highFindings} high` }
   ];
 
   return (
     <div className="mx-auto max-w-6xl fade">
       {/* Header */}
-      <div className="mb-7 flex items-start justify-between">
+      <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
-            {today}
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-t1">
-            {greeting}, {firstName}.
-          </h1>
-          <p className="text-[13px] text-t4">
-            Here&apos;s a snapshot of your evaluation activity.
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-navy">Dashboard</h1>
+          <p className="text-[13px] text-t4">Active solicitation tracking · As of {today}</p>
         </div>
-        <Link
-          href="/app/solicitations/new"
-          className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy/90"
-        >
-          <Plus className="h-4 w-4" />
-          New Solicitation
-        </Link>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <button
+            type="button"
+            disabled
+            title="SAM.gov import — coming soon"
+            className="inline-flex cursor-not-allowed items-center gap-2 whitespace-nowrap rounded-lg border border-line px-4 py-2 text-sm font-medium text-t5"
+          >
+            <DownloadCloud className="h-4 w-4" />
+            Import from SAM.gov
+          </button>
+          <Link
+            href="/app/solicitations/new"
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy/90"
+          >
+            <Plus className="h-4 w-4" />
+            New Solicitation
+          </Link>
+        </div>
       </div>
 
-      {/* Stat cards */}
+      {/* KPI cards */}
       <div className="mb-6 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        {stats.map((s) => (
-          <div
-            key={s.label}
-            className="rounded-[10px] border border-line bg-surf p-5"
-            style={{ borderTop: `3px solid ${s.color}` }}
-          >
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
-              {s.label}
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-[10px] border border-line bg-surf p-5">
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">{k.label}</div>
+            <div className="text-3xl font-bold leading-none" style={{ color: k.color }}>
+              {k.value}
             </div>
-            <div className="text-3xl font-bold leading-none" style={{ color: s.color }}>
-              {s.value}
-            </div>
-            <div className="mt-1 text-[11px] text-t5">{s.sub}</div>
+            <div className="mt-1.5 text-[11px] text-t5">{k.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* Two-column */}
-      <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-        {/* Recent solicitations */}
-        <div className="overflow-hidden rounded-[10px] border border-line bg-surf">
-          <div className="flex items-center justify-between border-b border-line px-[18px] py-3.5">
-            <div className="text-[13px] font-bold text-t1">Recent Solicitations</div>
-            <Link href="/app/solicitations" className="text-[11px] text-navy">
-              View all →
+      {/* Solicitation tracking table */}
+      <div className="overflow-hidden rounded-[10px] border border-line bg-surf">
+        {rows.length === 0 ? (
+          <div className="px-[18px] py-10 text-center text-[13px] text-t5">
+            No solicitations yet.{' '}
+            <Link href="/app/solicitations/new" className="text-navy">
+              Create one →
             </Link>
           </div>
-          {recentSolicitations.length === 0 ? (
-            <div className="px-[18px] py-8 text-center text-[12px] text-t5">
-              No solicitations yet.{' '}
-              <Link href="/app/solicitations/new" className="text-navy">
-                Create one →
-              </Link>
-            </div>
-          ) : (
-            <table className="w-full border-collapse">
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] border-collapse">
               <thead>
                 <tr className="bg-surf3">
-                  <th className="px-[18px] py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
-                    Title
-                  </th>
-                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
-                    Reference
-                  </th>
-                  <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
-                    Reqs
-                  </th>
-                  <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
-                    Reviews
-                  </th>
-                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
-                    AI Review
-                  </th>
+                  <th className="px-[18px] py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Solicitation</th>
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Agency</th>
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">NAICS</th>
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Due Date</th>
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Countdown</th>
+                  <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Review Status</th>
                 </tr>
               </thead>
               <tbody>
-                {recentSolicitations.map((sol) => (
-                  <tr
-                    key={sol.id.toString()}
-                    className="border-t border-line transition-colors hover:bg-surf2"
-                  >
+                {rows.map(({ s, days, dr, byType }) => (
+                  <tr key={s.id.toString()} className="border-t border-line align-top transition-colors hover:bg-surf2">
                     <td className="px-[18px] py-3">
-                      <Link href={`/app/solicitations/${sol.id}`} className="block">
+                      <Link href={`/app/solicitations/${s.id}`} className="block">
                         <div className="flex items-center gap-2">
-                          <ModeChip mode={sol.mode} />
-                          <span className="text-[13px] font-semibold text-t2">{sol.title}</span>
+                          <ModeChip mode={s.mode} />
+                          <span className="text-[13px] font-semibold text-t2">
+                            {s.solNumber ? `${s.solNumber} — ${s.title}` : s.title}
+                          </span>
                         </div>
-                        <div className="mt-0.5 text-[11px] text-t5">{sol.agency || '—'}</div>
                       </Link>
                     </td>
-                    <td className="px-3.5 py-3 font-mono text-[11px] text-t5">
-                      {sol.solNumber || '—'}
-                    </td>
-                    <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
-                      {sol._count.requirements}
-                    </td>
-                    <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
-                      {sol._count.reviews}
+                    <td className="px-3.5 py-3 text-[12px] text-t4">{s.agency || '—'}</td>
+                    <td className="px-3.5 py-3 font-mono text-[11px] text-t5">{s.naics || '—'}</td>
+                    <td className="px-3.5 py-3 whitespace-nowrap text-[12px] text-t3">{s.dueDate ? fmtDay(s.dueDate) : '—'}</td>
+                    <td className="px-3.5 py-3">
+                      <CountdownChip days={days} />
                     </td>
                     <td className="px-3.5 py-3">
-                      {sol.mode === 'direct_ai' ? (
-                        <AiReviewStatus
-                          status={sol.directReviews[0]?.status}
-                          score={sol.directReviews[0]?.score}
-                        />
+                      {s.mode === 'direct_ai' ? (
+                        <AiReviewStatus status={dr?.status} score={dr?.score} />
                       ) : (
-                        (() => {
-                          const { byType, avg } = aggPasses(sol.reviews);
-                          return (
-                            <div className="flex items-center gap-1.5">
-                              {PASS_TYPES_ORDER.map((t, i) => (
-                                <span
-                                  key={t}
-                                  title={`Pass ${i + 1}: ${(byType[t] ?? 'not_run').replace('_', ' ')}`}
-                                  className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${passPill[byType[t] ?? 'not_run']}`}
-                                >
-                                  P{i + 1}
-                                </span>
-                              ))}
-                              {avg != null && (
-                                <span className="ml-1 font-mono text-[11px] font-semibold text-t3">{avg}</span>
-                              )}
-                            </div>
-                          );
-                        })()
+                        <ColorTeamStatus byType={byType} />
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-
-        {/* Right column */}
-        <div className="flex flex-col gap-3.5">
-          <div className="overflow-hidden rounded-[10px] border border-line bg-surf">
-            <div className="flex items-center justify-between border-b border-line px-[18px] py-3.5">
-              <div className="text-[13px] font-bold text-t1">Recent Evaluations</div>
-            </div>
-            {recentEvaluations.length === 0 ? (
-              <div className="px-[18px] py-6 text-center text-[12px] text-t5">
-                No evaluations yet.
-              </div>
-            ) : (
-              recentEvaluations.map((ev) => (
-                <div
-                  key={ev.id.toString()}
-                  className="flex items-center gap-2.5 border-t border-line px-[18px] py-2.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12px] font-semibold text-t2">
-                      {ev.review?.name ?? '—'}
-                    </div>
-                    <div className="truncate text-[10px] text-t5">
-                      {personaMap.get(ev.personaId.toString()) ?? 'Persona'}
-                    </div>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${
-                      evBadge[ev.status] ?? evBadge.pending
-                    }`}
-                  >
-                    {ev.status}
-                  </span>
-                </div>
-              ))
-            )}
           </div>
-
-          {/* Plan panel */}
-          <div className="rounded-[10px] border border-line bg-surf p-[18px]">
-            <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.08em] text-navy">
-              Plan — {planLabels[daraUser.company.plan] ?? daraUser.company.plan}
-            </div>
-            <div className="flex items-center justify-between text-[12px]">
-              <span className="text-t4">Status</span>
-              <span className="font-mono text-t3">{daraUser.company.planStatus}</span>
-            </div>
-            <Link
-              href="/app/billing"
-              className="mt-4 inline-flex w-full items-center justify-center rounded-lg border border-line py-2 text-[12px] text-t4 transition-colors hover:text-t1"
-            >
-              Manage plan →
-            </Link>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

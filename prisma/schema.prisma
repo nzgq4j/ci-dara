@@ -397,6 +397,10 @@ model Solicitation {
   title       String   @db.VarChar(500)
   solNumber   String   @default("") @map("sol_number") @db.VarChar(100)
   agency      String   @default("") @db.VarChar(255)
+  // NAICS code + submission due date — shown on the dashboard (countdown) and used for
+  // deadline tracking. Optional; populated at upload or edited in the workspace.
+  naics       String   @default("") @db.VarChar(20)
+  dueDate     DateTime? @map("due_date")
   // Which review paradigm this solicitation runs under (set at upload, immutable once a
   // review is initiated). New solicitations default to direct_ai.
   mode        ReviewMode @default(direct_ai)

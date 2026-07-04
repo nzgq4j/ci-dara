@@ -29,6 +29,8 @@ export default function UploadAndReview({
   const [proposalFiles, setProposalFiles] = useState<File[]>([]);
   const [solNumber, setSolNumber] = useState('');
   const [agency, setAgency] = useState('');
+  const [naics, setNaics] = useState('');
+  const [dueDate, setDueDate] = useState('');
   const [colorTeam, setColorTeam] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +62,8 @@ export default function UploadAndReview({
     fd.set('mode', colorTeam ? 'color_team' : 'direct_ai');
     fd.set('solNumber', solNumber);
     fd.set('agency', agency);
+    fd.set('naics', naics);
+    fd.set('dueDate', dueDate);
     rfpFiles.forEach((f) => fd.append('rfpFiles', f));
     proposalFiles.forEach((f) => fd.append('proposalFiles', f));
     startTransition(async () => {
@@ -116,6 +120,14 @@ export default function UploadAndReview({
           <div className="space-y-1.5">
             <label htmlFor="agency" className={labelClasses}>Agency</label>
             <input id="agency" value={agency} onChange={(e) => setAgency(e.target.value)} placeholder="e.g. Air Force Research Lab" className={fieldClasses} />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="naics" className={labelClasses}>NAICS</label>
+            <input id="naics" value={naics} onChange={(e) => setNaics(e.target.value)} placeholder="e.g. 541715" className={fieldClasses} />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="dueDate" className={labelClasses}>Due Date</label>
+            <input id="dueDate" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={fieldClasses} />
           </div>
         </div>
 
