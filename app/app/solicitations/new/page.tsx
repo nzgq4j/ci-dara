@@ -10,7 +10,7 @@ import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { triggerWorker } from '@/utils/dara/passes';
 import UploadAndReview from '@/components/dara/UploadAndReview';
 
-type CreateResult = { ok: boolean; error?: string };
+type CreateResult = { ok: boolean; error?: string; redirect?: string };
 
 function stripExt(name: string): string {
   return name.replace(/\.[^.]+$/, '').trim();
@@ -134,7 +134,9 @@ async function createAndRunReview(formData: FormData): Promise<CreateResult> {
     triggerWorker();
   }
 
-  redirect(`/app/solicitations/${sol.id}`);
+  // Return the destination and let the client navigate — a server-action redirect() thrown
+  // from inside the client's startTransition doesn't reliably move the workflow forward.
+  return { ok: true, redirect: `/app/solicitations/${sol.id}` };
 }
 
 export default async function NewSolicitationPage() {

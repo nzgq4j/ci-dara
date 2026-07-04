@@ -13,11 +13,12 @@
 
 import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { ChevronDown, ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
 import FileDropzone from '@/components/dara/FileDropzone';
 
-type CreateResult = { ok: boolean; error?: string };
+type CreateResult = { ok: boolean; error?: string; redirect?: string };
 
 export default function UploadAndReview({
   action
@@ -35,6 +36,7 @@ export default function UploadAndReview({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   const hasProposal = proposalFiles.length > 0;
   const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
@@ -68,8 +70,12 @@ export default function UploadAndReview({
     proposalFiles.forEach((f) => fd.append('proposalFiles', f));
     startTransition(async () => {
       const res = await action(fd);
-      // On success the action redirects; only errors return here.
-      if (res && !res.ok) setError(res.error ?? 'Something went wrong. Please try again.');
+      if (res?.ok && res.redirect) {
+        // Move forward into the workspace (client-side nav — reliable from a transition).
+        router.push(res.redirect);
+      } else if (res && !res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.');
+      }
     });
   };
 
