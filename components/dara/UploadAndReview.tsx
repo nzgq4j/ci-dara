@@ -11,9 +11,8 @@
 // is present). Files are held in client state (shared FileDropzone) and posted to the server
 // action as one FormData. Colors use the app's semantic tokens (D5).
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { ChevronDown, ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
 import FileDropzone from '@/components/dara/FileDropzone';
@@ -35,8 +34,10 @@ export default function UploadAndReview({
   const [colorTeam, setColorTeam] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-  const router = useRouter();
+  // Plain state (not useTransition): with an async op, useTransition's isPending flips back
+  // to false after the synchronous part, which cleared the processing indicator and dropped
+  // the post-await navigation. Real state stays true across the whole request.
+  const [pending, setPending] = useState(false);
 
   const hasProposal = proposalFiles.length > 0;
   const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
@@ -58,8 +59,9 @@ export default function UploadAndReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending]);
 
-  const submit = () => {
+  const submit = async () => {
     setError(null);
+    setPending(true);
     const fd = new FormData();
     fd.set('mode', colorTeam ? 'color_team' : 'direct_ai');
     fd.set('solNumber', solNumber);
@@ -68,15 +70,18 @@ export default function UploadAndReview({
     fd.set('dueDate', dueDate);
     rfpFiles.forEach((f) => fd.append('rfpFiles', f));
     proposalFiles.forEach((f) => fd.append('proposalFiles', f));
-    startTransition(async () => {
+    try {
       const res = await action(fd);
       if (res?.ok && res.redirect) {
-        // Move forward into the workspace (client-side nav — reliable from a transition).
-        router.push(res.redirect);
-      } else if (res && !res.ok) {
-        setError(res.error ?? 'Something went wrong. Please try again.');
+        // Hard navigation guarantees the workflow moves forward into the workspace.
+        window.location.assign(res.redirect);
+        return; // keep the processing panel up through the navigation
       }
-    });
+      setError(res?.error ?? 'Something went wrong. Please try again.');
+    } catch {
+      setError('The upload failed — your files may be too large, or the request timed out. Try fewer or smaller files.');
+    }
+    setPending(false);
   };
 
   const allFiles = [
