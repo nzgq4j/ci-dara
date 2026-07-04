@@ -36,6 +36,7 @@ import PrintButton from '@/components/dara/PrintButton';
 import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
+import DocUploader from '@/components/dara/DocUploader';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
 import {
@@ -1201,27 +1202,30 @@ export default async function SolicitationDetailPage({
           The solicitation itself — the compliance matrix is generated from these.
         </p>
         {docList(rfpDocs, 'No solicitation documents uploaded yet.')}
-        <form action={uploadSolDoc} className="flex items-center gap-3">
-          <input type="hidden" name="solId" value={sid} />
-          <input type="hidden" name="docType" value="rfp" />
-          <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
-          <button type="submit" className={btnPrimary}><Upload className="h-4 w-4" />Upload</button>
-        </form>
+        <DocUploader
+          solId={sid}
+          docType="rfp"
+          uploadAction={uploadSolDoc}
+          label="Drop solicitation files here"
+          sub="PDF, Word, or text · Section L, M, and PWS auto-detected · max 20 MB"
+        />
       </div>
 
       <div className={`${card} p-5`}>
         <h2 className={`mb-1 ${sectionTitle}`}>Our proposal (working draft)</h2>
         <p className="mb-4 text-[13px] text-t4">
-          The draft your color teams review. Each review freezes a snapshot of these at
-          the moment it is captured.
+          {isDirect
+            ? 'The draft the AI review scores against the solicitation.'
+            : 'The draft your color teams review. Each review freezes a snapshot of these at the moment it is captured.'}
         </p>
         {docList(proposalDocs, 'No proposal documents uploaded yet.')}
-        <form action={uploadSolDoc} className="flex items-center gap-3">
-          <input type="hidden" name="solId" value={sid} />
-          <input type="hidden" name="docType" value="proposal" />
-          <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
-          <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />Upload</button>
-        </form>
+        <DocUploader
+          solId={sid}
+          docType="proposal"
+          uploadAction={uploadSolDoc}
+          label="Drop your proposal draft here"
+          sub="PDF, Word, or text · max 20 MB"
+        />
       </div>
     </div>
   );

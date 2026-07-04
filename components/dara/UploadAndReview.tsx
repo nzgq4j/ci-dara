@@ -1,17 +1,19 @@
 'use client';
 
-// Screen 4 — Upload & Instant Review. The low-friction Direct AI entry point: drop the
-// solicitation (and your proposal draft), optionally add metadata, and one click creates the
-// solicitation + kicks off the unified AI review. A "Switch to Color Team review" toggle
-// under Advanced options routes to the existing P1/P2/P3 setup instead.
+// Screen 4 — Upload & Instant Review. The low-friction entry point for BOTH modes: drop the
+// solicitation (and, for Direct AI, your proposal draft), optionally add metadata, and one
+// click creates the solicitation. Direct AI additionally kicks off the unified review when a
+// proposal draft is present; the "Switch to Color Team review" toggle routes to the P1/P2/P3
+// setup. It ALWAYS creates the solicitation (you can add a proposal later in the workspace).
 //
-// Files are held in client state and posted to the server action as one FormData on submit
-// (not via native file inputs) so the drag-drop and the "Browse" picker share one list and
-// the two-step view is purely client-side. Colors use the app's semantic tokens (D5).
+// Files are held in client state (shared drag-drop via FileDropzone) and posted to the server
+// action as one FormData on submit. Colors use the app's semantic tokens (D5).
 
-import { useRef, useState, useTransition } from 'react';
-import { UploadCloud, FileText, CheckCircle2, X, ChevronDown } from 'lucide-react';
-import { card, fieldClasses, labelClasses } from '@/components/dara/theme';
+import { useState, useTransition } from 'react';
+import Link from 'next/link';
+import { ChevronDown } from 'lucide-react';
+import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
+import FileDropzone from '@/components/dara/FileDropzone';
 
 type CreateResult = { ok: boolean; error?: string };
 
@@ -26,27 +28,14 @@ export default function UploadAndReview({
   const [agency, setAgency] = useState('');
   const [colorTeam, setColorTeam] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const rfpInput = useRef<HTMLInputElement>(null);
-  const proposalInput = useRef<HTMLInputElement>(null);
-
-  const addFiles = (setter: React.Dispatch<React.SetStateAction<File[]>>, list: FileList | null) => {
-    if (!list) return;
-    const incoming = Array.from(list);
-    setter((prev) => {
-      const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
-      return [...prev, ...incoming.filter((f) => !seen.has(`${f.name}:${f.size}`))];
-    });
-  };
-
-  const removeFile = (setter: React.Dispatch<React.SetStateAction<File[]>>, idx: number) =>
-    setter((prev) => prev.filter((_, i) => i !== idx));
-
-  const hasFiles = rfpFiles.length > 0 || proposalFiles.length > 0;
-  const canRun = colorTeam ? true : proposalFiles.length > 0; // Direct AI reviews the proposal draft
+  const hasProposal = proposalFiles.length > 0;
+  // Always allow creating once there's something to create from.
+  const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
+  const willRun = !colorTeam && hasProposal;
+  const ctaLabel = pending ? 'Working…' : willRun ? 'Run AI Review' : 'Create Solicitation';
 
   const submit = () => {
     setError(null);
@@ -74,86 +63,30 @@ export default function UploadAndReview({
           <h2 className="text-[15px] font-semibold text-t1">Upload solicitation document(s)</h2>
         </div>
 
-        {/* Drop zone (solicitation docs) */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            addFiles(setRfpFiles, e.dataTransfer.files);
-          }}
-          className={`flex flex-col items-center justify-center rounded-[6px] border-2 border-dashed px-6 py-10 text-center transition-colors ${
-            dragOver ? 'border-[#3b6ef0] bg-[#3b6ef0]/5' : 'border-line bg-bg'
-          }`}
-        >
-          <UploadCloud className="h-6 w-6 text-t5" />
-          <p className="mt-2 text-[15px] font-semibold text-t1">Drop solicitation files here</p>
-          <p className="mt-0.5 text-[13px] text-t4">
-            PDF, Word, or ZIP · Section L, M, and PWS auto-detected
-          </p>
-          <button
-            type="button"
-            onClick={() => rfpInput.current?.click()}
-            className="mt-3 inline-flex items-center rounded-md border border-[#3b6ef0]/50 px-3 py-1.5 text-[12px] font-medium text-[#8fb0f5] transition-colors hover:bg-[#3b6ef0]/10"
-          >
-            Browse files
-          </button>
-          <input
-            ref={rfpInput}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => addFiles(setRfpFiles, e.target.files)}
-          />
-        </div>
-
-        {rfpFiles.length > 0 && (
-          <ul className="mt-3 space-y-1.5">
-            {rfpFiles.map((f, i) => (
-              <FileRow key={`${f.name}-${i}`} name={f.name} onRemove={() => removeFile(setRfpFiles, i)} />
-            ))}
-          </ul>
-        )}
+        <FileDropzone
+          files={rfpFiles}
+          onChange={setRfpFiles}
+          label="Drop solicitation files here"
+          sub="PDF, Word, or text · Section L, M, and PWS auto-detected · max 20 MB"
+        />
 
         {/* Proposal draft uploader (what the Direct AI review grades) */}
         <div className="mt-5 border-t border-line pt-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-[13px] font-semibold text-t2">Your proposal draft</div>
-              <div className="text-[12px] text-t5">
-                The Direct AI review scores this draft against the solicitation.
-              </div>
+          <div className="mb-2">
+            <div className="text-[13px] font-semibold text-t2">Your proposal draft</div>
+            <div className="text-[12px] text-t5">
+              {colorTeam
+                ? 'The draft your color teams review (optional here — you can add it in the workspace).'
+                : 'The Direct AI review scores this draft against the solicitation.'}
             </div>
-            <button
-              type="button"
-              onClick={() => proposalInput.current?.click()}
-              className="inline-flex items-center rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-t4 transition-colors hover:border-[#3b6ef0]/50 hover:text-t1"
-            >
-              Add draft
-            </button>
-            <input
-              ref={proposalInput}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => addFiles(setProposalFiles, e.target.files)}
-            />
           </div>
-          {proposalFiles.length > 0 && (
-            <ul className="mt-3 space-y-1.5">
-              {proposalFiles.map((f, i) => (
-                <FileRow
-                  key={`${f.name}-${i}`}
-                  name={f.name}
-                  onRemove={() => removeFile(setProposalFiles, i)}
-                />
-              ))}
-            </ul>
-          )}
+          <FileDropzone
+            files={proposalFiles}
+            onChange={setProposalFiles}
+            label="Drop your proposal draft here"
+            sub="PDF, Word, or text · max 20 MB"
+            compact
+          />
         </div>
 
         {/* Optional metadata */}
@@ -203,12 +136,10 @@ export default function UploadAndReview({
                 className="mt-0.5 h-4 w-4 rounded border-line bg-bg accent-[#3b6ef0]"
               />
               <span>
-                <span className="block text-[13px] font-semibold text-t2">
-                  Switch to Color Team review
-                </span>
+                <span className="block text-[13px] font-semibold text-t2">Switch to Color Team review</span>
                 <span className="block text-[12px] text-t5">
-                  Runs the multi-pass Pink / Red / Gold gate workflow instead of a single unified
-                  AI review. You&apos;ll configure passes in the workspace.
+                  Runs the multi-pass Pink / Red / Gold gate workflow instead of a single unified AI
+                  review. You&apos;ll configure passes in the workspace.
                 </span>
               </span>
             </label>
@@ -221,23 +152,13 @@ export default function UploadAndReview({
         <div className="mb-3 flex items-center gap-2">
           <span
             className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white ${
-              hasFiles ? 'bg-[#3b6ef0]' : 'bg-t5'
+              canSubmit ? 'bg-[#3b6ef0]' : 'bg-t5'
             }`}
           >
             2
           </span>
-          <h2 className="text-[15px] font-semibold text-t1">
-            {colorTeam ? 'Create & set up review' : 'Run AI Review'}
-          </h2>
+          <h2 className="text-[15px] font-semibold text-t1">{willRun ? 'Run AI Review' : 'Create solicitation'}</h2>
         </div>
-
-        {!canRun && (
-          <p className="mb-3 text-[12px] text-t5">
-            {colorTeam
-              ? 'Add your solicitation documents, then create the workspace.'
-              : 'Add your proposal draft above — the Direct AI review scores it against the solicitation.'}
-          </p>
-        )}
 
         {error && (
           <p className="mb-3 rounded-md border border-[#5a1f1f]/60 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e88]">
@@ -245,38 +166,27 @@ export default function UploadAndReview({
           </p>
         )}
 
-        <button
-          type="button"
-          disabled={!canRun || pending}
-          onClick={submit}
-          className="flex h-11 w-full items-center justify-center rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {pending ? 'Uploading…' : colorTeam ? 'Create Solicitation' : 'Run AI Review'}
-        </button>
-        <p className="mt-2 text-center text-[12px] text-t5">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={!canSubmit || pending}
+            onClick={submit}
+            className="flex h-11 flex-1 items-center justify-center rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {ctaLabel}
+          </button>
+          <Link href="/app/solicitations" className={`${btnGhost} h-11`}>
+            Cancel
+          </Link>
+        </div>
+        <p className="mt-2 text-[12px] text-t5">
           {colorTeam
             ? 'Opens the workspace where you set up color-team passes.'
-            : 'Review runs in the background. You can close this tab.'}
+            : willRun
+              ? 'Review runs in the background. You can close this tab.'
+              : 'Add a proposal draft above to run the AI review now — or create the solicitation and add it later in the workspace.'}
         </p>
       </div>
     </div>
-  );
-}
-
-function FileRow({ name, onRemove }: { name: string; onRemove: () => void }) {
-  return (
-    <li className="flex items-center gap-2 rounded-md border border-line bg-bg px-3 py-2">
-      <CheckCircle2 className="h-4 w-4 shrink-0 text-[#7de0a0]" />
-      <FileText className="h-4 w-4 shrink-0 text-t5" />
-      <span className="min-w-0 flex-1 truncate text-[13px] text-t2">{name}</span>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="shrink-0 rounded p-0.5 text-t5 transition-colors hover:text-[#e88]"
-        aria-label={`Remove ${name}`}
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
-    </li>
   );
 }

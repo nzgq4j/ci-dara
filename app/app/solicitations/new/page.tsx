@@ -43,9 +43,6 @@ async function createAndRunReview(formData: FormData): Promise<CreateResult> {
   if (rfpFiles.length === 0 && proposalFiles.length === 0 && !solNumber) {
     return { ok: false, error: 'Add at least one document or a solicitation number to get started.' };
   }
-  if (mode === 'direct_ai' && proposalFiles.length === 0) {
-    return { ok: false, error: 'Add your proposal draft — the Direct AI review scores it against the solicitation.' };
-  }
 
   // Title isn't a field on Screen 4; derive it from the sol number or the first uploaded file.
   const title =
@@ -112,7 +109,9 @@ async function createAndRunReview(formData: FormData): Promise<CreateResult> {
     }
   }
 
-  if (mode === 'direct_ai') {
+  // Auto-run the unified review only when there's a proposal draft to score. Without one, we
+  // still create the solicitation and drop the user in the workspace to add the draft + run.
+  if (mode === 'direct_ai' && proposalFiles.length > 0) {
     await enqueueDirectReview(sol.id, companyId);
     await recordAudit({
       action: 'review.run',
