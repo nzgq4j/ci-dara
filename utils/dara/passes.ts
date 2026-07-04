@@ -623,7 +623,10 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.kind === 'shred' && payload.solicitationId) {
         // Shred runs an initial pass + up to 2 coverage passes; the deadline lets it skip
         // coverage rounds it can't finish this tick instead of overrunning the function budget.
-        await shredRequirements(BigInt(payload.solicitationId), companyId, deadlineMs);
+        // Surface a failed shred (e.g. AI timeout) instead of silently marking the job done with
+        // an empty matrix — throwing routes it through the retry/fail path below.
+        const shredRes = await shredRequirements(BigInt(payload.solicitationId), companyId, deadlineMs);
+        if (!shredRes.ok) throw new Error(shredRes.error ?? 'Requirements shred failed.');
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.reviewId) {

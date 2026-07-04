@@ -81,9 +81,11 @@ function providerMaxOutput(provider: string): number {
 }
 
 // Hard ceiling on a single LLM HTTP call. Without it a hung provider connection blocks the
-// worker until the 300s function kill, orphaning the job as `running` (which then pins the
-// workspace poll on). 120s is generous for large completions yet well under the cron budget.
-const AI_TIMEOUT_MS = 120_000;
+// worker until the 300s function kill, orphaning the job as `running` (which pins the workspace
+// poll on). Set just under the 300s function budget: high enough that legitimate long
+// generations (a full-RFP requirements shred, a many-finding review) finish, low enough that a
+// true hang still aborts with ~60s left for the catch to fail/requeue the job cleanly.
+const AI_TIMEOUT_MS = 240_000;
 
 async function aiFetch(url: string, init: RequestInit): Promise<Response> {
   const ctrl = new AbortController();
