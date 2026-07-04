@@ -207,6 +207,40 @@ export async function requireTrialCapacity(companyId: bigint, resource: TrialRes
   }
 }
 
+export interface TrialUsageItem {
+  resource: TrialResource;
+  used: number;
+  limit: number;
+}
+
+/**
+ * Current metered usage vs. limit for each trial resource, plus the trial window end. Powers
+ * the billing page's trial card (read-only view of the same numbers requireTrialCapacity gates
+ * on). Counts run sequentially in one tenant transaction.
+ */
+export async function getTrialUsage(
+  companyId: bigint
+): Promise<{ trialEndsAt: Date | null; items: TrialUsageItem[] }> {
+  const company = await withTenant(companyId, (tx) =>
+    tx.company.findUnique({ where: { id: companyId }, select: { trialEndsAt: true, entitlements: true } })
+  );
+  const platformDefaults = await getPlatformDefaultEntitlements();
+  const limits = resolveEntitlements(company?.entitlements, platformDefaults).limits;
+
+  const counts = await withTenant(companyId, async (tx) => {
+    const solicitation = await tx.solicitation.count({ where: { companyId } });
+    const colorTeam = await tx.review.count({ where: { companyId, passes: { some: {} } } });
+    const directAi = await tx.directReview.count({ where: { companyId, status: { not: 'not_started' } } });
+    const seat = await tx.daraUser.count({ where: { companyId, isActive: true } });
+    return { solicitation, review_run: colorTeam + directAi, seat } as Record<TrialResource, number>;
+  });
+
+  return {
+    trialEndsAt: company?.trialEndsAt ?? null,
+    items: TRIAL_RESOURCES.map((r) => ({ resource: r, used: counts[r], limit: limits[r] }))
+  };
+}
+
 /**
  * Throw FeatureDisabledError if `feature` has been switched off for `companyId`. Applies to
  * every plan (a platform admin can fence a capability for any account). Features default ON.
