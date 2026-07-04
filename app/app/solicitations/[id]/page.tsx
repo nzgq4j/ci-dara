@@ -38,6 +38,7 @@ import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
 import DocUploader from '@/components/dara/DocUploader';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
+import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
 import {
@@ -401,6 +402,33 @@ async function updateRequirement(formData: FormData) {
   });
   if (!ok) redirect('/app/solicitations');
   revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// Focused inline-save for the compliance matrix — updates only the editable cells (status,
+// response location, notes) so the redesigned matrix can auto-save a row without disturbing
+// its name/source/disposition.
+async function saveMatrixRow(formData: FormData): Promise<{ ok: boolean }> {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('requirementId')));
+  const solId = BigInt(String(formData.get('solId')));
+  const status = String(formData.get('complianceStatus') ?? '');
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
+    if (!owned) return false;
+    await tx.requirement.update({
+      where: { id },
+      data: {
+        complianceStatus: (VALID_STATUSES.has(status) ? status : owned.complianceStatus) as any,
+        proposalRef: String(formData.get('proposalRef') ?? '').trim(),
+        notes: String(formData.get('notes') ?? '').trim() || null
+      }
+    });
+    return true;
+  });
+  if (!ok) return { ok: false };
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
 }
 
 async function deleteRequirement(formData: FormData) {
@@ -1257,9 +1285,16 @@ export default async function SolicitationDetailPage({
   );
 
   const requirements = activeRequirements;
-  const statusCounts = COMPLIANCE_STATUSES.map((s) => ({
-    ...s,
-    n: requirements.filter((r) => r.complianceStatus === s.value).length
+  const matrixRows = requirements.map((r) => ({
+    id: r.id.toString(),
+    name: r.name,
+    citation: r.citation,
+    complianceStatus: r.complianceStatus,
+    proposalRef: r.proposalRef,
+    notes: r.notes ?? '',
+    isNew: !!r.addedByAmendmentId,
+    isAmended: !!r.changedByAmendmentId,
+    version: r.version
   }));
 
   const compliancePanel = (
@@ -1352,22 +1387,9 @@ export default async function SolicitationDetailPage({
             their extracted text.
           </p>
         )}
-        {requirements.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {statusCounts.map((s) => (
-              <span
-                key={s.value}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-2.5 py-1 text-[12px] text-t3"
-              >
-                <span className={`font-semibold ${STATUS_PILL[s.value]}`}>{s.n}</span>
-                {s.label}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
-      {/* Compliance matrix — dense, inline-editable table */}
+      {/* Compliance matrix — filterable, searchable, inline-editable */}
       {requirements.length === 0 ? (
         <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-10 text-center`}>
           <Inbox className="h-8 w-8 text-t5" />
@@ -1376,106 +1398,8 @@ export default async function SolicitationDetailPage({
           </p>
         </div>
       ) : (
-        <div className={`${card} overflow-x-auto`}>
-          <div className="min-w-[1000px]">
-            <div className="grid grid-cols-[104px_minmax(0,1.25fr)_124px_104px_112px_minmax(0,1fr)_34px_34px] items-center gap-2 bg-surf2 px-3 py-2 font-mono text-[10px] uppercase tracking-wide text-t5">
-              <span>Status</span>
-              <span>Requirement</span>
-              <span>Source</span>
-              <span>Type</span>
-              <span>Response loc.</span>
-              <span>Notes</span>
-              <span className="col-span-2 text-right">Edit</span>
-            </div>
-            {requirements.map((r) => (
-              <div
-                key={r.id.toString()}
-                className="grid grid-cols-[104px_minmax(0,1.25fr)_124px_104px_112px_minmax(0,1fr)_34px_34px] items-center gap-2 border-t border-line px-3 py-1.5"
-              >
-                <form action={updateRequirement} className="contents">
-                  <input type="hidden" name="solId" value={sid} />
-                  <input type="hidden" name="requirementId" value={r.id.toString()} />
-                  <input type="hidden" name="description" value={r.description ?? ''} />
-                  <input type="hidden" name="farReference" value={r.farReference} />
-                  <input type="hidden" name="weight" value={r.weight} />
-                  <select
-                    name="complianceStatus"
-                    defaultValue={r.complianceStatus}
-                    className={`w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] font-semibold outline-none ${STATUS_PILL[r.complianceStatus]}`}
-                  >
-                    {COMPLIANCE_STATUSES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
-                  </select>
-                  <div className="min-w-0">
-                    <input
-                      name="name"
-                      defaultValue={r.name}
-                      className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-navy/50"
-                    />
-                    <div className="flex items-center gap-1.5 px-1">
-                      {r.citation && (
-                        <span className="flex-shrink-0 font-mono text-[10px] text-t5" title={r.citation}>{r.citation}</span>
-                      )}
-                      {r.addedByAmendmentId && (
-                        <span className="flex-shrink-0 rounded bg-[#DCFCE7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#166534]">new</span>
-                      )}
-                      {r.changedByAmendmentId && (
-                        <span className="flex-shrink-0 rounded bg-[#FEF3C7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#92400E]">amended v{r.version}</span>
-                      )}
-                    </div>
-                    <div className="px-1">
-                      <RequirementDetail
-                        abridged={r.description ?? ''}
-                        name={r.name}
-                        description={r.description ?? ''}
-                        citation={r.citation}
-                        source={SOURCE_LABEL[r.source] ?? r.source}
-                        farReference={r.farReference}
-                        status={COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus}
-                        proposalRef={r.proposalRef}
-                        disposition={REQUIREMENT_DISPOSITIONS.find((d) => d.value === r.disposition)?.label ?? DISPOSITION_LABEL[r.disposition] ?? r.disposition}
-                      />
-                    </div>
-                  </div>
-                  <select
-                    name="source"
-                    defaultValue={r.source}
-                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t3 outline-none"
-                  >
-                    {REQUIREMENT_SOURCES.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
-                  </select>
-                  <select
-                    name="disposition"
-                    defaultValue={r.disposition}
-                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t3 outline-none"
-                  >
-                    {REQUIREMENT_DISPOSITIONS.map((o) => (<option key={o.value} value={o.value}>{o.short}</option>))}
-                  </select>
-                  <input
-                    name="proposalRef"
-                    defaultValue={r.proposalRef}
-                    placeholder="Vol/§/pg"
-                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-navy/50"
-                  />
-                  <input
-                    name="notes"
-                    defaultValue={r.notes ?? ''}
-                    placeholder="Notes…"
-                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-navy/50"
-                  />
-                  <button type="submit" title="Save row" className="flex justify-center rounded border border-line py-1 text-t4 transition-colors hover:text-[#166534]">
-                    <Save className="h-3.5 w-3.5" />
-                  </button>
-                </form>
-                <form action={deleteRequirement} className="contents">
-                  <input type="hidden" name="solId" value={sid} />
-                  <input type="hidden" name="requirementId" value={r.id.toString()} />
-                  <button type="submit" title="Delete row" className="flex justify-center rounded border border-line py-1 text-t5 transition-colors hover:text-[#dc2626]">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </form>
-              </div>
-            ))}
-          </div>
+        <div className={`${card} p-4`}>
+          <ComplianceMatrix solId={sid} rows={matrixRows} saveAction={saveMatrixRow} />
         </div>
       )}
 
