@@ -6,7 +6,34 @@ Start-here-tomorrow doc. Authoritative status: `BUILD_STATUS.md` (§2 decisions,
 §4 gaps, §7 session log — the 2026-07-03 entry covers this session in full). The MVP-launch plan:
 `DARA_BUILD_PLAN.md` + the sequenced `DARA_CC_PROMPT_CHAIN.md`. Fuller architecture:
 `CONTEXT_HANDOFF.md`. Security: `/app/security`. Agent memory: `multi-pass-review.md`,
-`color-team-reframing.md`.
+`color-team-reframing.md`, `direct-ai-review-mode.md`.
+
+---
+
+## 0. NEW — Direct AI review mode (branch `feat/direct-ai-review-mode`, NOT merged)
+
+Built 2026-07-04 from a design handoff that **overrides the color-team-only direction** — Direct
+AI is a **coexisting** single-click review mode (upload → one unified AI pass → one score + flat
+findings), alongside the untouched color-team P1/P2/P3 flow. Full plan + status: **`DIRECT_AI_POAM.md`**.
+Commits `fe1e69a` (M0–M2) + `eab666f` (M3–M5); M0–M7 done; **full `pnpm build` green**; engine
+tested offline + one live model round-trip. Security review: clean.
+
+- **New:** `Solicitation.mode` enum (`direct_ai` default / `color_team`), `DirectReview` table
+  (migration `20260704000000_direct_ai_review` + RLS `2026-07-04_direct_reviews_rls.sql`),
+  `Finding` repoint (nullable `pass_id` + `direct_review_id`). `utils/dara/direct-review.ts`
+  engine + worker `direct_review` branch. New UI: `ReviewModeBits`, `UploadAndReview`,
+  `DirectReviewPanel`; `solicitations/new` rebuilt; `[id]` workspace mode-branched.
+- **⚠️ NOT applied to any DB and NOT merged.** Deploy order unchanged: `migrate deploy` →
+  `apply-sql.ts <new rls>` (RLS before code) → deploy. Do NOT merge/deploy until the migration is
+  applied AND you've smoke-tested the DB flow (not yet run — see POA&M).
+- **⚠️ Prompt 3 interaction:** `new/page.tsx`'s `createSolicitation` was **replaced by
+  `createAndRunReview`**. Wire `requireTrialCapacity('solicitation')`/`('review_run')` there +
+  in `runDirectReviewAction` (`[id]/page.tsx`), not the old function. `review_run` count already
+  spans both paradigms (`trial.ts`).
+- **✓ Prompts 6–8 (reskin) compatible:** the new components use the semantic tokens, so the
+  navy/gold reskin retheming carries them along automatically.
+- Also bumped `serverActions.bodySizeLimit` to 25mb (RFP PDFs exceed the 1MB default — also fixes
+  a latent limit on the existing workspace uploader).
 
 ---
 
