@@ -34,7 +34,9 @@ module.exports = {
         t2: 'rgb(var(--c-t2) / <alpha-value>)',
         t3: 'rgb(var(--c-t3) / <alpha-value>)',
         t4: 'rgb(var(--c-t4) / <alpha-value>)',
-        t5: 'rgb(var(--c-t5) / <alpha-value>)'
+        t5: 'rgb(var(--c-t5) / <alpha-value>)',
+        navy: 'rgb(var(--c-navy) / <alpha-value>)',
+        gold: 'rgb(var(--c-gold) / <alpha-value>)'
       },
       keyframes: {
         'accordion-down': {

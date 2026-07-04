@@ -90,7 +90,7 @@ export default function CuiBoundaryModal({ provider, mode }: { provider: string;
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
               <Link
                 href="/app/security"
-                className="text-[12px] font-medium text-[#6f9bf5] underline-offset-2 hover:underline"
+                className="text-[12px] font-medium text-navy underline-offset-2 hover:underline"
               >
                 Details &amp; data-boundary policy →
               </Link>
@@ -105,7 +105,7 @@ export default function CuiBoundaryModal({ provider, mode }: { provider: string;
                 <button
                   type="button"
                   onClick={dismissForever}
-                  className="rounded-lg bg-[#3b6ef0] px-3.5 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
+                  className="rounded-lg bg-navy px-3.5 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
                 >
                   I understand — don’t show again
                 </button>

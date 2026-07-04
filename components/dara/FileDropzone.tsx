@@ -51,7 +51,7 @@ export default function FileDropzone({
         }}
         className={`flex flex-col items-center justify-center rounded-[6px] border-2 border-dashed text-center transition-colors ${
           compact ? 'px-4 py-6' : 'px-6 py-10'
-        } ${dragOver ? 'border-[#3b6ef0] bg-[#3b6ef0]/5' : 'border-line bg-bg'}`}
+        } ${dragOver ? 'border-navy bg-navy/5' : 'border-line bg-bg'}`}
       >
         <UploadCloud className={compact ? 'h-5 w-5 text-t5' : 'h-6 w-6 text-t5'} />
         <p className={`mt-2 font-semibold text-t1 ${compact ? 'text-[13px]' : 'text-[15px]'}`}>{label}</p>
@@ -59,7 +59,7 @@ export default function FileDropzone({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="mt-3 inline-flex items-center rounded-md border border-[#3b6ef0]/50 px-3 py-1.5 text-[12px] font-medium text-[#8fb0f5] transition-colors hover:bg-[#3b6ef0]/10"
+          className="mt-3 inline-flex items-center rounded-md border border-navy/50 px-3 py-1.5 text-[12px] font-medium text-navy transition-colors hover:bg-navy/10"
         >
           Browse files
         </button>

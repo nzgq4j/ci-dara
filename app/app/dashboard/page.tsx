@@ -16,7 +16,7 @@ const planLabels: Record<string, string> = {
 
 const evBadge: Record<string, string> = {
   pending: 'bg-line text-t4',
-  running: 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
+  running: 'bg-navy/20 text-navy',
   complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
   failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
 };
@@ -26,7 +26,7 @@ const evBadge: Record<string, string> = {
 const PASS_TYPES_ORDER = ['compliance_format', 'technical_responsiveness', 'risk_competitive'] as const;
 const passPill: Record<string, string> = {
   complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
-  running: 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
+  running: 'bg-navy/20 text-navy',
   error: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
   not_run: 'bg-surf3 text-t5'
 };
@@ -115,7 +115,7 @@ export default async function DashboardPage() {
 
   const avgScore = passScoreAgg._avg.score;
   const stats = [
-    { label: 'Solicitations', value: solicitationCount, color: '#3b6ef0', sub: 'total packages' },
+    { label: 'Solicitations', value: solicitationCount, color: '#1B2A4A', sub: 'total packages' },
     { label: 'Reviews', value: reviewCount, color: '#7c3aed', sub: 'across solicitations' },
     { label: 'Avg Score', value: avgScore != null ? Math.round(avgScore) : '—', color: '#f59e0b', sub: 'completed AI passes' },
     { label: 'Active Personas', value: activePersonaCount, color: '#10b981', sub: 'evaluator panel' }
@@ -138,7 +138,7 @@ export default async function DashboardPage() {
         </div>
         <Link
           href="/app/solicitations/new"
-          className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-[#3b6ef0] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#2f5fd6]"
+          className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy/90"
         >
           <Plus className="h-4 w-4" />
           New Solicitation
@@ -170,14 +170,14 @@ export default async function DashboardPage() {
         <div className="overflow-hidden rounded-[10px] border border-line bg-surf">
           <div className="flex items-center justify-between border-b border-line px-[18px] py-3.5">
             <div className="text-[13px] font-bold text-t1">Recent Solicitations</div>
-            <Link href="/app/solicitations" className="text-[11px] text-[#3b6ef0]">
+            <Link href="/app/solicitations" className="text-[11px] text-navy">
               View all →
             </Link>
           </div>
           {recentSolicitations.length === 0 ? (
             <div className="px-[18px] py-8 text-center text-[12px] text-t5">
               No solicitations yet.{' '}
-              <Link href="/app/solicitations/new" className="text-[#3b6ef0]">
+              <Link href="/app/solicitations/new" className="text-navy">
                 Create one →
               </Link>
             </div>
@@ -299,7 +299,7 @@ export default async function DashboardPage() {
 
           {/* Plan panel */}
           <div className="rounded-[10px] border border-line bg-surf p-[18px]">
-            <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.08em] text-[#3b6ef0]">
+            <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.08em] text-navy">
               Plan — {planLabels[daraUser.company.plan] ?? daraUser.company.plan}
             </div>
             <div className="flex items-center justify-between text-[12px]">

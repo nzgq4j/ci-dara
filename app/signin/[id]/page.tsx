@@ -72,30 +72,30 @@ export default async function SignIn({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/dara-logo.png" alt="DARA" className="h-10 w-10 object-contain" />
           <div>
-            <div className="text-base font-bold tracking-tight text-t1">DARA</div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#3b6ef0]">
+            <div className="text-base font-bold tracking-tight text-white">DARA</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-gold">
               Crucible Insight
             </div>
           </div>
         </div>
 
         <div className="relative z-10 mt-auto">
-          <div className="mb-4 text-[28px] font-bold leading-tight tracking-tight text-t1">
+          <div className="mb-4 text-[28px] font-bold leading-tight tracking-tight text-white">
             AI-powered proposal screening for acquisition professionals.
           </div>
           <div className="flex flex-col gap-3">
             {LOGIN_FEATURES.map((f) => (
               <div key={f} className="flex items-center gap-2.5">
-                <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-[#3b6ef0]/40 bg-[#3b6ef0]/20 text-[11px] text-[#3b6ef0]">
+                <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-gold/50 bg-gold/20 text-[11px] text-gold">
                   ✓
                 </div>
-                <span className="text-[13px] text-t4">{f}</span>
+                <span className="text-[13px] text-white/70">{f}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="relative z-10 mt-10 text-[11px] text-t5">
+        <div className="relative z-10 mt-10 text-[11px] text-white/50">
           © 2026 Crucible Insight LLC · All rights reserved
         </div>
       </div>

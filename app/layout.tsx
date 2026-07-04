@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
+import { Inter, JetBrains_Mono } from 'next/font/google';
 import Footer from '@/components/ui/Footer';
 import Navbar from '@/components/ui/Navbar';
 import ChromeGate from '@/components/layout/ChromeGate';
@@ -9,15 +9,13 @@ import { PropsWithChildren, Suspense } from 'react';
 import { getURL } from '@/utils/helpers';
 import 'styles/main.css';
 
-const plexSans = IBM_Plex_Sans({
+const inter = Inter({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
   variable: '--font-sans',
   display: 'swap'
 });
-const plexMono = IBM_Plex_Mono({
+const mono = JetBrains_Mono({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
   variable: '--font-mono',
   display: 'swap'
 });
@@ -46,7 +44,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${plexSans.variable} ${plexMono.variable}`}
+      className={`${inter.variable} ${mono.variable}`}
     >
       <body className="bg-bg">
         <ThemeProvider>

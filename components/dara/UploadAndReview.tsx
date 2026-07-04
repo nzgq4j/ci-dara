@@ -126,7 +126,7 @@ export default function UploadAndReview({
           </button>
           {showAdvanced && (
             <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-line bg-bg p-3">
-              <input type="checkbox" checked={colorTeam} onChange={(e) => setColorTeam(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line bg-bg accent-[#3b6ef0]" />
+              <input type="checkbox" checked={colorTeam} onChange={(e) => setColorTeam(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line bg-bg accent-navy" />
               <span>
                 <span className="block text-[13px] font-semibold text-t2">Switch to Color Team review</span>
                 <span className="block text-[12px] text-t5">Runs the multi-pass Pink / Red / Gold gate workflow instead of a single unified AI review. You&apos;ll configure passes in the workspace.</span>
@@ -140,7 +140,7 @@ export default function UploadAndReview({
             type="button"
             disabled={!canSubmit}
             onClick={() => setStep(2)}
-            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-navy text-[14px] font-semibold text-white transition-colors hover:bg-navy/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Continue <ArrowRight className="h-4 w-4" />
           </button>
@@ -196,14 +196,14 @@ export default function UploadAndReview({
 
       {/* Processing indicator OR action buttons */}
       {pending ? (
-        <div className="mt-5 rounded-lg border border-[#3b6ef0]/40 bg-[#3b6ef0]/[0.04] px-4 py-4">
-          <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-[#8fb0f5]">
+        <div className="mt-5 rounded-lg border border-navy/40 bg-navy/[0.04] px-4 py-4">
+          <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-navy">
             <Loader2 className="h-4 w-4 animate-spin" />
             {stages[stageIdx]}
           </div>
-          <div className="h-1.5 overflow-hidden rounded bg-[#1f3a5a]/50">
+          <div className="h-1.5 overflow-hidden rounded bg-line">
             <div
-              className="h-full rounded bg-[#3b6ef0] transition-all duration-700"
+              className="h-full rounded bg-navy transition-all duration-700"
               style={{ width: `${Math.round(((stageIdx + 1) / stages.length) * 100)}%` }}
             />
           </div>
@@ -215,7 +215,7 @@ export default function UploadAndReview({
             <button
               type="button"
               onClick={submit}
-              className="inline-flex h-11 flex-1 items-center justify-center rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6]"
+              className="inline-flex h-11 flex-1 items-center justify-center rounded-lg bg-navy text-[14px] font-semibold text-white transition-colors hover:bg-navy/90"
             >
               {willRun ? 'Run AI Review' : 'Create Solicitation'}
             </button>
@@ -234,7 +234,7 @@ export default function UploadAndReview({
 
 function StepDot({ n, active }: { n: number; active?: boolean }) {
   return (
-    <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white ${active ? 'bg-[#3b6ef0]' : 'bg-t5'}`}>
+    <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white ${active ? 'bg-navy' : 'bg-t5'}`}>
       {n}
     </span>
   );

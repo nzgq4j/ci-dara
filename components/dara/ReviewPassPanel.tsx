@@ -33,7 +33,7 @@ const SEV: Record<PassView['findings'][number]['severity'], { label: string; cls
   critical: { label: 'CRITICAL', cls: 'bg-[#5a1f1f]/40 text-[#e88]' },
   high: { label: 'HIGH', cls: 'bg-[#5a3a1f]/40 text-[#e0a878]' },
   medium: { label: 'MEDIUM', cls: 'bg-[#5a4a1f]/35 text-[#e0c97d]' },
-  low: { label: 'LOW', cls: 'bg-[#1f3a5a]/40 text-[#6f9bf5]' }
+  low: { label: 'LOW', cls: 'bg-navy/10 text-navy' }
 };
 
 function scoreColor(s: number): string {
@@ -104,7 +104,7 @@ export default function ReviewPassPanel({
       <div className="no-print flex items-center justify-between gap-3">
         <div className="text-[11px] text-t4">
           {active ? (
-            <span className="inline-flex items-center gap-1.5 text-[#6f9bf5]">
+            <span className="inline-flex items-center gap-1.5 text-navy">
               <Loader2 className="h-3 w-3 animate-spin" /> AI review running — passes update live
             </span>
           ) : anyStarted ? (
@@ -118,7 +118,7 @@ export default function ReviewPassPanel({
           onClick={run}
           disabled={!canRun || pending || active}
           title={!canRun ? disabledReason : undefined}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[#3b6ef0]/50 bg-[#3b6ef0]/10 px-3 py-1.5 text-[12px] font-semibold text-[#8fb0f5] transition-colors hover:bg-[#3b6ef0]/20 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-navy/50 bg-navy/10 px-3 py-1.5 text-[12px] font-semibold text-navy transition-colors hover:bg-navy/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending || active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : anyStarted ? <RotateCcw className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           {anyStarted ? 'Re-run all passes' : 'Run AI review'}
@@ -133,7 +133,7 @@ export default function ReviewPassPanel({
             key={def.type}
             className={`overflow-hidden rounded-lg border ${
               status === 'running' || status === 'queued'
-                ? 'border-[#3b6ef0]/40 bg-[#3b6ef0]/[0.04]'
+                ? 'border-navy/40 bg-navy/[0.04]'
                 : status === 'error'
                   ? 'border-[#5a1f1f]/60 bg-[#5a1f1f]/[0.06]'
                   : 'border-line bg-surf'
@@ -152,10 +152,10 @@ export default function ReviewPassPanel({
                   <div className="mt-1.5">
                     <div className="mb-1 flex justify-between text-[10px]">
                       <span className="text-t4">{pass?.progressLabel || 'Analyzing…'}</span>
-                      <span className="text-[#6f9bf5]">{pass?.progress ?? 0}%</span>
+                      <span className="text-navy">{pass?.progress ?? 0}%</span>
                     </div>
-                    <div className="h-1 overflow-hidden rounded bg-[#1f3a5a]/50">
-                      <div className="h-full rounded bg-[#3b6ef0] transition-all" style={{ width: `${pass?.progress ?? 0}%` }} />
+                    <div className="h-1 overflow-hidden rounded bg-line">
+                      <div className="h-full rounded bg-navy transition-all" style={{ width: `${pass?.progress ?? 0}%` }} />
                     </div>
                   </div>
                 )}
@@ -237,16 +237,16 @@ export default function ReviewPassPanel({
 
 function StatusDot({ status }: { status: PassView['status'] }) {
   if (status === 'complete') return <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-[#7de0a0]" />;
-  if (status === 'running') return <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-[#6f9bf5]" />;
+  if (status === 'running') return <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-navy" />;
   if (status === 'error') return <AlertTriangle className="h-5 w-5 flex-shrink-0 text-[#e07d7d]" />;
-  if (status === 'queued') return <Clock className="h-5 w-5 flex-shrink-0 text-[#6f9bf5]" />;
+  if (status === 'queued') return <Clock className="h-5 w-5 flex-shrink-0 text-navy" />;
   return <div className="h-5 w-5 flex-shrink-0 rounded-full border-2 border-line" />;
 }
 
 function StatusPill({ status }: { status: PassView['status'] }) {
   const map: Record<PassView['status'], { t: string; c: string }> = {
     complete: { t: 'COMPLETE', c: 'bg-[#1f5a31]/25 text-[#7de0a0]' },
-    running: { t: 'RUNNING', c: 'bg-[#1f3a5a]/40 text-[#6f9bf5]' },
+    running: { t: 'RUNNING', c: 'bg-navy/10 text-navy' },
     queued: { t: 'QUEUED', c: 'bg-surf2 text-t4' },
     error: { t: 'ERROR', c: 'bg-[#5a1f1f]/40 text-[#e88]' },
     not_started: { t: 'NOT RUN', c: 'bg-surf2 text-t5' }

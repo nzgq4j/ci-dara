@@ -89,7 +89,7 @@ export default function PipelineStepper({
                 type="button"
                 onClick={() => setActive(t.id)}
                 className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                  on ? 'border-[#3b6ef0] bg-[#3b6ef0]/5 text-t1' : 'border-line text-t4 hover:text-t2'
+                  on ? 'border-navy bg-navy/5 text-t1' : 'border-line text-t4 hover:text-t2'
                 }`}
               >
                 {t.label}

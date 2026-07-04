@@ -120,7 +120,7 @@ export default function PrivacyPolicyPage() {
         <p>
           Questions about this policy or your data: islanista@gmail.com (Crucible
           Insight LLC). See also our{' '}
-          <Link href="/security/tos" className="text-[#3b6ef0] underline">
+          <Link href="/security/tos" className="text-navy underline">
             Terms of Service
           </Link>
           .

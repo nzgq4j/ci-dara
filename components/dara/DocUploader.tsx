@@ -64,7 +64,7 @@ export default function DocUploader({
           type="button"
           onClick={upload}
           disabled={pending}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#3b6ef0] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {pending ? 'Uploading…' : `Upload ${files.length} file${files.length > 1 ? 's' : ''}`}

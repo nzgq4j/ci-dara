@@ -565,7 +565,7 @@ export default async function AdminPage() {
                     <div className="flex items-center gap-2">
                       <span className="truncate text-[13px] text-t1">{a.email}</span>
                       {env && (
-                        <span className="rounded bg-[#3b6ef0]/20 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-[#6f9bf5]">
+                        <span className="rounded bg-navy/20 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-navy">
                           env-pinned
                         </span>
                       )}

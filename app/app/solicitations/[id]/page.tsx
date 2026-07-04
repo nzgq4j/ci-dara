@@ -103,7 +103,7 @@ const COLOR_TEAMS: { value: string; label: string; dot: string; text: string }[]
   { value: 'pink', label: 'Pink', dot: '#ec4899', text: 'text-[#ec4899]' },
   { value: 'red', label: 'Red', dot: '#ef4444', text: 'text-[#ef4444]' },
   { value: 'gold', label: 'Gold', dot: '#eab308', text: 'text-[#eab308]' },
-  { value: 'blue', label: 'Blue', dot: '#3b82f6', text: 'text-[#6f9bf5]' },
+  { value: 'blue', label: 'Blue', dot: '#3b82f6', text: 'text-navy' },
   { value: 'green', label: 'Green', dot: '#22c55e', text: 'text-[#7de0a0]' },
   { value: 'black', label: 'Black', dot: '#9ca3af', text: 'text-t3' },
   { value: 'white', label: 'White', dot: '#e5e7eb', text: 'text-t2' }
@@ -1090,7 +1090,7 @@ export default async function SolicitationDetailPage({
         <form action={updateSolicitation} className="space-y-2.5">
           <input type="hidden" name="solId" value={sid} />
           <div className="space-y-1">
-            <label htmlFor="title" className={labelClasses}>Title <span className="text-[#3b6ef0]">*</span></label>
+            <label htmlFor="title" className={labelClasses}>Title <span className="text-navy">*</span></label>
             <input id="title" name="title" type="text" required defaultValue={solicitation.title} className={fieldClasses} />
           </div>
           <div className="grid gap-2.5 sm:grid-cols-2">
@@ -1122,7 +1122,7 @@ export default async function SolicitationDetailPage({
           {allTeams.length === 0 ? (
             <p className="text-[12px] text-t5">
               No departments yet — create them on the{' '}
-              <Link href="/app/team" className="text-[#3b6ef0] hover:underline">Team</Link> page.
+              <Link href="/app/team" className="text-navy hover:underline">Team</Link> page.
             </p>
           ) : canManageDepts ? (
             <form action={setSolicitationDepartments} className="space-y-3">
@@ -1131,10 +1131,10 @@ export default async function SolicitationDetailPage({
                 {allTeams.map((t) => (
                   <label
                     key={t.id.toString()}
-                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[12px] text-t3 transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1"
+                    className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[12px] text-t3 transition-colors hover:border-navy/40 has-[:checked]:border-navy has-[:checked]:bg-navy/5 has-[:checked]:text-t1"
                   >
                     <input type="checkbox" name="dept" value={t.id.toString()} defaultChecked={assignedTeamIds.has(t.id.toString())} className="peer sr-only" />
-                    <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
+                    <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-navy" />
                     {t.name}
                   </label>
                 ))}
@@ -1149,7 +1149,7 @@ export default async function SolicitationDetailPage({
             <div className="flex flex-wrap gap-1.5">
               {solicitation.departments.map((d) => (
                 <span key={d.id.toString()} className="inline-flex items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[12px] text-t3">
-                  <span className="h-2 w-2 rounded-full bg-[#3b6ef0]" />{d.team.name}
+                  <span className="h-2 w-2 rounded-full bg-navy" />{d.team.name}
                 </span>
               ))}
             </div>
@@ -1383,7 +1383,7 @@ export default async function SolicitationDetailPage({
                     <input
                       name="name"
                       defaultValue={r.name}
-                      className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-[#3b6ef0]/50"
+                      className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[12px] text-t2 outline-none hover:border-line focus:border-navy/50"
                     />
                     <div className="flex items-center gap-1.5 px-1">
                       {r.citation && (
@@ -1428,13 +1428,13 @@ export default async function SolicitationDetailPage({
                     name="proposalRef"
                     defaultValue={r.proposalRef}
                     placeholder="Vol/§/pg"
-                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-[#3b6ef0]/50"
+                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-navy/50"
                   />
                   <input
                     name="notes"
                     defaultValue={r.notes ?? ''}
                     placeholder="Notes…"
-                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-[#3b6ef0]/50"
+                    className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-navy/50"
                   />
                   <button type="submit" title="Save row" className="flex justify-center rounded border border-line py-1 text-t4 transition-colors hover:text-[#7de0a0]">
                     <Save className="h-3.5 w-3.5" />
@@ -1477,7 +1477,7 @@ export default async function SolicitationDetailPage({
           <input type="hidden" name="sortOrder" value={requirements.length} />
           <div className="grid gap-3 sm:grid-cols-12">
             <div className="space-y-1.5 sm:col-span-8">
-              <label className={labelClasses}>Requirement <span className="text-[#3b6ef0]">*</span></label>
+              <label className={labelClasses}>Requirement <span className="text-navy">*</span></label>
               <input name="name" type="text" required placeholder="e.g. Page limit — Volume II" className={fieldClasses} />
             </div>
             <div className="space-y-1.5 sm:col-span-4">
@@ -1530,17 +1530,17 @@ export default async function SolicitationDetailPage({
       {personas.length === 0 ? (
         <p className="text-[12px] text-t5">
           No personas yet — create them on the{' '}
-          <Link href="/app/personas" className="text-[#3b6ef0] hover:underline">Personas</Link> page.
+          <Link href="/app/personas" className="text-navy hover:underline">Personas</Link> page.
         </p>
       ) : (
         <div className="flex flex-wrap gap-2">
           {personas.map((p) => (
             <label
               key={p.id.toString()}
-              className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-1.5 text-[13px] transition-colors hover:border-[#3b6ef0]/40 has-[:checked]:border-[#3b6ef0] has-[:checked]:bg-[#3b6ef0]/5 has-[:checked]:text-t1 ${p.isActive ? 'text-t3' : 'text-t5'}`}
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-bg px-3 py-1.5 text-[13px] transition-colors hover:border-navy/40 has-[:checked]:border-navy has-[:checked]:bg-navy/5 has-[:checked]:text-t1 ${p.isActive ? 'text-t3' : 'text-t5'}`}
             >
               <input type="checkbox" name="persona" value={p.id.toString()} defaultChecked={selected.has(p.id.toString())} className="peer sr-only" />
-              <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-[#3b6ef0]" />
+              <span className="h-2 w-2 rounded-full bg-t5 peer-checked:bg-navy" />
               {p.icon ? `${p.icon} ` : ''}{p.displayName}{p.isActive ? '' : ' (inactive)'}
             </label>
           ))}
@@ -1727,7 +1727,7 @@ export default async function SolicitationDetailPage({
           <input type="hidden" name="solId" value={sid} />
           <input type="hidden" name="colorTeam" value={focusColor} />
           <div className="space-y-1.5">
-            <label className={labelClasses}>Review name <span className="text-[#3b6ef0]">*</span></label>
+            <label className={labelClasses}>Review name <span className="text-navy">*</span></label>
             <input name="name" type="text" required defaultValue={`${ct.label} Team review`} className={fieldClasses} />
           </div>
           <div className="space-y-1.5">
@@ -1819,7 +1819,7 @@ export default async function SolicitationDetailPage({
                         if (cell && cell.scores.length > 0) {
                           const avg = Math.round(cell.scores.reduce((a, b) => a + b, 0) / cell.scores.length);
                           label = `${avg}`;
-                          color = avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-[#6f9bf5]' : 'text-[#e0a07d]';
+                          color = avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-navy' : 'text-[#e0a07d]';
                         }
                         return (
                           <td key={c.id.toString()} className={`px-3.5 py-3 text-center text-[13px] font-semibold ${color}`}>
@@ -2203,19 +2203,19 @@ export default async function SolicitationDetailPage({
 
   const pipelineStages = isDirect
     ? [
-        { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#3b6ef0', view: 'documents', done: rfpDocs.length > 0 },
-        { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#3b6ef0', view: 'compliance', done: activeRequirements.length > 0 },
+        { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#1B2A4A', view: 'documents', done: rfpDocs.length > 0 },
+        { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#1B2A4A', view: 'compliance', done: activeRequirements.length > 0 },
         { id: 's3', num: 3, label: 'AI Review', sub: 'Unified findings', color: '#22c55e', view: 'aiReview', done: directReview?.status === 'complete' }
       ]
     : [
-        { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#3b6ef0', view: 'documents', done: rfpDocs.length > 0 },
-        { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#3b6ef0', view: 'compliance', done: activeRequirements.length > 0 },
-        { id: 's3', num: 3, label: 'Kickoff', sub: 'Setup & draft', color: '#3b6ef0', view: 'overview', done: proposalDocs.length > 0 },
+        { id: 's1', num: 1, label: 'Solicitation', sub: 'RFP & proposal', color: '#1B2A4A', view: 'documents', done: rfpDocs.length > 0 },
+        { id: 's2', num: 2, label: 'Compliance', sub: 'Shred & matrix', color: '#1B2A4A', view: 'compliance', done: activeRequirements.length > 0 },
+        { id: 's3', num: 3, label: 'Kickoff', sub: 'Setup & draft', color: '#1B2A4A', view: 'overview', done: proposalDocs.length > 0 },
         { id: 's4', num: 4, label: 'Pink Team', sub: 'Strategy & outline', color: '#ec4899', view: 'pink', done: colorDone('pink') },
         { id: 's5', num: 5, label: 'Red Team', sub: 'Full draft review', color: '#ef4444', view: 'red', done: colorDone('red') },
         { id: 's6', num: 6, label: 'Gold Team', sub: 'Executive review', color: '#f59e0b', view: 'gold', done: colorDone('gold') },
         { id: 's7', num: 7, label: 'White Glove', sub: 'Production ready', color: '#94a3b8', view: 'white', done: colorDone('white') },
-        { id: 's8', num: 8, label: 'Compliance', sub: 'Final check', color: '#3b6ef0', view: 'compliance', done: anyComplianceChecked },
+        { id: 's8', num: 8, label: 'Compliance', sub: 'Final check', color: '#1B2A4A', view: 'compliance', done: anyComplianceChecked },
         { id: 's9', num: 9, label: 'Submit', sub: 'Proposal', color: '#22c55e', view: 'review', done: anyReviewComplete }
       ];
 

@@ -44,7 +44,7 @@ export default function RequirementDetail({
         type="button"
         onClick={() => setOpen(true)}
         title="View full requirement"
-        className="block max-w-full truncate text-left text-[10px] text-t5 underline-offset-2 transition-colors hover:text-[#6f9bf5] hover:underline"
+        className="block max-w-full truncate text-left text-[10px] text-t5 underline-offset-2 transition-colors hover:text-navy hover:underline"
       >
         {abridged || 'View details'}
       </button>

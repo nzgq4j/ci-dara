@@ -26,7 +26,7 @@ const SEV: Record<Severity, { label: string; cls: string }> = {
   critical: { label: 'CRITICAL', cls: 'bg-[#5a1f1f]/40 text-[#e88]' },
   high: { label: 'HIGH', cls: 'bg-[#5a3a1f]/40 text-[#e0a878]' },
   medium: { label: 'MEDIUM', cls: 'bg-[#5a4a1f]/35 text-[#e0c97d]' },
-  low: { label: 'LOW', cls: 'bg-[#1f3a5a]/40 text-[#6f9bf5]' }
+  low: { label: 'LOW', cls: 'bg-navy/10 text-navy' }
 };
 const SEV_RANK: Record<Severity, number> = { critical: 3, high: 2, medium: 1, low: 0 };
 
@@ -129,7 +129,7 @@ export default function DirectReviewPanel({
           onClick={run}
           disabled={!canRun || pending}
           title={!canRun ? disabledReason : undefined}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#3b6ef0] py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-navy/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
           Run AI Review
@@ -146,14 +146,14 @@ export default function DirectReviewPanel({
     return (
       <div className="space-y-3">
         {header}
-        <div className="rounded-lg border border-[#3b6ef0]/40 bg-[#3b6ef0]/[0.04] px-4 py-4">
+        <div className="rounded-lg border border-navy/40 bg-navy/[0.04] px-4 py-4">
           <div className="mb-1.5 flex items-center justify-between text-[11px]">
             <span className="text-t3">{progressLabel || 'Analyzing section-by-section coverage…'}</span>
-            <span className="text-[#6f9bf5]">{progress}%</span>
+            <span className="text-navy">{progress}%</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded bg-[#1f3a5a]/50">
+          <div className="h-1.5 overflow-hidden rounded bg-line">
             <div
-              className="h-full rounded bg-[#3b6ef0] transition-all"
+              className="h-full rounded bg-navy transition-all"
               style={{ width: `${Math.max(5, progress)}%` }}
             />
           </div>
@@ -191,7 +191,7 @@ export default function DirectReviewPanel({
             <Count label="Crit" n={counts.critical} cls="text-[#e88]" />
             <Count label="High" n={counts.high} cls="text-[#e0a878]" />
             <Count label="Med" n={counts.medium} cls="text-[#e0c97d]" />
-            <Count label="Low" n={counts.low} cls="text-[#6f9bf5]" />
+            <Count label="Low" n={counts.low} cls="text-navy" />
           </div>
         </div>
 
@@ -283,7 +283,7 @@ function FilterBtn({ label, n, active, onClick }: { label: string; n: number; ac
       type="button"
       onClick={onClick}
       className={`rounded-[3px] border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-        active ? 'border-[#3b6ef0] bg-[#3b6ef0] text-white' : 'border-line bg-surf text-t3 hover:text-t1'
+        active ? 'border-navy bg-navy text-white' : 'border-line bg-surf text-t3 hover:text-t1'
       }`}
     >
       {label} {n}
@@ -294,8 +294,8 @@ function FilterBtn({ label, n, active, onClick }: { label: string; n: number; ac
 function StatusLabel({ status }: { status: 'not_started' | 'running' | 'complete' | 'error' }) {
   if (status === 'running') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#6f9bf5]">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6f9bf5]" />
+      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-navy">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-navy" />
         Running
       </span>
     );

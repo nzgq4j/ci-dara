@@ -155,9 +155,9 @@ export default function OnboardingWizard({
                 <div
                   className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border text-[11px] font-bold transition-colors ${
                     active
-                      ? 'border-[#3b6ef0] bg-[#3b6ef0] text-white'
+                      ? 'border-navy bg-navy text-white'
                       : done
-                        ? 'border-[#3b6ef0]/40 bg-[#3b6ef0]/15 text-[#6f9bf5]'
+                        ? 'border-navy/40 bg-navy/15 text-navy'
                         : 'border-line bg-surf text-t5'
                   }`}
                   title={s.label}
@@ -166,7 +166,7 @@ export default function OnboardingWizard({
                 </div>
                 {i < STEPS.length - 1 && (
                   <div
-                    className={`h-px flex-1 ${done ? 'bg-[#3b6ef0]/40' : 'bg-line'}`}
+                    className={`h-px flex-1 ${done ? 'bg-navy/40' : 'bg-line'}`}
                   />
                 )}
               </div>
@@ -178,7 +178,7 @@ export default function OnboardingWizard({
           {/* Step 1 — Welcome */}
           {step === 0 && (
             <div className="fade text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-[#1d4ed8] to-[#7c3aed] text-lg font-bold text-white">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-navy to-gold text-lg font-bold text-white">
                 {avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -367,7 +367,7 @@ export default function OnboardingWizard({
                 ))}
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[#6f9bf5] transition-colors hover:text-[#3b6ef0]"
+                  className="inline-flex items-center gap-1.5 text-[13px] font-medium text-navy transition-colors hover:text-navy"
                   onClick={() =>
                     setInvites((rows) => [...rows, { email: '', role: 'reviewer' }])
                   }
@@ -477,7 +477,7 @@ function StepHead({
 }) {
   return (
     <div className="mb-5 flex items-start gap-3">
-      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#3b6ef0]/15 text-[#6f9bf5]">
+      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-navy/15 text-navy">
         <Icon className="h-[18px] w-[18px]" />
       </div>
       <div>
@@ -548,14 +548,14 @@ function ModeCard({
       onClick={onClick}
       className={`w-full rounded-[10px] border p-4 text-left transition-colors ${
         active
-          ? 'border-[#3b6ef0] bg-[#3b6ef0]/10'
-          : 'border-line bg-surf hover:border-[#3b6ef0]/40'
+          ? 'border-navy bg-navy/10'
+          : 'border-line bg-surf hover:border-navy/40'
       }`}
     >
       <div className="flex items-start gap-3">
         <div
           className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${
-            active ? 'bg-[#3b6ef0] text-white' : 'bg-line text-t4'
+            active ? 'bg-navy text-white' : 'bg-line text-t4'
           }`}
         >
           <Icon className="h-4 w-4" />
@@ -564,7 +564,7 @@ function ModeCard({
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-t1">{title}</span>
             {active && (
-              <Check className="h-4 w-4 flex-shrink-0 text-[#6f9bf5]" />
+              <Check className="h-4 w-4 flex-shrink-0 text-navy" />
             )}
           </div>
           <p className="mt-1 text-[13px] text-t4">{desc}</p>

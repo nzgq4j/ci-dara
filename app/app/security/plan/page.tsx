@@ -24,7 +24,7 @@ const statusColor: Record<ControlStatus, string> = {
 
 const findingStatusBadge: Record<FindingStatus, string> = {
   Open: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
-  'In progress': 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
+  'In progress': 'bg-navy/20 text-navy',
   Remediated: 'bg-[#1f5a31]/30 text-[#7de0a0]',
   'Risk accepted': 'bg-[#1a2f4a] text-[#7d97b3]'
 };
@@ -58,7 +58,7 @@ export default async function SecurityPlanPage() {
         subtitle={`${SSP.system} · ${SSP.version} · updated ${SSP.updated} · ${SSP.owner}`}
       />
 
-      <div className="mb-6 rounded-lg border border-[#3b6ef0]/30 bg-[#3b6ef0]/10 px-4 py-3 text-[12px] leading-relaxed text-[#9fb8e8]">
+      <div className="mb-6 rounded-lg border border-navy/30 bg-navy/10 px-4 py-3 text-[12px] leading-relaxed text-[#9fb8e8]">
         Living document. It describes the DARA system, its authorization boundary,
         and how each NIST SP 800-171 control family is implemented today. The
         findings register on the Security page is the Plan of Action &amp; Milestones
@@ -68,7 +68,7 @@ export default async function SecurityPlanPage() {
       {/* 1. System overview */}
       <section className={`${card} mb-6 p-6`}>
         <h2 className={`mb-3 flex items-center gap-2 ${sectionTitle}`}>
-          <FileText className="h-4 w-4 text-[#3b6ef0]" />1. System Overview
+          <FileText className="h-4 w-4 text-navy" />1. System Overview
         </h2>
         <p className="text-[13px] leading-relaxed text-t2">{SSP.overview}</p>
         <h3 className="mb-2 mt-4 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
@@ -249,7 +249,7 @@ export default async function SecurityPlanPage() {
             {poam.length} open or in-progress item{poam.length === 1 ? '' : 's'} tracked.
             Detailed remediation plans are restricted to platform administrators; see
             the{' '}
-            <Link href="/app/security" className="text-[#3b6ef0] underline">
+            <Link href="/app/security" className="text-navy underline">
               Security page
             </Link>
             .

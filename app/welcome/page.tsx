@@ -39,7 +39,7 @@ export default async function WelcomePage() {
         </div>
 
         <div className={`${card} p-8 text-center`}>
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-[#1d4ed8] to-[#7c3aed] text-lg font-bold text-white">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-navy to-gold text-lg font-bold text-white">
             {avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={avatarUrl} alt="" className="h-full w-full object-cover" />

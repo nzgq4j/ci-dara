@@ -64,7 +64,7 @@ export default function TermsOfServicePage() {
         <p>
           You acknowledge that, to generate evaluations, document text is transmitted
           to the commercial AI provider you select (see the{' '}
-          <Link href="/security/privacy-policy" className="text-[#3b6ef0] underline">
+          <Link href="/security/privacy-policy" className="text-navy underline">
             Privacy Policy
           </Link>
           ), and you are responsible for choosing platform or BYOK processing

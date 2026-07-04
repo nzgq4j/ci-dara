@@ -114,7 +114,7 @@ export default async function SolicitationsPage() {
                       <ModeChip mode={sol.mode} />
                       <Link
                         href={`/app/solicitations/${sol.id}`}
-                        className="text-[13px] font-semibold text-t2 transition-colors hover:text-[#3b6ef0]"
+                        className="text-[13px] font-semibold text-t2 transition-colors hover:text-navy"
                       >
                         {sol.title}
                       </Link>
@@ -167,7 +167,7 @@ export default async function SolicitationsPage() {
                     ) : (
                       <Link
                         href={`/app/solicitations/${sol.id}`}
-                        className="inline-flex items-center whitespace-nowrap rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-t4 transition-colors hover:border-[#3b6ef0]/50 hover:text-t1"
+                        className="inline-flex items-center whitespace-nowrap rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-t4 transition-colors hover:border-navy/50 hover:text-t1"
                       >
                         Open
                       </Link>

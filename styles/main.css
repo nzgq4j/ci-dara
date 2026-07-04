@@ -19,6 +19,9 @@
   --c-t3: 71 85 105;
   --c-t4: 100 116 139;
   --c-t5: 148 163 184;
+  /* Brand accent (navy/gold) — DARA reskin. In :root so both themes inherit them. */
+  --c-navy: 27 42 74;    /* #1B2A4A */
+  --c-gold: 184 149 42;  /* #B8952A */
 }
 [data-theme='dark'] {
   color-scheme: dark;
@@ -111,20 +114,16 @@ body {
   top: 0;
   bottom: 0;
   border-radius: inherit;
-  background: #3b6ef0;
+  background: #1b2a4a;
   animation: daraIndeterminate 1.25s ease-in-out infinite;
 }
 
-/* Login brand panel — theme-aware gradient (soft blue in light, navy in dark) so
-   the token-based text stays readable in both themes. */
+/* Login brand panel — navy gradient (DARA reskin); the panel's text is white. */
 .login-brand {
-  background: linear-gradient(160deg, #eef3ff 0%, #dbe7ff 50%, #c4d7f7 100%);
-}
-[data-theme='dark'] .login-brand {
-  background: linear-gradient(160deg, #040913 0%, #091525 50%, #0b1f3a 100%);
+  background: linear-gradient(160deg, #1b2a4a 0%, #22335a 55%, #16213d 100%);
 }
 .login-brand-glow {
-  background: radial-gradient(ellipse at 30% 50%, rgba(59, 110, 240, 0.12) 0%, transparent 70%);
+  background: radial-gradient(ellipse at 30% 50%, rgba(184, 149, 42, 0.16) 0%, transparent 70%);
 }
 
 body {

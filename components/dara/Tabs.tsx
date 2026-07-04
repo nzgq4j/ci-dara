@@ -40,7 +40,7 @@ export default function Tabs({
                 <span
                   className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
                     on
-                      ? 'bg-[#3b6ef0]/20 text-[#6f9bf5]'
+                      ? 'bg-navy/20 text-navy'
                       : 'bg-line text-t4'
                   }`}
                 >
@@ -48,7 +48,7 @@ export default function Tabs({
                 </span>
               )}
               {on && (
-                <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-[#3b6ef0]" />
+                <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-navy" />
               )}
             </button>
           );

@@ -42,7 +42,7 @@ export default function ResultCard({
             </span>
           )}
         </div>
-        <span className="text-[13px] text-[#6f9bf5]">
+        <span className="text-[13px] text-navy">
           {scoreLabel}
           {res.aiConfidence != null && (
             <span className="ml-2 text-[11px] text-t5">
@@ -118,7 +118,7 @@ export default function ResultCard({
                       Version {v.version}
                       {v.modelId ? ` · ${v.modelId}` : ''}
                     </span>
-                    <span className="text-[#6f9bf5]">
+                    <span className="text-navy">
                       {v.aiScore != null
                         ? `${Number(v.aiScore)}/100`
                         : (v.aiDetermination ?? '—')}

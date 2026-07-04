@@ -69,7 +69,7 @@ export default function ComplianceCheckControl({
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
             <div
-              className="h-full rounded-full bg-[#3b6ef0] transition-[width] duration-500 ease-out"
+              className="h-full rounded-full bg-navy transition-[width] duration-500 ease-out"
               style={{ width: `${pct}%` }}
             />
           </div>

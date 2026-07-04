@@ -12,7 +12,7 @@ interface PasswordSignInProps {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-line bg-surf2 px-3.5 py-2.5 text-t1 outline-none transition-colors focus:border-[#3b6ef0]';
+  'w-full rounded-lg border border-line bg-surf2 px-3.5 py-2.5 text-t1 outline-none transition-colors focus:border-navy';
 const labelCls =
   'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.04em] text-t4';
 
@@ -66,7 +66,7 @@ export default function PasswordSignIn({
             </label>
             <Link
               href="/signin/forgot_password"
-              className="text-[12px] text-[#3b6ef0]"
+              className="text-[12px] text-navy"
             >
               Forgot password?
             </Link>
@@ -86,14 +86,14 @@ export default function PasswordSignIn({
             name="remember"
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
-            className="h-4 w-4 rounded border-line bg-surf2 accent-[#3b6ef0]"
+            className="h-4 w-4 rounded border-line bg-surf2 accent-navy"
           />
           Remember me on this device
         </label>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-lg bg-[#3b6ef0] py-3 text-[14px] font-bold tracking-tight text-white transition-colors hover:bg-[#2f5fd6] disabled:opacity-60"
+          className="w-full rounded-lg bg-navy py-3 text-[14px] font-bold tracking-tight text-white transition-colors hover:bg-navy/90 disabled:opacity-60"
         >
           {isSubmitting ? 'Signing in…' : 'Sign In'}
         </button>
@@ -102,7 +102,7 @@ export default function PasswordSignIn({
       <div className="mt-6 space-y-2 text-center text-[12px] text-t4">
         {allowEmail && (
           <div>
-            <Link href="/signin/email_signin" className="text-[#3b6ef0]">
+            <Link href="/signin/email_signin" className="text-navy">
               Sign in via magic link
             </Link>
           </div>
@@ -111,7 +111,7 @@ export default function PasswordSignIn({
           Don&apos;t have an account?{' '}
           <Link
             href="/signin/signup"
-            className="font-semibold text-[#3b6ef0]"
+            className="font-semibold text-navy"
           >
             Create Account →
           </Link>

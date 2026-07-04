@@ -22,7 +22,7 @@ export function ModeChip({ mode }: { mode: ReviewModeValue }) {
       }
       className={`inline-flex items-center rounded-[3px] px-[7px] py-[2px] font-mono text-[10px] font-semibold uppercase tracking-wide ${
         isDirect
-          ? 'bg-[#3b6ef0]/15 text-[#6f9bf5]'
+          ? 'bg-navy/15 text-navy'
           : 'border border-line bg-surf3 text-t3'
       }`}
     >
@@ -55,8 +55,8 @@ export function AiReviewStatus({
   }
   if (s === 'running') {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide bg-[#3b6ef0]/20 text-[#6f9bf5]">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6f9bf5]" />
+      <span className="inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide bg-navy/20 text-navy">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-navy" />
         Running
       </span>
     );
@@ -92,7 +92,7 @@ export function AiReviewAction({
     return (
       <Link
         href={href}
-        className="inline-flex items-center whitespace-nowrap rounded-md bg-[#3b6ef0] px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-[#2f5fd6]"
+        className="inline-flex items-center whitespace-nowrap rounded-md bg-navy px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-navy/90"
       >
         Open Findings
       </Link>
@@ -102,7 +102,7 @@ export function AiReviewAction({
     return (
       <Link
         href={href}
-        className="inline-flex items-center whitespace-nowrap rounded-md border border-[#3b6ef0]/50 px-3 py-1.5 text-[12px] font-medium text-[#8fb0f5] transition-colors hover:bg-[#3b6ef0]/10"
+        className="inline-flex items-center whitespace-nowrap rounded-md border border-navy/50 px-3 py-1.5 text-[12px] font-medium text-navy transition-colors hover:bg-navy/10"
       >
         View Progress
       </Link>

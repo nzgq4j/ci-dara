@@ -51,7 +51,7 @@ export default function OauthSignIn() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-line bg-surf2 px-4 py-2.5 text-[13px] font-medium text-t1 transition-colors hover:border-[#3b6ef0]/50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-line bg-surf2 px-4 py-2.5 text-[13px] font-medium text-t1 transition-colors hover:border-navy/50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {provider.icon}
             <span>{provider.displayName}</span>

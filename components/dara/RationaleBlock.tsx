@@ -45,7 +45,7 @@ export default function RationaleBlock({ rationale }: { rationale: string | null
         <ol className="space-y-1.5">
           {items.map((it, i) => (
             <li key={i} className="flex gap-2 text-[12px] leading-relaxed text-t3">
-              <span className="mt-px font-mono text-[11px] font-bold text-[#6f9bf5]">
+              <span className="mt-px font-mono text-[11px] font-bold text-navy">
                 {i + 1}.
               </span>
               <Item text={it} />

@@ -50,7 +50,7 @@ const ROLE_BADGE: Record<string, string> = {
   company_admin: 'bg-[#ef4444]/15 text-[#ef4444]',
   dept_admin: 'bg-[#8b5cf6]/15 text-[#8b5cf6]',
   manager: 'bg-[#10b981]/15 text-[#10b981]',
-  reviewer: 'bg-[#3b6ef0]/15 text-[#6f9bf5]'
+  reviewer: 'bg-navy/15 text-navy'
 };
 const AVATAR_COLORS = ['#6366f1', '#10b981', '#3b6ef0', '#f59e0b', '#ec4899', '#14b8a6', '#8b5cf6', '#ef4444'];
 const DEPT_DOTS = ['#3b6ef0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6'];
@@ -143,7 +143,7 @@ export default function TeamView({
               key={d.id}
               onClick={() => setFilter(active ? null : d.id)}
               className={`group flex items-center gap-2.5 rounded-lg border px-4 py-3 text-left transition-colors ${
-                active ? 'border-[#3b6ef0] bg-[#3b6ef0]/5' : 'border-line bg-surf hover:border-[#3b6ef0]/40'
+                active ? 'border-navy bg-navy/5' : 'border-line bg-surf hover:border-navy/40'
               }`}
             >
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: DEPT_DOTS[i % DEPT_DOTS.length] }} />
@@ -164,7 +164,7 @@ export default function TeamView({
         })}
         <button
           onClick={() => setDeptOpen(true)}
-          className="flex items-center gap-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-t4 transition-colors hover:border-[#3b6ef0]/50 hover:text-t1"
+          className="flex items-center gap-2 rounded-lg border border-dashed border-line px-4 py-3 text-[13px] text-t4 transition-colors hover:border-navy/50 hover:text-t1"
         >
           <Plus className="h-4 w-4" />New Department
         </button>
@@ -325,7 +325,7 @@ function RowMenu({
           <button
             onClick={() => onActive(!member.isActive)}
             disabled={busy}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px] text-t3 transition-colors hover:border-[#3b6ef0]/40 hover:text-t1"
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px] text-t3 transition-colors hover:border-navy/40 hover:text-t1"
           >
             {member.isActive ? <><Ban className="h-3.5 w-3.5" />Deactivate</> : <><Check className="h-3.5 w-3.5" />Activate</>}
           </button>

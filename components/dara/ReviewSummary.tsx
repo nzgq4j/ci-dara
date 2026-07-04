@@ -25,7 +25,7 @@ export default function ReviewSummary({ review }: { review: unknown }) {
       </div>
       {rows.map(([label, val]) => (
         <div key={label}>
-          <div className="font-mono text-[10px] uppercase tracking-wide text-[#6f9bf5]">
+          <div className="font-mono text-[10px] uppercase tracking-wide text-navy">
             {label}
           </div>
           <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-t3">

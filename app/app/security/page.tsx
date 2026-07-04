@@ -22,7 +22,7 @@ const severityBadge: Record<Severity, string> = {
   Critical: 'bg-[#5a1f1f]/40 text-[#ff9b9b]',
   High: 'bg-[#5a3a1f]/40 text-[#e0a07d]',
   Moderate: 'bg-[#5a4a1f]/30 text-[#e0c97d]',
-  Low: 'bg-[#1f3a5a]/40 text-[#6f9bf5]',
+  Low: 'bg-navy/10 text-navy',
   Informational: 'bg-line text-t4'
 };
 
@@ -44,7 +44,7 @@ const statusColor: Record<ControlStatus, string> = {
 
 const findingStatusBadge: Record<FindingStatus, string> = {
   Open: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
-  'In progress': 'bg-[#3b6ef0]/20 text-[#6f9bf5]',
+  'In progress': 'bg-navy/20 text-navy',
   Remediated: 'bg-[#1f5a31]/30 text-[#7de0a0]',
   'Risk accepted': 'bg-line text-t4'
 };
@@ -77,7 +77,7 @@ export default async function SecurityPage() {
         action={
           <Link
             href="/app/security/plan"
-            className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-line px-4 py-2 text-sm font-medium text-t4 transition-colors hover:border-[#3b6ef0] hover:text-t1"
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-line px-4 py-2 text-sm font-medium text-t4 transition-colors hover:border-navy hover:text-t1"
           >
             <FileText className="h-4 w-4" />
             System Security Plan
@@ -88,7 +88,7 @@ export default async function SecurityPage() {
       {/* Assessment summary */}
       <section className={`${card} mb-6 p-6`}>
         <div className="mb-4 flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-[#3b6ef0]" />
+          <ShieldCheck className="h-4 w-4 text-navy" />
           <h2 className={sectionTitle}>{ASSESSMENT.title}</h2>
         </div>
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
@@ -147,7 +147,7 @@ export default async function SecurityPage() {
             <div key={fw.code} className={`${card} p-5`}>
               <div className="mb-1 flex items-start justify-between gap-3">
                 <div className="text-[14px] font-bold text-t1">{fw.code}</div>
-                <span className={`${badgeBase} bg-[#3b6ef0]/15 text-[#6f9bf5]`}>{fw.scope}</span>
+                <span className={`${badgeBase} bg-navy/15 text-navy`}>{fw.scope}</span>
               </div>
               <div className="mb-2 text-[12px] font-semibold text-t3">{fw.name}</div>
               <p className="text-[12px] leading-relaxed text-t4">{fw.summary}</p>

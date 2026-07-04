@@ -31,9 +31,9 @@ export default function RunningBanner({
   if (count <= 0) return null;
 
   return (
-    <div className="mb-4 rounded-lg border border-[#3b6ef0]/30 bg-[#3b6ef0]/10 px-4 py-3">
+    <div className="mb-4 rounded-lg border border-navy/30 bg-navy/10 px-4 py-3">
       <div className="mb-2 flex items-center gap-2.5 text-[13px] text-t2">
-        <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-[#6f9bf5]" />
+        <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-navy" />
         <span className="font-semibold">Review in progress</span>
         {currentLabel && <span className="truncate text-t4">· {currentLabel}</span>}
         {total > 0 && (

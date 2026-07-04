@@ -22,7 +22,7 @@ export default function Header({ user }: { user: HeaderUser }) {
       <div className="flex items-center gap-3">
         <span className="text-sm font-medium text-t1">{user.company.name}</span>
         {user.company.plan === 'trial' && (
-          <span className="rounded-full border border-[#3b6ef0]/40 bg-[#3b6ef0]/10 px-2 py-0.5 text-xs font-medium text-[#3b6ef0]">
+          <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-xs font-medium text-gold">
             Trial
           </span>
         )}
@@ -34,7 +34,7 @@ export default function Header({ user }: { user: HeaderUser }) {
           <input type="hidden" name="pathName" value={pathname} />
           <button
             type="submit"
-            className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm text-t4 transition-colors hover:border-[#3b6ef0] hover:text-t1"
+            className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm text-t4 transition-colors hover:border-navy hover:text-t1"
           >
             <LogOut className="h-4 w-4" />
             Sign out

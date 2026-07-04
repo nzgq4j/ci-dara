@@ -66,7 +66,7 @@ export default function ResultFindings({
 
       {comp && (
         <div className="rounded-lg border border-line bg-surf p-3">
-          <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#6f9bf5]">
+          <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-navy">
             <ShieldCheck className="h-3.5 w-3.5" />
             Compliance
           </div>

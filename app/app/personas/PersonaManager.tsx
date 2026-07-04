@@ -139,7 +139,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
           <button
             onClick={onNew}
             disabled={pending}
-            className="inline-flex items-center gap-1 rounded-lg bg-[#3b6ef0] px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:opacity-60"
+            className="inline-flex items-center gap-1 rounded-lg bg-navy px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-navy/90 disabled:opacity-60"
           >
             <Plus className="h-3.5 w-3.5" />
             New
@@ -157,7 +157,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                 onClick={() => setSelectedId(p.id)}
                 className={`flex w-full items-center gap-3 rounded-[10px] border px-3 py-2.5 text-left transition-colors ${
                   sel
-                    ? 'border-[#3b6ef0]/40 bg-[#3b6ef0]/10'
+                    ? 'border-navy/40 bg-navy/10'
                     : 'border-line bg-surf hover:bg-surf2'
                 }`}
               >
@@ -183,7 +183,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                   </span>
                 </span>
                 <ChevronRight
-                  className={`h-4 w-4 flex-shrink-0 ${sel ? 'text-[#3b6ef0]' : 'text-t5/40'}`}
+                  className={`h-4 w-4 flex-shrink-0 ${sel ? 'text-navy' : 'text-t5/40'}`}
                 />
               </button>
             );
@@ -235,7 +235,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                     type="button"
                     onClick={() => insertVar(v)}
                     title="Insert at cursor"
-                    className="rounded border border-[#3b6ef0]/20 bg-[#3b6ef0]/10 px-2 py-0.5 font-mono text-[10px] text-[#6f9bf5] transition-colors hover:border-[#3b6ef0]/50 hover:bg-[#3b6ef0]/20"
+                    className="rounded border border-navy/20 bg-navy/10 px-2 py-0.5 font-mono text-[10px] text-navy transition-colors hover:border-navy/50 hover:bg-navy/20"
                   >
                     {v}
                   </button>
@@ -256,7 +256,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                     onClick={() => setIconPickerOpen((o) => !o)}
                     title="Change icon"
                     aria-label="Change persona icon"
-                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-lg border border-line text-[18px] transition-colors hover:border-[#3b6ef0]"
+                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-lg border border-line text-[18px] transition-colors hover:border-navy"
                     style={{
                       background: `rgba(${iconFor(selected.displayName).tint},0.15)`
                     }}
@@ -284,7 +284,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="flex-1 rounded-lg border border-line bg-surf2 px-3.5 py-2.5 text-[13px] text-t1 outline-none transition-colors focus:border-[#3b6ef0]"
+                  className="flex-1 rounded-lg border border-line bg-surf2 px-3.5 py-2.5 text-[13px] text-t1 outline-none transition-colors focus:border-navy"
                 />
                 <button
                   type="button"
@@ -319,7 +319,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                 ref={textareaRef}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                className="min-h-[200px] flex-1 resize-y rounded-lg border border-line bg-surf2 p-3 font-mono text-[12px] leading-relaxed text-t1 outline-none transition-colors focus:border-[#3b6ef0]"
+                className="min-h-[200px] flex-1 resize-y rounded-lg border border-line bg-surf2 p-3 font-mono text-[12px] leading-relaxed text-t1 outline-none transition-colors focus:border-navy"
               />
             </div>
 
@@ -339,7 +339,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
                 <button
                   onClick={onSave}
                   disabled={!dirty || pending}
-                  className="inline-flex items-center gap-2 rounded-lg bg-[#3b6ef0] px-4 py-2 text-[13px] font-bold text-white transition-colors hover:bg-[#2f5fd6] disabled:opacity-40"
+                  className="inline-flex items-center gap-2 rounded-lg bg-navy px-4 py-2 text-[13px] font-bold text-white transition-colors hover:bg-navy/90 disabled:opacity-40"
                 >
                   <Save className="h-4 w-4" />
                   {pending ? 'Saving…' : 'Save persona'}
@@ -353,7 +353,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
             <button
               onClick={onNew}
               disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#3b6ef0] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#2f5fd6] disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-navy px-4 py-2 text-[13px] font-semibold text-white hover:bg-navy/90 disabled:opacity-60"
             >
               <Plus className="h-4 w-4" />
               New persona

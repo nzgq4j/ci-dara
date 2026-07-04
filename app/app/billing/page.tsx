@@ -120,13 +120,13 @@ export default async function BillingPage({
             <div
               key={plan}
               className={`flex flex-col rounded-[10px] border bg-surf p-5 ${
-                isCurrent ? 'border-[#3b6ef0] ring-1 ring-[#3b6ef0]/40' : 'border-line'
+                isCurrent ? 'border-navy ring-1 ring-navy/40' : 'border-line'
               }`}
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-t1">{info.name}</h3>
                 {isCurrent && (
-                  <span className="rounded bg-[#3b6ef0]/20 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#6f9bf5]">
+                  <span className="rounded bg-navy/20 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-navy">
                     Current
                   </span>
                 )}

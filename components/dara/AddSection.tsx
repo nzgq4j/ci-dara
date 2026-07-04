@@ -71,7 +71,7 @@ export default function AddSection({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-3.5 py-2 text-[13px] font-medium text-t3 transition-colors hover:border-[#3b6ef0]/50 hover:text-t1 ${className}`}
+        className={`inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-3.5 py-2 text-[13px] font-medium text-t3 transition-colors hover:border-navy/50 hover:text-t1 ${className}`}
       >
         <Plus className="h-4 w-4" />
         {label}

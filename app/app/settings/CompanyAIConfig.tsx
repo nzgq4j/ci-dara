@@ -91,7 +91,7 @@ export default function CompanyAIConfig({
               {/* Preserve the company's stored BYOK provider/model while on platform. */}
               <input type="hidden" name="activeProvider" value={provider} />
               <input type="hidden" name="activeModel" value={model} />
-              <div className="rounded-lg border border-[#3b6ef0]/30 bg-[#3b6ef0]/10 px-4 py-3 text-[13px] text-t3">
+              <div className="rounded-lg border border-navy/30 bg-navy/10 px-4 py-3 text-[13px] text-t3">
                 Evaluations use the platform model configured by your administrator:{' '}
                 <span className="font-mono text-t2">{platformProvider}</span> ·{' '}
                 <span className="font-mono text-t2">{platformModel}</span>. There is no
