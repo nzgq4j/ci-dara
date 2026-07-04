@@ -10,7 +10,8 @@ import {
   FileText,
   Inbox,
   Sparkles,
-  CheckSquare
+  CheckSquare,
+  FileBarChart2
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
@@ -2225,7 +2226,14 @@ export default async function SolicitationDetailPage({
               : 'Color review cycle — a suggested flow. Every stage is optional; jump to any stage.'}
           </p>
         </div>
-        <div className="flex-shrink-0 pt-1">
+        <div className="flex flex-shrink-0 flex-col items-end gap-2 pt-1">
+          <Link
+            href={`/app/solicitations/${sid}/report`}
+            className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy/90"
+          >
+            <FileBarChart2 className="h-4 w-4" />
+            Analysis Report
+          </Link>
           <CuiBoundaryModal
             provider={daraUser.company.activeProvider}
             mode={daraUser.company.aiKeyMode}

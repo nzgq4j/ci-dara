@@ -8,6 +8,7 @@
 // Mirrors the evaluator's burst pattern — the slow LLM call runs OUTSIDE any tenant
 // transaction; short withTenant() bursts wrap the DB reads/writes around it.
 
+import { Prisma } from '@prisma/client';
 import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import {
@@ -22,9 +23,9 @@ import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment } from '@/utils/dara/amendments';
-import { runDirectReview } from '@/utils/dara/direct-review';
+import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
 
-const PASS_MAX_TOKENS = 6000;
+const PASS_MAX_TOKENS = 8000;
 
 // Don't START a pass unless at least this much of the worker's deadline remains — a full
 // single-document pass can take a couple of minutes, and a pass killed mid-call (function
@@ -235,7 +236,7 @@ export async function runPass(
   const loaded = await withTenant(companyId, async (tx) => {
     const pass = await tx.reviewPass.findFirst({
       where: { id: passId, companyId },
-      include: { review: { include: { documents: true } } }
+      include: { review: { include: { documents: true, solicitation: { select: { dueDate: true } } } } }
     });
     if (!pass) return null;
     const company = await tx.company.findUnique({ where: { id: companyId } });
@@ -247,7 +248,12 @@ export async function runPass(
       select: { name: true, citation: true },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
-    return { pass, company, solDocs, requirements };
+    // Preserve user-driven status/owner-name across a pass re-run (matched by ref + text).
+    const priorFindings = await tx.finding.findMany({
+      where: { passId, companyId },
+      select: { requirementRef: true, text: true, status: true, ownerName: true }
+    });
+    return { pass, company, solDocs, requirements, priorFindings };
   });
 
   if (!loaded?.pass) return { ok: false, error: 'Pass not found.' };
@@ -296,20 +302,37 @@ export async function runPass(
   }
 
   const parsed = parsePassResult(ai.text);
+  const priorByKey = new Map(
+    loaded.priorFindings.map((p) => [`${p.requirementRef} ${p.text}`, p])
+  );
+  // The Risk pass is the final, holistic one — it carries the consolidated report block, which
+  // we persist on the parent Review (color-team's home for the report outputs).
+  const isRiskPass = passType === 'risk_competitive';
+  const recommendedSubmitAt = isRiskPass
+    ? submitDateFromDays(loaded.pass.review.solicitation?.dueDate ?? null, parsed.recommendedSubmitDays)
+    : null;
 
   await withTenant(companyId, async (tx) => {
     await tx.finding.deleteMany({ where: { passId, companyId } });
     if (parsed.findings.length) {
       await tx.finding.createMany({
-        data: parsed.findings.map((f, i) => ({
-          companyId,
-          passId,
-          severity: f.severity,
-          text: f.text,
-          requirementRef: f.requirementRef,
-          recommendedAction: f.recommendedAction,
-          sortOrder: i
-        }))
+        data: parsed.findings.map((f, i) => {
+          const prior = priorByKey.get(`${f.requirementRef} ${f.text}`);
+          return {
+            companyId,
+            passId,
+            severity: f.severity,
+            text: f.text,
+            requirementRef: f.requirementRef,
+            recommendedAction: f.recommendedAction,
+            ownerRole: f.ownerRole,
+            ownerName: prior?.ownerName ?? '',
+            effortBand: f.effortBand,
+            effortEstimate: f.effortEstimate,
+            status: prior?.status ?? 'open',
+            sortOrder: i
+          };
+        })
       });
     }
     await tx.reviewPass.update({
@@ -323,6 +346,16 @@ export async function runPass(
         completedAt: new Date()
       }
     });
+    if (isRiskPass) {
+      await tx.review.update({
+        where: { id: loaded.pass.reviewId },
+        data: {
+          recommendation: parsed.recommendation,
+          recommendedSubmitAt,
+          checklist: parsed.checklist as unknown as Prisma.InputJsonValue
+        }
+      });
+    }
   });
 
   return { ok: true };

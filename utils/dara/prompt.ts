@@ -885,24 +885,85 @@ export const PASS_LENS: Record<PassTypeValue, {
   }
 };
 
-const PASS_SCHEMA =
-  '{"score": <integer 0-100>, "summary": "<1-2 sentence overall assessment of this pass>", "findings": [{' +
+export const EFFORT_BANDS = ['low', 'moderate', 'medium', 'high'] as const;
+export type EffortBandValue = (typeof EFFORT_BANDS)[number];
+export const CHECKLIST_STATES = ['pass', 'fail', 'na'] as const;
+export type ChecklistStateValue = (typeof CHECKLIST_STATES)[number];
+
+// Per-finding action-plan fields the model suggests (owner role + effort). Woven into both the
+// pass and direct schemas so every finding carries them.
+const FINDING_ACTION_FIELDS =
+  '"owner_role": "<the role or team best positioned to own the fix, e.g. \\"Volume Lead\\", \\"Contracts\\", \\"Finance\\", \\"Capture Manager\\", \\"Program Manager\\", \\"Editor\\" — empty string if unclear>", ' +
+  '"effort_band": "<low | moderate | medium | high — relative effort to resolve>", ' +
+  '"effort_estimate": "<short human estimate of the work, e.g. \\"2-3 days\\", \\"4-6 hrs\\", \\"1 day + retrieval\\">"';
+
+const FINDING_SCHEMA =
+  '{' +
   '"severity": "<critical | high | medium | low>", ' +
   '"finding": "<the specific issue, concrete and evidence-based>", ' +
   '"ref": "<the requirement/section it relates to, e.g. \\"L-1.1.3\\", \\"M § 2.1\\", \\"PWS 3.4.2\\" — empty string if none>", ' +
-  '"recommended_action": "<what the team should do to resolve it>"' +
-  '}]}';
+  '"recommended_action": "<what the team should do to resolve it>", ' +
+  FINDING_ACTION_FIELDS +
+  '}';
+
+// The holistic report block (DARA recommendation + pre-submission checklist). Emitted only by
+// the unified Direct review and the final color-team Risk pass; other passes return empty values.
+const REPORT_BLOCK_SCHEMA =
+  '"recommendation": "<2-4 sentence overall recommendation: submittable posture, the few must-fix findings, and any competitive note — empty string if not requested>", ' +
+  '"recommended_submit_days": <integer: how many days before the deadline you advise submitting, as a buffer; null if unknown>, ' +
+  '"checklist": [{"label": "<a concrete pre-submission gate, e.g. \\"DD Form 1861 attached\\", \\"Vol I within page limit\\", \\"SAM.gov registration active\\">", "state": "<pass | fail | na>", "detail": "<short note, optional>"}]';
+
+const PASS_SCHEMA =
+  '{"score": <integer 0-100>, "summary": "<1-2 sentence overall assessment of this pass>", ' +
+  REPORT_BLOCK_SCHEMA +
+  ', "findings": [' +
+  FINDING_SCHEMA +
+  ']}';
+
+export interface ParsedChecklistItem {
+  label: string;
+  state: ChecklistStateValue;
+  detail: string;
+}
 
 export interface ParsedPass {
   score: number | null;
   summary: string;
+  recommendation: string;
+  recommendedSubmitDays: number | null;
+  checklist: ParsedChecklistItem[];
   findings: {
     severity: FindingSeverityValue;
     text: string;
     requirementRef: string;
     recommendedAction: string;
+    ownerRole: string;
+    effortBand: EffortBandValue | null;
+    effortEstimate: string;
   }[];
 }
+
+// Per-finding action-plan guidance (owner + effort), used by every review prompt.
+const FINDING_ACTION_INSTRUCTIONS =
+  'For EACH finding also suggest: "owner_role" — the role/team best positioned to own the fix ' +
+  '(page/format → Volume Lead or Editor; required forms/contracts → Contracts; cost/rates → ' +
+  'Finance; technical gaps → the relevant technical lead or Program Manager; competitive ' +
+  'positioning → Capture Manager); "effort_band" — one of low/moderate/medium/high; and ' +
+  '"effort_estimate" — a short human estimate of the work (e.g. "2-3 days", "4-6 hrs").';
+
+// Holistic report block guidance — only the unified Direct review and the final Risk pass fill it.
+const REPORT_BLOCK_INSTRUCTIONS =
+  'Also produce the consolidated report block: "recommendation" — a 2-4 sentence submission ' +
+  'recommendation (overall posture, the few must-fix findings by ref, any competitive note); ' +
+  '"recommended_submit_days" — an integer number of days before the deadline you advise ' +
+  'submitting as a safety buffer; and "checklist" — 5-8 concrete pre-submission gates (required ' +
+  'forms, page-limit conformance, registrations, mandatory volumes), each marked "pass", "fail", ' +
+  'or "na" based on evidence in the proposal draft.';
+
+const REPORT_BLOCK_EMPTY_INSTRUCTIONS =
+  'Return "recommendation" as an empty string, "recommended_submit_days" as null, and "checklist" ' +
+  'as an empty array — the consolidated recommendation and checklist are produced only in the ' +
+  'final Risk & Competitive pass, not in this pass.';
 
 /**
  * Build the prompt for one pass of a multi-pass AI review. `requirementsRef` is a compact
@@ -941,6 +1002,9 @@ export function buildPassPrompt(
     'notable improvement, "low" for a minor polish item. Do not invent requirements not in the ' +
     'documents. If the proposal draft is empty or missing, return score 0 and a single critical ' +
     'finding saying no proposal draft was captured.\n\n' +
+    `${FINDING_ACTION_INSTRUCTIONS}\n\n` +
+    // The consolidated recommendation + checklist are produced once, in the final Risk pass.
+    `${passType === 'risk_competitive' ? REPORT_BLOCK_INSTRUCTIONS : REPORT_BLOCK_EMPTY_INSTRUCTIONS}\n\n` +
     `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${PASS_SCHEMA}\n\n` +
     'Do not include any text outside the JSON object.';
 
@@ -954,12 +1018,35 @@ function mapFinding(f: any): ParsedPass['findings'][number] | null {
     : 'medium';
   const text = String(f?.finding ?? f?.text ?? '').trim();
   if (!text) return null;
+  const bandRaw = String(f?.effort_band ?? f?.effort ?? '').trim().toLowerCase();
+  const effortBand = (EFFORT_BANDS as readonly string[]).includes(bandRaw)
+    ? (bandRaw as EffortBandValue)
+    : null;
   return {
     severity,
     text: text.slice(0, 2000),
     requirementRef: String(f?.ref ?? f?.requirement_ref ?? '').trim().slice(0, 200),
-    recommendedAction: String(f?.recommended_action ?? f?.action ?? '').trim().slice(0, 2000)
+    recommendedAction: String(f?.recommended_action ?? f?.action ?? '').trim().slice(0, 2000),
+    ownerRole: String(f?.owner_role ?? f?.owner ?? '').trim().slice(0, 120),
+    effortBand,
+    effortEstimate: String(f?.effort_estimate ?? f?.estimate ?? '').trim().slice(0, 120)
   };
+}
+
+function mapChecklist(data: any): ParsedChecklistItem[] {
+  const raw = Array.isArray(data?.checklist) ? data.checklist : [];
+  return raw
+    .map((c: any) => {
+      const label = String(c?.label ?? c?.item ?? '').trim();
+      if (!label) return null;
+      const stateRaw = String(c?.state ?? '').trim().toLowerCase();
+      const state = (CHECKLIST_STATES as readonly string[]).includes(stateRaw)
+        ? (stateRaw as ChecklistStateValue)
+        : 'na';
+      return { label: label.slice(0, 160), state, detail: String(c?.detail ?? '').trim().slice(0, 200) };
+    })
+    .filter((c: ParsedChecklistItem | null): c is ParsedChecklistItem => c !== null)
+    .slice(0, 20);
 }
 
 /** Parse a pass response into a score + findings; tolerant of truncated arrays. */
@@ -990,7 +1077,24 @@ export function parsePassResult(text: string): ParsedPass {
   const findings = list
     .map(mapFinding)
     .filter((f): f is ParsedPass['findings'][number] => f !== null);
-  return { score, summary: summary.slice(0, 500), findings };
+
+  // Holistic report block — present only when the prompt requested it (direct + risk pass).
+  let recommendation = '';
+  let recommendedSubmitDays: number | null = null;
+  let checklist: ParsedChecklistItem[] = [];
+  try {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    const data = JSON.parse(m ? m[0] : cleaned);
+    recommendation = String(data?.recommendation ?? '').trim().slice(0, 2000);
+    if (data?.recommended_submit_days != null && Number.isFinite(Number(data.recommended_submit_days))) {
+      recommendedSubmitDays = Math.max(0, Math.min(120, Math.round(Number(data.recommended_submit_days))));
+    }
+    checklist = mapChecklist(data);
+  } catch {
+    /* leave report block empty */
+  }
+
+  return { score, summary: summary.slice(0, 500), recommendation, recommendedSubmitDays, checklist, findings };
 }
 
 // ===================== Direct AI review (unified single-pass) =====================
@@ -1048,11 +1152,13 @@ export function buildDirectReviewPrompt(
     '"low" for a minor polish item. Do not group by concern and do not invent requirements ' +
     'not in the documents. If the proposal draft is empty or missing, return score 0 and a ' +
     'single critical finding saying no proposal draft was captured.\n\n' +
+    `${FINDING_ACTION_INSTRUCTIONS}\n\n` +
+    `${REPORT_BLOCK_INSTRUCTIONS}\n\n` +
     `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${PASS_SCHEMA}\n\n` +
     'Do not include any text outside the JSON object.';
 
   return { system, user };
 }
 
-/** Parse a Direct AI review response (same shape as a pass): score + flat findings. */
+/** Parse a Direct AI review response (same shape as a pass): score + findings + report block. */
 export const parseDirectReviewResult = parsePassResult;

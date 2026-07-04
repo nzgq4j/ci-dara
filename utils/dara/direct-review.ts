@@ -11,13 +11,22 @@
 // Mirrors the pass engine's burst pattern: the slow LLM call runs OUTSIDE any tenant
 // transaction; short withTenant() bursts wrap the DB reads/writes around it.
 
+import { Prisma } from '@prisma/client';
 import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { buildDirectReviewPrompt, parseDirectReviewResult } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
-const DIRECT_MAX_TOKENS = 8000;
+const DIRECT_MAX_TOKENS = 10000;
+
+// The AI advises submitting `days` before the deadline; turn that into a concrete date.
+export function submitDateFromDays(dueDate: Date | null | undefined, days: number | null): Date | null {
+  if (!dueDate || days == null) return null;
+  const d = new Date(dueDate);
+  d.setDate(d.getDate() - days);
+  return d;
+}
 
 interface DocFile {
   originalFilename: string;
@@ -113,6 +122,10 @@ export async function runDirectReview(
     const review = await tx.directReview.findFirst({ where: { id: directReviewId, companyId } });
     if (!review) return null;
     const company = await tx.company.findUnique({ where: { id: companyId } });
+    const solicitation = await tx.solicitation.findUnique({
+      where: { id: review.solicitationId },
+      select: { dueDate: true }
+    });
     const solDocs = await tx.solDocument.findMany({
       where: { solicitationId: review.solicitationId, companyId }
     });
@@ -121,7 +134,14 @@ export async function runDirectReview(
       select: { name: true, citation: true },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
-    return { review, company, solDocs, requirements };
+    // Snapshot the user-driven fields on the current findings so a re-run preserves them
+    // (matched by requirementRef + text). AI re-suggests owner_role/effort; the human's status
+    // and assigned owner name survive.
+    const priorFindings = await tx.finding.findMany({
+      where: { directReviewId, companyId },
+      select: { requirementRef: true, text: true, status: true, ownerName: true }
+    });
+    return { review, company, solicitation, solDocs, requirements, priorFindings };
   });
 
   if (!loaded?.review) return { ok: false, error: 'Direct review not found.' };
@@ -168,20 +188,33 @@ export async function runDirectReview(
   }
 
   const parsed = parseDirectReviewResult(ai.text);
+  const recommendedSubmitAt = submitDateFromDays(loaded.solicitation?.dueDate ?? null, parsed.recommendedSubmitDays);
+  // Re-apply the human's status/owner-name onto matching re-suggested findings.
+  const priorByKey = new Map(
+    loaded.priorFindings.map((p) => [`${p.requirementRef} ${p.text}`, p])
+  );
 
   await withTenant(companyId, async (tx) => {
     await tx.finding.deleteMany({ where: { directReviewId, companyId } });
     if (parsed.findings.length) {
       await tx.finding.createMany({
-        data: parsed.findings.map((f, i) => ({
-          companyId,
-          directReviewId,
-          severity: f.severity,
-          text: f.text,
-          requirementRef: f.requirementRef,
-          recommendedAction: f.recommendedAction,
-          sortOrder: i
-        }))
+        data: parsed.findings.map((f, i) => {
+          const prior = priorByKey.get(`${f.requirementRef} ${f.text}`);
+          return {
+            companyId,
+            directReviewId,
+            severity: f.severity,
+            text: f.text,
+            requirementRef: f.requirementRef,
+            recommendedAction: f.recommendedAction,
+            ownerRole: f.ownerRole,
+            ownerName: prior?.ownerName ?? '',
+            effortBand: f.effortBand,
+            effortEstimate: f.effortEstimate,
+            status: prior?.status ?? 'open',
+            sortOrder: i
+          };
+        })
       });
     }
     const now = new Date();
@@ -193,6 +226,9 @@ export async function runDirectReview(
         progress: 100,
         progressLabel: '',
         findingsCount: parsed.findings.length,
+        recommendation: parsed.recommendation,
+        recommendedSubmitAt,
+        checklist: parsed.checklist as unknown as Prisma.InputJsonValue,
         runAt: now,
         completedAt: now
       }

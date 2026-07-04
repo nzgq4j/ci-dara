@@ -164,6 +164,7 @@ export default async function DashboardPage() {
                   <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Due Date</th>
                   <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Countdown</th>
                   <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">Review Status</th>
+                  <th className="px-3.5 py-2.5 text-right font-mono text-[10px] uppercase tracking-wide text-t5">Report</th>
                 </tr>
               </thead>
               <tbody>
@@ -191,6 +192,14 @@ export default async function DashboardPage() {
                       ) : (
                         <ColorTeamStatus byType={byType} />
                       )}
+                    </td>
+                    <td className="px-3.5 py-3 text-right">
+                      <Link
+                        href={`/app/solicitations/${s.id}/report`}
+                        className="inline-flex items-center whitespace-nowrap rounded-md border border-line px-2.5 py-1 text-[12px] font-medium text-t4 transition-colors hover:border-navy/40 hover:text-navy"
+                      >
+                        Report →
+                      </Link>
                     </td>
                   </tr>
                 ))}
