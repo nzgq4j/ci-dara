@@ -66,19 +66,27 @@ uploads; `serverActions.bodySizeLimit` = 25mb.
 
 ---
 
-## 3. ⚠️ In-flight / needs verification (start here next time)
+## 3. ✅ Create flow — FIXED & verified on prod (`f087ac3`, dpl_Avqe…)
 
-**The create-flow "Run AI Review doesn't advance" fix (`3b0803c`) is DEPLOYED but the user had
-not yet re-tested it when we stopped.**
-- Root cause was a `useTransition` gotcha: with an async callback, `isPending` flips false after
-  the sync part, which cleared the processing panel at the "upload" stage AND dropped the
-  post-await navigation — so the workflow "ended at the upload." Fixed by switching
-  `UploadAndReview` to plain `useState` pending + `try/catch` + `window.location.assign(redirect)`
-  (and `createAndRunReview` now RETURNS `{ok, redirect}` instead of `redirect()`).
-- **Next step:** confirm on prod that Run AI Review now shows the staged processing and lands in
-  the workspace. If it still stalls, the `try/catch` will now surface an error — most likely
-  **combined file size > 25mb** (the user's real set was 5 docs). If so, the fix is to upload
-  files per-file client-side (reuse `DocUploader`/`uploadSolDoc`) or raise `bodySizeLimit`.
+**The Direct AI create flow ("shows progress but doesn't create a solicitation") is fixed and
+verified** — sol#12 created from the same payload that previously failed. See memory
+`create-flow-body-size.md`.
+- **Root cause:** the rewritten create flow POSTed *all* files in one server-action FormData.
+  Vercel caps a Function request body at **~4.5 MB** and that OVERRIDES
+  `serverActions.bodySizeLimit: '25mb'` — larger sets 413'd and the sol was never created
+  (silent: user dropped back to Step 2). Compounded by intermittent prod pooler errors
+  (`P1001 DatabaseNotReachable` on `getDaraUser`, `P2028` tx timeout) seen in Vercel
+  `get_runtime_errors`.
+- **Fix:** split `createAndRunReview` → `createSolShell` + `uploadDocToSol` (one file/request,
+  client-orchestrated, like the workspace `DocUploader`/`uploadSolDoc`) + `finalizeReview`.
+  Added `withDbRetry` (retries P1001/P2028/etc.), structured client errors, `[new-sol]` server
+  logs, and a client warning for any single file >4 MB. A single >4.5 MB file still fails its own
+  request — long-term fix is direct-to-Supabase-Storage signed-URL upload.
+- **⚠️ Two SEPARATE prod bugs surfaced in the logs, NOT yet fixed:**
+  1. `P2022 — column isScored of dara_requirement_versions does not exist`: a color-team
+     migration was never applied to prod → `pnpm prisma migrate deploy` against prod.
+  2. 300s timeouts + `pg` "client already executing a query" warning on `/app/solicitations/[id]`
+     — the workspace page runs concurrent queries on one tenant transaction; needs serializing.
 
 ---
 
