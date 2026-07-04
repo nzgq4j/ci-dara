@@ -1,17 +1,19 @@
 'use client';
 
-// Screen 4 — Upload & Instant Review. The low-friction entry point for BOTH modes: drop the
-// solicitation (and, for Direct AI, your proposal draft), optionally add metadata, and one
-// click creates the solicitation. Direct AI additionally kicks off the unified review when a
-// proposal draft is present; the "Switch to Color Team review" toggle routes to the P1/P2/P3
-// setup. It ALWAYS creates the solicitation (you can add a proposal later in the workspace).
+// Screen 4 — Upload & Instant Review, as a genuine two-step flow:
+//   Step 1  Upload solicitation + proposal draft, metadata, Advanced (Color Team) toggle.
+//           → [Continue] advances; [Cancel] leaves.
+//   Step 2  Confirm what will be created, then [Run AI Review]/[Create Solicitation].
+//           While submitting, a processing panel shows ingestion → creation → review-start
+//           so it's clear work is happening. → [Back] returns to step 1.
 //
-// Files are held in client state (shared drag-drop via FileDropzone) and posted to the server
-// action as one FormData on submit. Colors use the app's semantic tokens (D5).
+// It ALWAYS creates the solicitation (a Direct AI review auto-runs only when a proposal draft
+// is present). Files are held in client state (shared FileDropzone) and posted to the server
+// action as one FormData. Colors use the app's semantic tokens (D5).
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
 import FileDropzone from '@/components/dara/FileDropzone';
 
@@ -22,6 +24,7 @@ export default function UploadAndReview({
 }: {
   action: (formData: FormData) => Promise<CreateResult>;
 }) {
+  const [step, setStep] = useState<1 | 2>(1);
   const [rfpFiles, setRfpFiles] = useState<File[]>([]);
   const [proposalFiles, setProposalFiles] = useState<File[]>([]);
   const [solNumber, setSolNumber] = useState('');
@@ -32,10 +35,24 @@ export default function UploadAndReview({
   const [pending, startTransition] = useTransition();
 
   const hasProposal = proposalFiles.length > 0;
-  // Always allow creating once there's something to create from.
   const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
   const willRun = !colorTeam && hasProposal;
-  const ctaLabel = pending ? 'Working…' : willRun ? 'Run AI Review' : 'Create Solicitation';
+
+  // Staged processing indicator while the server ingests + creates (+ starts the review). The
+  // labels map to what the action actually does in sequence; the bar advances with each.
+  const stages = willRun
+    ? ['Uploading documents…', 'Extracting text…', 'Creating solicitation…', 'Starting AI review…']
+    : ['Uploading documents…', 'Extracting text…', 'Creating solicitation…'];
+  const [stageIdx, setStageIdx] = useState(0);
+  useEffect(() => {
+    if (!pending) {
+      setStageIdx(0);
+      return;
+    }
+    const timers = stages.map((_, i) => setTimeout(() => setStageIdx(i), i * 2200));
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
 
   const submit = () => {
     setError(null);
@@ -47,19 +64,22 @@ export default function UploadAndReview({
     proposalFiles.forEach((f) => fd.append('proposalFiles', f));
     startTransition(async () => {
       const res = await action(fd);
-      // On success the action redirects (navigation happens); only errors return here.
+      // On success the action redirects; only errors return here.
       if (res && !res.ok) setError(res.error ?? 'Something went wrong. Please try again.');
     });
   };
 
-  return (
-    <div className="space-y-5">
-      {/* Step 1 — Upload */}
+  const allFiles = [
+    ...rfpFiles.map((f) => ({ f, kind: 'Solicitation' })),
+    ...proposalFiles.map((f) => ({ f, kind: 'Proposal draft' }))
+  ];
+
+  // ---------- Step 1 — Upload ----------
+  if (step === 1) {
+    return (
       <div className={`${card} p-6`}>
         <div className="mb-3 flex items-center gap-2">
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#3b6ef0] text-[11px] font-bold text-white">
-            1
-          </span>
+          <StepDot n={1} active />
           <h2 className="text-[15px] font-semibold text-t1">Upload solicitation document(s)</h2>
         </div>
 
@@ -70,7 +90,6 @@ export default function UploadAndReview({
           sub="PDF, Word, or text · Section L, M, and PWS auto-detected · max 20 MB"
         />
 
-        {/* Proposal draft uploader (what the Direct AI review grades) */}
         <div className="mt-5 border-t border-line pt-4">
           <div className="mb-2">
             <div className="text-[13px] font-semibold text-t2">Your proposal draft</div>
@@ -89,104 +108,134 @@ export default function UploadAndReview({
           />
         </div>
 
-        {/* Optional metadata */}
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label htmlFor="solNumber" className={labelClasses}>
-              Solicitation Number
-            </label>
-            <input
-              id="solNumber"
-              value={solNumber}
-              onChange={(e) => setSolNumber(e.target.value)}
-              placeholder="e.g. FA8650-26-S-1841"
-              className={fieldClasses}
-            />
+            <label htmlFor="solNumber" className={labelClasses}>Solicitation Number</label>
+            <input id="solNumber" value={solNumber} onChange={(e) => setSolNumber(e.target.value)} placeholder="e.g. FA8650-26-S-1841" className={fieldClasses} />
           </div>
           <div className="space-y-1.5">
-            <label htmlFor="agency" className={labelClasses}>
-              Agency
-            </label>
-            <input
-              id="agency"
-              value={agency}
-              onChange={(e) => setAgency(e.target.value)}
-              placeholder="e.g. Air Force Research Lab"
-              className={fieldClasses}
-            />
+            <label htmlFor="agency" className={labelClasses}>Agency</label>
+            <input id="agency" value={agency} onChange={(e) => setAgency(e.target.value)} placeholder="e.g. Air Force Research Lab" className={fieldClasses} />
           </div>
         </div>
 
-        {/* Advanced review options */}
         <div className="mt-5 border-t border-line pt-4">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="inline-flex items-center gap-1.5 text-[12px] font-medium text-t4 transition-colors hover:text-t1"
-          >
+          <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="inline-flex items-center gap-1.5 text-[12px] font-medium text-t4 transition-colors hover:text-t1">
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
             Advanced review options
           </button>
           {showAdvanced && (
             <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-line bg-bg p-3">
-              <input
-                type="checkbox"
-                checked={colorTeam}
-                onChange={(e) => setColorTeam(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-line bg-bg accent-[#3b6ef0]"
-              />
+              <input type="checkbox" checked={colorTeam} onChange={(e) => setColorTeam(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line bg-bg accent-[#3b6ef0]" />
               <span>
                 <span className="block text-[13px] font-semibold text-t2">Switch to Color Team review</span>
-                <span className="block text-[12px] text-t5">
-                  Runs the multi-pass Pink / Red / Gold gate workflow instead of a single unified AI
-                  review. You&apos;ll configure passes in the workspace.
-                </span>
+                <span className="block text-[12px] text-t5">Runs the multi-pass Pink / Red / Gold gate workflow instead of a single unified AI review. You&apos;ll configure passes in the workspace.</span>
               </span>
             </label>
           )}
         </div>
-      </div>
 
-      {/* Step 2 — Confirm & run */}
-      <div className={`${card} p-6`}>
-        <div className="mb-3 flex items-center gap-2">
-          <span
-            className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white ${
-              canSubmit ? 'bg-[#3b6ef0]' : 'bg-t5'
-            }`}
-          >
-            2
-          </span>
-          <h2 className="text-[15px] font-semibold text-t1">{willRun ? 'Run AI Review' : 'Create solicitation'}</h2>
-        </div>
-
-        {error && (
-          <p className="mb-3 rounded-md border border-[#5a1f1f]/60 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e88]">
-            {error}
-          </p>
-        )}
-
-        <div className="flex items-center gap-3">
+        <div className="mt-6 flex items-center gap-3">
           <button
             type="button"
-            disabled={!canSubmit || pending}
-            onClick={submit}
-            className="flex h-11 flex-1 items-center justify-center rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!canSubmit}
+            onClick={() => setStep(2)}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {ctaLabel}
+            Continue <ArrowRight className="h-4 w-4" />
           </button>
-          <Link href="/app/solicitations" className={`${btnGhost} h-11`}>
-            Cancel
-          </Link>
+          <Link href="/app/solicitations" className={`${btnGhost} h-11`}>Cancel</Link>
         </div>
-        <p className="mt-2 text-[12px] text-t5">
-          {colorTeam
-            ? 'Opens the workspace where you set up color-team passes.'
-            : willRun
-              ? 'Review runs in the background. You can close this tab.'
-              : 'Add a proposal draft above to run the AI review now — or create the solicitation and add it later in the workspace.'}
+        {!canSubmit && (
+          <p className="mt-2 text-[12px] text-t5">Add a document or a solicitation number to continue.</p>
+        )}
+      </div>
+    );
+  }
+
+  // ---------- Step 2 — Confirm & run ----------
+  return (
+    <div className={`${card} p-6`}>
+      <div className="mb-4 flex items-center gap-2">
+        <StepDot n={2} active />
+        <h2 className="text-[15px] font-semibold text-t1">{willRun ? 'Run AI Review' : 'Create solicitation'}</h2>
+      </div>
+
+      {/* What will be created */}
+      <div className="rounded-lg border border-line bg-bg p-4">
+        <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.07em] text-t5">
+          {colorTeam ? 'Color Team review' : 'Direct AI review'}
+          {(solNumber || agency) ? ` · ${[solNumber, agency].filter(Boolean).join(' · ')}` : ''}
+        </div>
+        {allFiles.length === 0 ? (
+          <p className="text-[13px] text-t5">No files attached — the solicitation will be created empty.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {allFiles.map(({ f, kind }, i) => (
+              <li key={`${f.name}-${i}`} className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-[#7de0a0]" />
+                <FileText className="h-4 w-4 shrink-0 text-t5" />
+                <span className="min-w-0 flex-1 truncate text-[13px] text-t2">{f.name}</span>
+                <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-t5">{kind}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-3 border-t border-line pt-3 text-[12px] text-t5">
+          {willRun
+            ? 'We’ll create the solicitation and run a unified AI review of your proposal against it.'
+            : colorTeam
+              ? 'We’ll create the solicitation and open the workspace to set up color-team passes.'
+              : 'We’ll create the solicitation. Add a proposal draft in the workspace to run the AI review.'}
         </p>
       </div>
+
+      {error && (
+        <p className="mt-4 rounded-md border border-[#5a1f1f]/60 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e88]">{error}</p>
+      )}
+
+      {/* Processing indicator OR action buttons */}
+      {pending ? (
+        <div className="mt-5 rounded-lg border border-[#3b6ef0]/40 bg-[#3b6ef0]/[0.04] px-4 py-4">
+          <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-[#8fb0f5]">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {stages[stageIdx]}
+          </div>
+          <div className="h-1.5 overflow-hidden rounded bg-[#1f3a5a]/50">
+            <div
+              className="h-full rounded bg-[#3b6ef0] transition-all duration-700"
+              style={{ width: `${Math.round(((stageIdx + 1) / stages.length) * 100)}%` }}
+            />
+          </div>
+          <p className="mt-2 text-[12px] text-t5">Ingesting and processing your documents — this can take a moment.</p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-5 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={submit}
+              className="inline-flex h-11 flex-1 items-center justify-center rounded-lg bg-[#3b6ef0] text-[14px] font-semibold text-white transition-colors hover:bg-[#2f5fd6]"
+            >
+              {willRun ? 'Run AI Review' : 'Create Solicitation'}
+            </button>
+            <button type="button" onClick={() => setStep(1)} className={`${btnGhost} h-11`}>
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
+          </div>
+          <p className="mt-2 text-[12px] text-t5">
+            {willRun ? 'Review runs in the background. You can close this tab.' : 'Opens the workspace when it’s ready.'}
+          </p>
+        </>
+      )}
     </div>
+  );
+}
+
+function StepDot({ n, active }: { n: number; active?: boolean }) {
+  return (
+    <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white ${active ? 'bg-[#3b6ef0]' : 'bg-t5'}`}>
+      {n}
+    </span>
   );
 }
