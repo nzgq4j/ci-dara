@@ -17,17 +17,17 @@ const planLabels: Record<string, string> = {
 const evBadge: Record<string, string> = {
   pending: 'bg-line text-t4',
   running: 'bg-navy/20 text-navy',
-  complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
-  failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
+  complete: 'bg-[#DCFCE7] text-[#166534]',
+  failed: 'bg-[#FEE2E2] text-[#991B1B]'
 };
 
 // Aggregate a solicitation's review passes into a P1/P2/P3 status + avg score. A pass type
 // counts complete if ANY of the solicitation's reviews has it complete.
 const PASS_TYPES_ORDER = ['compliance_format', 'technical_responsiveness', 'risk_competitive'] as const;
 const passPill: Record<string, string> = {
-  complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
+  complete: 'bg-[#DCFCE7] text-[#166534]',
   running: 'bg-navy/20 text-navy',
-  error: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
+  error: 'bg-[#FEE2E2] text-[#991B1B]',
   not_run: 'bg-surf3 text-t5'
 };
 function aggPasses(

@@ -79,7 +79,7 @@ export default function AsyncJobControl({
       )}
 
       {error && (
-        <div className="rounded-lg border border-[#5a4a1f]/60 bg-[#5a4a1f]/10 px-3 py-2 text-[12px] leading-relaxed text-[#92400E]">
+        <div className="rounded-lg border border-[#92400E]/25 bg-[#FEF3C7] px-3 py-2 text-[12px] leading-relaxed text-[#92400E]">
           {error}
         </div>
       )}

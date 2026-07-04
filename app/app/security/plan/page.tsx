@@ -15,17 +15,17 @@ import {
 } from '@/utils/dara/security-content';
 
 const statusColor: Record<ControlStatus, string> = {
-  Implemented: 'text-[#7de0a0]',
+  Implemented: 'text-[#166534]',
   Partial: 'text-[#92400E]',
-  'Not implemented': 'text-[#e07d7d]',
+  'Not implemented': 'text-[#991B1B]',
   'Not applicable': 'text-[#3d5270]',
   Undetermined: 'text-[#7d97b3]'
 };
 
 const findingStatusBadge: Record<FindingStatus, string> = {
-  Open: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
+  Open: 'bg-[#FEE2E2] text-[#991B1B]',
   'In progress': 'bg-navy/20 text-navy',
-  Remediated: 'bg-[#1f5a31]/30 text-[#7de0a0]',
+  Remediated: 'bg-[#DCFCE7] text-[#166534]',
   'Risk accepted': 'bg-[#1a2f4a] text-[#7d97b3]'
 };
 

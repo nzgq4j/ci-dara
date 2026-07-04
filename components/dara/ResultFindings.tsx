@@ -49,7 +49,7 @@ export default function ResultFindings({
             <BulletBlock
               icon={<CheckCircle2 className="h-3.5 w-3.5" />}
               title="Strengths"
-              tone="text-[#7de0a0]"
+              tone="text-[#166534]"
               items={s}
             />
           )}

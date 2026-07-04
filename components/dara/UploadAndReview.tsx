@@ -173,7 +173,7 @@ export default function UploadAndReview({
           <ul className="space-y-1.5">
             {allFiles.map(({ f, kind }, i) => (
               <li key={`${f.name}-${i}`} className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-[#7de0a0]" />
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-[#166534]" />
                 <FileText className="h-4 w-4 shrink-0 text-t5" />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-t2">{f.name}</span>
                 <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-t5">{kind}</span>
@@ -191,7 +191,7 @@ export default function UploadAndReview({
       </div>
 
       {error && (
-        <p className="mt-4 rounded-md border border-[#5a1f1f]/60 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e88]">{error}</p>
+        <p className="mt-4 rounded-md border border-[#991B1B]/25 bg-[#FEE2E2] px-3 py-2 text-[12px] text-[#991B1B]">{error}</p>
       )}
 
       {/* Processing indicator OR action buttons */}

@@ -79,8 +79,8 @@ export default function RunPanel({
           <div
             className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-[12px] leading-relaxed ${
               warn
-                ? 'border-[#5a4a1f]/60 bg-[#5a4a1f]/10 text-[#92400E]'
-                : 'border-[#1f5a31]/50 bg-[#1f5a31]/15 text-[#7de0a0]'
+                ? 'border-[#92400E]/25 bg-[#FEF3C7] text-[#92400E]'
+                : 'border-[#166534]/30 bg-[#DCFCE7] text-[#166534]'
             }`}
           >
             {warn ? (

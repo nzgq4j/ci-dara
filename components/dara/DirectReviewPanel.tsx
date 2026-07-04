@@ -23,23 +23,23 @@ export type DirectFinding = {
 type Filter = 'all' | Severity;
 
 const SEV: Record<Severity, { label: string; cls: string }> = {
-  critical: { label: 'CRITICAL', cls: 'bg-[#5a1f1f]/40 text-[#e88]' },
-  high: { label: 'HIGH', cls: 'bg-[#5a3a1f]/40 text-[#e0a878]' },
-  medium: { label: 'MEDIUM', cls: 'bg-[#5a4a1f]/35 text-[#92400E]' },
+  critical: { label: 'CRITICAL', cls: 'bg-[#FEE2E2] text-[#991B1B]' },
+  high: { label: 'HIGH', cls: 'bg-[#FFEDD5] text-[#C05621]' },
+  medium: { label: 'MEDIUM', cls: 'bg-[#FEF3C7] text-[#92400E]' },
   low: { label: 'LOW', cls: 'bg-navy/10 text-navy' }
 };
 const SEV_RANK: Record<Severity, number> = { critical: 3, high: 2, medium: 1, low: 0 };
 
 // Score bands per the spec (>=85 / 65-84 / <65), app token colors.
 function scoreColor(s: number): string {
-  if (s >= 85) return 'text-[#7de0a0]';
+  if (s >= 85) return 'text-[#166534]';
   if (s >= 65) return 'text-[#92400E]';
-  return 'text-[#e07d7d]';
+  return 'text-[#991B1B]';
 }
 function scoreBar(s: number): string {
-  if (s >= 85) return 'bg-[#7de0a0]';
-  if (s >= 65) return 'bg-[#e0c97d]';
-  return 'bg-[#e07d7d]';
+  if (s >= 85) return 'bg-[#166534]';
+  if (s >= 65) return 'bg-[#92400E]';
+  return 'bg-[#991B1B]';
 }
 
 export default function DirectReviewPanel({
@@ -172,7 +172,7 @@ export default function DirectReviewPanel({
       {header}
 
       {status === 'error' && (
-        <div className="rounded-lg border border-[#5a1f1f]/60 bg-[#5a1f1f]/10 px-3.5 py-2.5 text-[12px] text-[#e88]">
+        <div className="rounded-lg border border-[#991B1B]/25 bg-[#FEE2E2] px-3.5 py-2.5 text-[12px] text-[#991B1B]">
           {errorMessage || 'The review failed. Re-run it to try again.'}
         </div>
       )}
@@ -188,8 +188,8 @@ export default function DirectReviewPanel({
             <div className={`h-full rounded-[3px] ${scoreBar(s)}`} style={{ width: `${s}%` }} />
           </div>
           <div className="mt-4 grid grid-cols-4 gap-1.5">
-            <Count label="Crit" n={counts.critical} cls="text-[#e88]" />
-            <Count label="High" n={counts.high} cls="text-[#e0a878]" />
+            <Count label="Crit" n={counts.critical} cls="text-[#991B1B]" />
+            <Count label="High" n={counts.high} cls="text-[#C05621]" />
             <Count label="Med" n={counts.medium} cls="text-[#92400E]" />
             <Count label="Low" n={counts.low} cls="text-navy" />
           </div>
@@ -233,7 +233,7 @@ export default function DirectReviewPanel({
 
           {/* Findings table */}
           {findings.length === 0 ? (
-            <div className="rounded-lg border border-line bg-surf px-3.5 py-3 text-[12px] text-[#7de0a0]">
+            <div className="rounded-lg border border-line bg-surf px-3.5 py-3 text-[12px] text-[#166534]">
               No findings — the proposal is clean against this solicitation.
             </div>
           ) : (
@@ -300,7 +300,7 @@ function StatusLabel({ status }: { status: 'not_started' | 'running' | 'complete
       </span>
     );
   }
-  if (status === 'complete') return <span className="text-[12px] text-[#7de0a0]">Complete</span>;
-  if (status === 'error') return <span className="text-[12px] text-[#e88]">Error</span>;
+  if (status === 'complete') return <span className="text-[12px] text-[#166534]">Complete</span>;
+  if (status === 'error') return <span className="text-[12px] text-[#991B1B]">Error</span>;
   return <span className="text-[12px] text-t5">Not started</span>;
 }

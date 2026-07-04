@@ -36,7 +36,7 @@ export const btnPrimary =
 export const btnGhost =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line px-4 py-2 text-sm font-medium text-t4 transition-colors hover:border-navy/30 hover:text-t1';
 export const btnDanger =
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#5a1f1f] px-4 py-2 text-sm font-medium text-[#e07d7d] transition-colors hover:bg-[#5a1f1f]/30';
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-[#991B1B]/40 px-4 py-2 text-sm font-medium text-[#991B1B] transition-colors hover:bg-[#FEE2E2]';
 
 // Status badges (evaluation / extraction status)
 export const badgeBase =
@@ -45,8 +45,8 @@ export const statusBadge: Record<string, string> = {
   pending: 'bg-line text-t4',
   processing: 'bg-navy/10 text-navy/70',
   running: 'bg-navy/10 text-navy/70',
-  complete: 'bg-[#1f5a31]/30 text-[#7de0a0]',
-  failed: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
+  complete: 'bg-[#DCFCE7] text-[#166534]',
+  failed: 'bg-[#FEE2E2] text-[#991B1B]'
 };
 
 // A faint accent mono "eyebrow" used inside panels (e.g. plan label)

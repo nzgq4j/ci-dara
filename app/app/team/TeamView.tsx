@@ -154,7 +154,7 @@ export default function TeamView({
                   role="button"
                   tabIndex={0}
                   onClick={(e) => { e.stopPropagation(); if (confirm(`Delete department "${d.name}"? Members are not deleted.`)) run(() => deleteDepartment(d.id)); }}
-                  className="ml-1 rounded p-0.5 text-t5 hover:text-[#e07d7d]"
+                  className="ml-1 rounded p-0.5 text-t5 hover:text-[#dc2626]"
                 >
                   <X className="h-3.5 w-3.5" />
                 </span>
@@ -381,7 +381,7 @@ function InviteModal({
             </select>
           </div>
         </div>
-        {err && <p className="text-[12px] text-[#e07d7d]">{err}</p>}
+        {err && <p className="text-[12px] text-[#991B1B]">{err}</p>}
         <p className="text-[11px] text-t5">They join on first sign-in. An invite email is sent if Supabase Auth is configured.</p>
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className={btnGhost} disabled={busy}>Cancel</button>
@@ -420,7 +420,7 @@ function DeptModal({ onClose, onDone }: { onClose: () => void; onDone: () => voi
           <label className={labelClasses}>Description (optional)</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this department does" className={fieldClasses} />
         </div>
-        {err && <p className="text-[12px] text-[#e07d7d]">{err}</p>}
+        {err && <p className="text-[12px] text-[#991B1B]">{err}</p>}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className={btnGhost} disabled={busy}>Cancel</button>
           <button onClick={submit} className={btnPrimary} disabled={busy}>

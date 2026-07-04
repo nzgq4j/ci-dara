@@ -80,13 +80,13 @@ export default function FileDropzone({
         <ul className="mt-3 space-y-1.5">
           {files.map((f, i) => (
             <li key={`${f.name}-${f.size}-${i}`} className="flex items-center gap-2 rounded-md border border-line bg-bg px-3 py-2">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-[#7de0a0]" />
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-[#166534]" />
               <FileText className="h-4 w-4 shrink-0 text-t5" />
               <span className="min-w-0 flex-1 truncate text-[13px] text-t2">{f.name}</span>
               <button
                 type="button"
                 onClick={() => remove(i)}
-                className="shrink-0 rounded p-0.5 text-t5 transition-colors hover:text-[#e88]"
+                className="shrink-0 rounded p-0.5 text-t5 transition-colors hover:text-[#dc2626]"
                 aria-label={`Remove ${f.name}`}
               >
                 <X className="h-3.5 w-3.5" />

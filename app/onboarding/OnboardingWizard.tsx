@@ -353,7 +353,7 @@ export default function OnboardingWizard({
                     </select>
                     <button
                       type="button"
-                      className="flex-shrink-0 rounded-md border border-line p-2 text-t5 transition-colors hover:text-[#e07d7d]"
+                      className="flex-shrink-0 rounded-md border border-line p-2 text-t5 transition-colors hover:text-[#dc2626]"
                       onClick={() =>
                         setInvites((rows) =>
                           rows.length > 1 ? rows.filter((_, j) => j !== i) : rows
@@ -377,7 +377,7 @@ export default function OnboardingWizard({
                 </button>
               </div>
 
-              {error && <p className="mt-4 text-[13px] text-[#e07d7d]">{error}</p>}
+              {error && <p className="mt-4 text-[13px] text-[#991B1B]">{error}</p>}
 
               <div className="mt-7 flex items-center justify-between">
                 <button
@@ -415,7 +415,7 @@ export default function OnboardingWizard({
           {/* Step 6 — Done */}
           {step === 5 && (
             <div className="fade text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#1f5a31]/30 text-[#7de0a0]">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#DCFCE7] text-[#166534]">
                 <Check className="h-8 w-8" />
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-t1">
@@ -432,7 +432,7 @@ export default function OnboardingWizard({
                 Create your first solicitation and run an evaluation to see DARA in
                 action.
               </p>
-              {error && <p className="mt-4 text-[13px] text-[#e07d7d]">{error}</p>}
+              {error && <p className="mt-4 text-[13px] text-[#991B1B]">{error}</p>}
               <div className="mt-7 flex justify-center gap-2">
                 <button
                   type="button"
@@ -501,7 +501,7 @@ function NavRow({
 }) {
   return (
     <>
-      {error && <p className="mt-4 text-[13px] text-[#e07d7d]">{error}</p>}
+      {error && <p className="mt-4 text-[13px] text-[#991B1B]">{error}</p>}
       <div className="mt-7 flex items-center justify-between">
         <button
           type="button"

@@ -107,7 +107,7 @@ export default async function BillingPage({
       />
 
       {searchParams?.success && (
-        <div className="mb-6 rounded-lg border border-[#1f5a31]/50 bg-[#1f5a31]/10 px-4 py-3 text-[13px] text-[#7de0a0]">
+        <div className="mb-6 rounded-lg border border-[#166534]/30 bg-[#DCFCE7] px-4 py-3 text-[13px] text-[#166534]">
           Subscription updated. If your plan doesn&apos;t reflect the change yet,
           it will once Stripe confirms the payment (via webhook).
         </div>

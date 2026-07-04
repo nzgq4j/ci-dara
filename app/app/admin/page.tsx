@@ -293,7 +293,7 @@ export default async function AdminPage() {
                 <label className={labelClasses}>
                   {p} key{' '}
                   {ai.hints[p] ? (
-                    <span className="ml-1 normal-case text-[#7de0a0]">set ({ai.hints[p]})</span>
+                    <span className="ml-1 normal-case text-[#166534]">set ({ai.hints[p]})</span>
                   ) : ai.envOnly[p] ? (
                     <span className="ml-1 normal-case text-[#d9a441]">from env (move into console)</span>
                   ) : (
@@ -482,7 +482,7 @@ export default async function AdminPage() {
                   <div className="flex items-center gap-2">
                     <span className="truncate text-[13px] text-t1">{u.email}</span>
                     {!u.isActive && (
-                      <span className="rounded bg-[#5a1f1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-[#e07d7d]">
+                      <span className="rounded bg-[#FEE2E2] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-[#991B1B]">
                         banned
                       </span>
                     )}
@@ -575,7 +575,7 @@ export default async function AdminPage() {
                         </span>
                       )}
                       {!a.isActive && (
-                        <span className="rounded bg-[#5a1f1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-[#e07d7d]">
+                        <span className="rounded bg-[#FEE2E2] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-[#991B1B]">
                           inactive
                         </span>
                       )}

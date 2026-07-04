@@ -46,7 +46,7 @@ export function AiReviewStatus({
   if (s === 'complete') {
     return (
       <span className="inline-flex items-center gap-1.5">
-        <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide bg-[#1f5a31]/30 text-[#7de0a0]">
+        <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide bg-[#DCFCE7] text-[#166534]">
           Complete
         </span>
         {score != null && <span className="font-mono text-[11px] font-semibold text-t3">{score}</span>}
@@ -63,7 +63,7 @@ export function AiReviewStatus({
   }
   if (s === 'error') {
     return (
-      <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide bg-[#5a1f1f]/30 text-[#e07d7d]">
+      <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide bg-[#FEE2E2] text-[#991B1B]">
         Error
       </span>
     );

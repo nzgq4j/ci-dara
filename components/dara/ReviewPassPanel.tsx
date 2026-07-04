@@ -30,21 +30,21 @@ const PASS_DEFS: { type: PassView['passType']; n: number; label: string; blurb: 
 ];
 
 const SEV: Record<PassView['findings'][number]['severity'], { label: string; cls: string }> = {
-  critical: { label: 'CRITICAL', cls: 'bg-[#5a1f1f]/40 text-[#e88]' },
-  high: { label: 'HIGH', cls: 'bg-[#5a3a1f]/40 text-[#e0a878]' },
-  medium: { label: 'MEDIUM', cls: 'bg-[#5a4a1f]/35 text-[#92400E]' },
+  critical: { label: 'CRITICAL', cls: 'bg-[#FEE2E2] text-[#991B1B]' },
+  high: { label: 'HIGH', cls: 'bg-[#FFEDD5] text-[#C05621]' },
+  medium: { label: 'MEDIUM', cls: 'bg-[#FEF3C7] text-[#92400E]' },
   low: { label: 'LOW', cls: 'bg-navy/10 text-navy' }
 };
 
 function scoreColor(s: number): string {
-  if (s >= 85) return 'text-[#7de0a0]';
+  if (s >= 85) return 'text-[#166534]';
   if (s >= 70) return 'text-[#92400E]';
-  return 'text-[#e07d7d]';
+  return 'text-[#991B1B]';
 }
 function scoreBar(s: number): string {
-  if (s >= 85) return 'bg-[#7de0a0]';
-  if (s >= 70) return 'bg-[#e0c97d]';
-  return 'bg-[#e07d7d]';
+  if (s >= 85) return 'bg-[#166534]';
+  if (s >= 70) return 'bg-[#92400E]';
+  return 'bg-[#991B1B]';
 }
 
 export default function ReviewPassPanel({
@@ -135,7 +135,7 @@ export default function ReviewPassPanel({
               status === 'running' || status === 'queued'
                 ? 'border-navy/40 bg-navy/[0.04]'
                 : status === 'error'
-                  ? 'border-[#5a1f1f]/60 bg-[#5a1f1f]/[0.06]'
+                  ? 'border-[#991B1B]/25 bg-[#FEE2E2]'
                   : 'border-line bg-surf'
             }`}
           >
@@ -160,7 +160,7 @@ export default function ReviewPassPanel({
                   </div>
                 )}
                 {status === 'error' && pass?.errorMessage && (
-                  <div className="mt-1 text-[11px] leading-snug text-[#e88]">{pass.errorMessage}</div>
+                  <div className="mt-1 text-[11px] leading-snug text-[#991B1B]">{pass.errorMessage}</div>
                 )}
               </div>
 
@@ -187,7 +187,7 @@ export default function ReviewPassPanel({
                     disabled={pending || active}
                     className={`no-print inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
                       status === 'error'
-                        ? 'border-[#e07d7d]/50 text-[#e88] hover:bg-[#5a1f1f]/20'
+                        ? 'border-[#991B1B]/40 text-[#991B1B] hover:bg-[#FEE2E2]'
                         : 'border-line text-t3 hover:text-t1'
                     }`}
                   >
@@ -226,7 +226,7 @@ export default function ReviewPassPanel({
               </div>
             )}
             {status === 'complete' && (pass?.findings.length ?? 0) === 0 && (
-              <div className="border-t border-line px-3.5 py-2 text-[11px] text-[#7de0a0]">No findings — this pass is clean.</div>
+              <div className="border-t border-line px-3.5 py-2 text-[11px] text-[#166534]">No findings — this pass is clean.</div>
             )}
           </div>
         );
@@ -236,19 +236,19 @@ export default function ReviewPassPanel({
 }
 
 function StatusDot({ status }: { status: PassView['status'] }) {
-  if (status === 'complete') return <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-[#7de0a0]" />;
+  if (status === 'complete') return <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-[#166534]" />;
   if (status === 'running') return <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-navy" />;
-  if (status === 'error') return <AlertTriangle className="h-5 w-5 flex-shrink-0 text-[#e07d7d]" />;
+  if (status === 'error') return <AlertTriangle className="h-5 w-5 flex-shrink-0 text-[#991B1B]" />;
   if (status === 'queued') return <Clock className="h-5 w-5 flex-shrink-0 text-navy" />;
   return <div className="h-5 w-5 flex-shrink-0 rounded-full border-2 border-line" />;
 }
 
 function StatusPill({ status }: { status: PassView['status'] }) {
   const map: Record<PassView['status'], { t: string; c: string }> = {
-    complete: { t: 'COMPLETE', c: 'bg-[#1f5a31]/25 text-[#7de0a0]' },
+    complete: { t: 'COMPLETE', c: 'bg-[#DCFCE7] text-[#166534]' },
     running: { t: 'RUNNING', c: 'bg-navy/10 text-navy' },
     queued: { t: 'QUEUED', c: 'bg-surf2 text-t4' },
-    error: { t: 'ERROR', c: 'bg-[#5a1f1f]/40 text-[#e88]' },
+    error: { t: 'ERROR', c: 'bg-[#FEE2E2] text-[#991B1B]' },
     not_started: { t: 'NOT RUN', c: 'bg-surf2 text-t5' }
   };
   const s = map[status];

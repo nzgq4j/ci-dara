@@ -13,7 +13,7 @@ export default function AccountDisabled({ email }: { email: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 text-t1">
       <div className={`${card} max-w-md p-8 text-center`}>
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#5a1f1f]/30 text-[#e07d7d]">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#FEE2E2] text-[#991B1B]">
           <ShieldX className="h-7 w-7" />
         </div>
         <h1 className="text-xl font-bold tracking-tight text-t1">

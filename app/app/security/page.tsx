@@ -19,33 +19,33 @@ import {
 } from '@/utils/dara/security-content';
 
 const severityBadge: Record<Severity, string> = {
-  Critical: 'bg-[#5a1f1f]/40 text-[#ff9b9b]',
-  High: 'bg-[#5a3a1f]/40 text-[#e0a07d]',
-  Moderate: 'bg-[#5a4a1f]/30 text-[#92400E]',
+  Critical: 'bg-[#FEE2E2] text-[#991B1B]',
+  High: 'bg-[#FFEDD5] text-[#C05621]',
+  Moderate: 'bg-[#FEF3C7] text-[#92400E]',
   Low: 'bg-navy/10 text-navy',
   Informational: 'bg-line text-t4'
 };
 
 const severityAccent: Record<Severity, string> = {
-  Critical: '#e07d7d',
-  High: '#e0a07d',
+  Critical: '#991B1B',
+  High: '#C05621',
   Moderate: '#92400E',
-  Low: '#6f9bf5',
+  Low: '#1D4ED8',
   Informational: '#7d97b3'
 };
 
 const statusColor: Record<ControlStatus, string> = {
-  Implemented: 'text-[#7de0a0]',
+  Implemented: 'text-[#166534]',
   Partial: 'text-[#92400E]',
-  'Not implemented': 'text-[#e07d7d]',
+  'Not implemented': 'text-[#991B1B]',
   'Not applicable': 'text-t5',
   Undetermined: 'text-t4'
 };
 
 const findingStatusBadge: Record<FindingStatus, string> = {
-  Open: 'bg-[#5a1f1f]/30 text-[#e07d7d]',
+  Open: 'bg-[#FEE2E2] text-[#991B1B]',
   'In progress': 'bg-navy/20 text-navy',
-  Remediated: 'bg-[#1f5a31]/30 text-[#7de0a0]',
+  Remediated: 'bg-[#DCFCE7] text-[#166534]',
   'Risk accepted': 'bg-line text-t4'
 };
 
@@ -127,12 +127,12 @@ export default async function SecurityPage() {
         ))}
         <div
           className="rounded-[10px] border border-line bg-surf p-4"
-          style={{ borderTop: '3px solid #7de0a0' }}
+          style={{ borderTop: '3px solid #166534' }}
         >
           <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
             Remediated
           </div>
-          <div className="text-3xl font-bold leading-none text-[#7de0a0]">{remediatedCount}</div>
+          <div className="text-3xl font-bold leading-none text-[#166534]">{remediatedCount}</div>
         </div>
       </div>
 
@@ -194,14 +194,14 @@ export default async function SecurityPage() {
       {/* Strengths */}
       <section className="mb-8">
         <div className="mb-4 flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 text-[#7de0a0]" />
+          <CheckCircle2 className="h-4 w-4 text-[#166534]" />
           <h2 className={sectionTitle}>Verified Strengths</h2>
         </div>
         <div className={`${card} p-5`}>
           <ul className="space-y-2.5">
             {POSITIVES.map((p) => (
               <li key={p} className="flex items-start gap-2.5 text-[13px] leading-relaxed text-t2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#7de0a0]" />
+                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#166534]" />
                 {p}
               </li>
             ))}

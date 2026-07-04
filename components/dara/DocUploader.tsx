@@ -55,7 +55,7 @@ export default function DocUploader({
     <div className="space-y-3">
       <FileDropzone files={files} onChange={setFiles} label={label} sub={sub} compact />
       {error && (
-        <p className="rounded-md border border-[#5a1f1f]/60 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e88]">
+        <p className="rounded-md border border-[#991B1B]/25 bg-[#FEE2E2] px-3 py-2 text-[12px] text-[#991B1B]">
           {error}
         </p>
       )}

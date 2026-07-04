@@ -127,7 +127,7 @@ export default function CompanyAIConfig({
                 <label className={labelClasses}>
                   {p} key{' '}
                   {keyHints[p] ? (
-                    <span className="ml-1 normal-case text-[#7de0a0]">set ({keyHints[p]})</span>
+                    <span className="ml-1 normal-case text-[#166534]">set ({keyHints[p]})</span>
                   ) : (
                     <span className="ml-1 normal-case text-t5">not set</span>
                   )}

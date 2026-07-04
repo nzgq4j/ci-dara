@@ -16,7 +16,7 @@ export default function CuiBoundaryNotice({
     provider === 'anthropic' ? 'Anthropic' : provider === 'openai' ? 'OpenAI' : 'Google';
   const isByok = mode === 'byok';
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-[#5a4a1f]/60 bg-[#5a4a1f]/10 px-4 py-3 text-[12px] leading-relaxed text-[#92400E]">
+    <div className="flex items-start gap-2.5 rounded-lg border border-[#92400E]/25 bg-[#FEF3C7] px-4 py-3 text-[12px] leading-relaxed text-[#92400E]">
       <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
       <div>
         <span className="font-semibold">CUI data boundary.</span> Evaluations send the extracted

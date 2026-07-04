@@ -216,7 +216,7 @@ export default function PersonaManager({ personas }: { personas: PersonaItem[] }
               <button
                 onClick={onDelete}
                 disabled={pending}
-                className="inline-flex flex-shrink-0 items-center gap-2 rounded-lg border border-[#5a1f1f]/60 px-3 py-2 text-[13px] font-medium text-[#e07d7d] transition-colors hover:bg-[#5a1f1f]/20 disabled:opacity-50"
+                className="inline-flex flex-shrink-0 items-center gap-2 rounded-lg border border-[#991B1B]/25 px-3 py-2 text-[13px] font-medium text-[#991B1B] transition-colors hover:bg-[#FEE2E2] disabled:opacity-50"
               >
                 <Trash2 className="h-4 w-4" />
                 Delete persona

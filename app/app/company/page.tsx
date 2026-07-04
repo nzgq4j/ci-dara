@@ -136,12 +136,12 @@ export default async function CompanySettingsPage({
       />
 
       {searchParams.saved && (
-        <div className="mb-4 rounded-lg border border-[#1f5a31]/40 bg-[#1f5a31]/15 px-4 py-2.5 text-[13px] text-[#7de0a0]">
+        <div className="mb-4 rounded-lg border border-[#166534]/30 bg-[#DCFCE7] px-4 py-2.5 text-[13px] text-[#166534]">
           Company information saved.
         </div>
       )}
       {searchParams.error === 'name' && (
-        <div className="mb-4 rounded-lg border border-[#5a1f1f]/50 bg-[#5a1f1f]/20 px-4 py-2.5 text-[13px] text-[#e07d7d]">
+        <div className="mb-4 rounded-lg border border-[#991B1B]/25 bg-[#FEE2E2] px-4 py-2.5 text-[13px] text-[#991B1B]">
           Company name is required.
         </div>
       )}

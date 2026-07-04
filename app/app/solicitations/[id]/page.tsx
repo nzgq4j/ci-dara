@@ -91,9 +91,9 @@ const COMPLIANCE_LABEL: Record<string, string> = Object.fromEntries(
 // Compliance-status pill colors for the matrix.
 const STATUS_PILL: Record<string, string> = {
   not_assessed: 'text-t5',
-  compliant: 'text-[#7de0a0]',
+  compliant: 'text-[#166534]',
   partial: 'text-[#92400E]',
-  non_compliant: 'text-[#e07d7d]',
+  non_compliant: 'text-[#991B1B]',
   not_applicable: 'text-t4'
 };
 
@@ -104,7 +104,7 @@ const COLOR_TEAMS: { value: string; label: string; dot: string; text: string }[]
   { value: 'red', label: 'Red', dot: '#ef4444', text: 'text-[#ef4444]' },
   { value: 'gold', label: 'Gold', dot: '#eab308', text: 'text-[#eab308]' },
   { value: 'blue', label: 'Blue', dot: '#3b82f6', text: 'text-navy' },
-  { value: 'green', label: 'Green', dot: '#22c55e', text: 'text-[#7de0a0]' },
+  { value: 'green', label: 'Green', dot: '#22c55e', text: 'text-[#166534]' },
   { value: 'black', label: 'Black', dot: '#9ca3af', text: 'text-t3' },
   { value: 'white', label: 'White', dot: '#e5e7eb', text: 'text-t2' }
 ];
@@ -1156,7 +1156,7 @@ export default async function SolicitationDetailPage({
           )}
         </section>
 
-        <section className="flex items-center justify-between gap-3 rounded-[10px] border border-[#5a1f1f]/50 bg-surf px-4 py-3">
+        <section className="flex items-center justify-between gap-3 rounded-[10px] border border-[#991B1B]/25 bg-surf px-4 py-3">
           <p className="text-[12px] text-t4">
             <span className="font-semibold text-t3">Delete solicitation</span> — removes its
             requirements, reviews, documents, and evaluations. Cannot be undone.
@@ -1184,7 +1184,7 @@ export default async function SolicitationDetailPage({
             <form action={deleteSolDoc}>
               <input type="hidden" name="solId" value={sid} />
               <input type="hidden" name="docId" value={d.id.toString()} />
-              <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+              <button type="submit" className="text-[#991B1B] transition-colors hover:text-[#dc2626]"><Trash2 className="h-4 w-4" /></button>
             </form>
           </li>
         ))}
@@ -1321,7 +1321,7 @@ export default async function SolicitationDetailPage({
           </div>
         </div>
         {solicitation.solDocs.length === 0 && (
-          <p className="mt-3 rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#92400E]">
+          <p className="mt-3 rounded-lg border border-[#92400E]/25 bg-surf px-4 py-2.5 text-[12px] text-[#92400E]">
             Upload solicitation documents on the Documents tab first — the generator reads
             their extracted text.
           </p>
@@ -1390,10 +1390,10 @@ export default async function SolicitationDetailPage({
                         <span className="flex-shrink-0 font-mono text-[10px] text-t5" title={r.citation}>{r.citation}</span>
                       )}
                       {r.addedByAmendmentId && (
-                        <span className="flex-shrink-0 rounded bg-[#1f5a31]/25 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#7de0a0]">new</span>
+                        <span className="flex-shrink-0 rounded bg-[#DCFCE7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#166534]">new</span>
                       )}
                       {r.changedByAmendmentId && (
-                        <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#92400E]">amended v{r.version}</span>
+                        <span className="flex-shrink-0 rounded bg-[#FEF3C7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#92400E]">amended v{r.version}</span>
                       )}
                     </div>
                     <div className="px-1">
@@ -1436,14 +1436,14 @@ export default async function SolicitationDetailPage({
                     placeholder="Notes…"
                     className="w-full rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-t2 outline-none focus:border-navy/50"
                   />
-                  <button type="submit" title="Save row" className="flex justify-center rounded border border-line py-1 text-t4 transition-colors hover:text-[#7de0a0]">
+                  <button type="submit" title="Save row" className="flex justify-center rounded border border-line py-1 text-t4 transition-colors hover:text-[#166534]">
                     <Save className="h-3.5 w-3.5" />
                   </button>
                 </form>
                 <form action={deleteRequirement} className="contents">
                   <input type="hidden" name="solId" value={sid} />
                   <input type="hidden" name="requirementId" value={r.id.toString()} />
-                  <button type="submit" title="Delete row" className="flex justify-center rounded border border-line py-1 text-t5 transition-colors hover:text-[#e07d7d]">
+                  <button type="submit" title="Delete row" className="flex justify-center rounded border border-line py-1 text-t5 transition-colors hover:text-[#dc2626]">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </form>
@@ -1567,7 +1567,7 @@ export default async function SolicitationDetailPage({
       </div>
 
       {!canEvaluate && (
-        <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#92400E]">
+        <p className="rounded-lg border border-[#92400E]/25 bg-surf px-4 py-2.5 text-[12px] text-[#92400E]">
           To run a review you need at least one requirement (Compliance stage) and one active
           persona ({activeRequirements.length} requirements, {activeCount} active personas).
         </p>
@@ -1597,7 +1597,7 @@ export default async function SolicitationDetailPage({
               <span className="text-[13px] font-semibold text-t1">{rv.name}</span>
               <StatusBadge status={rv.status} />
               {isStale(rv) && (
-                <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
+                <span className="rounded bg-[#FEF3C7] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
                   pre-amendment
                 </span>
               )}
@@ -1617,7 +1617,7 @@ export default async function SolicitationDetailPage({
               <form action={deleteReview}>
                 <input type="hidden" name="solId" value={sid} />
                 <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#e07d7d]"><Trash2 className="h-3.5 w-3.5" /></button>
+                <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#dc2626]"><Trash2 className="h-3.5 w-3.5" /></button>
               </form>
             </div>
 
@@ -1819,7 +1819,7 @@ export default async function SolicitationDetailPage({
                         if (cell && cell.scores.length > 0) {
                           const avg = Math.round(cell.scores.reduce((a, b) => a + b, 0) / cell.scores.length);
                           label = `${avg}`;
-                          color = avg >= 75 ? 'text-[#7de0a0]' : avg >= 50 ? 'text-navy' : 'text-[#e0a07d]';
+                          color = avg >= 75 ? 'text-[#166534]' : avg >= 50 ? 'text-navy' : 'text-[#C05621]';
                         }
                         return (
                           <td key={c.id.toString()} className={`px-3.5 py-3 text-center text-[13px] font-semibold ${color}`}>
@@ -1868,7 +1868,7 @@ export default async function SolicitationDetailPage({
                   <span className="font-semibold text-t1">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
                   <span className="text-t4"> · {e.review?.name ?? '—'}</span>
                   {e.review && isStale(e.review) && (
-                    <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
+                    <span className="rounded bg-[#FEF3C7] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
                       pre-amendment
                     </span>
                   )}
@@ -1876,7 +1876,7 @@ export default async function SolicitationDetailPage({
                 <StatusBadge status={e.status} />
               </div>
               {e.errorMessage && (
-                <p className="mb-3 rounded-lg border border-[#5a1f1f]/50 bg-[#5a1f1f]/10 px-3 py-2 text-[12px] text-[#e07d7d]">
+                <p className="mb-3 rounded-lg border border-[#991B1B]/25 bg-[#FEE2E2] px-3 py-2 text-[12px] text-[#991B1B]">
                   {e.errorMessage}
                 </p>
               )}
@@ -1924,9 +1924,9 @@ export default async function SolicitationDetailPage({
   );
 
   const CHANGE_BADGE: Record<string, string> = {
-    add: 'bg-[#1f5a31]/25 text-[#7de0a0]',
-    modify: 'bg-[#5a4a1f]/30 text-[#92400E]',
-    remove: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
+    add: 'bg-[#DCFCE7] text-[#166534]',
+    modify: 'bg-[#FEF3C7] text-[#92400E]',
+    remove: 'bg-[#FEE2E2] text-[#991B1B]'
   };
 
   const amendmentsPanel = (
@@ -1991,7 +1991,7 @@ export default async function SolicitationDetailPage({
               <form action={deleteAmendment}>
                 <input type="hidden" name="solId" value={sid} />
                 <input type="hidden" name="amendmentId" value={a.id.toString()} />
-                <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+                <button type="submit" className="text-[#991B1B] transition-colors hover:text-[#dc2626]"><Trash2 className="h-4 w-4" /></button>
               </form>
             </div>
 
@@ -2009,7 +2009,7 @@ export default async function SolicitationDetailPage({
                     <form action={deleteSolDoc}>
                       <input type="hidden" name="solId" value={sid} />
                       <input type="hidden" name="docId" value={d.id.toString()} />
-                      <button type="submit" className="text-[#e07d7d] transition-colors hover:text-[#ff9b9b]"><Trash2 className="h-4 w-4" /></button>
+                      <button type="submit" className="text-[#991B1B] transition-colors hover:text-[#dc2626]"><Trash2 className="h-4 w-4" /></button>
                     </form>
                   </li>
                 ))}
@@ -2106,7 +2106,7 @@ export default async function SolicitationDetailPage({
                           <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${CHANGE_BADGE[c.changeType]}`}>{c.changeType}</span>
                           <span className="truncate text-t3">{c.changeType === 'remove' ? (c.requirement?.name ?? '—') : (p.name ?? '—')}</span>
                         </span>
-                        <span className={`font-mono text-[10px] uppercase tracking-wide ${c.status === 'accepted' ? 'text-[#7de0a0]' : 'text-[#e07d7d]'}`}>{c.status}</span>
+                        <span className={`font-mono text-[10px] uppercase tracking-wide ${c.status === 'accepted' ? 'text-[#166534]' : 'text-[#991B1B]'}`}>{c.status}</span>
                       </div>
                     );
                   })}

@@ -60,7 +60,7 @@ export default function MatrixExport({
         {busy === 'doc' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
         Export Word
       </button>
-      {err && <span className="text-[11px] text-[#e07d7d]">{err}</span>}
+      {err && <span className="text-[11px] text-[#991B1B]">{err}</span>}
     </div>
   );
 }
