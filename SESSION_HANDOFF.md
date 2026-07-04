@@ -1,162 +1,137 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-03 · HEAD `980cc13` · branch `main` (clean, deployed) · for: next session_
+_Prepared: 2026-07-04 · HEAD `3b0803c` · branch `main` (clean, **deployed to prod**) · for: next session_
 
-Start-here-tomorrow doc. Authoritative status: `BUILD_STATUS.md` (§2 decisions, §3 completed,
-§4 gaps, §7 session log — the 2026-07-03 entry covers this session in full). The MVP-launch plan:
-`DARA_BUILD_PLAN.md` + the sequenced `DARA_CC_PROMPT_CHAIN.md`. Fuller architecture:
-`CONTEXT_HANDOFF.md`. Security: `/app/security`. Agent memory: `multi-pass-review.md`,
-`color-team-reframing.md`, `direct-ai-review-mode.md`.
-
----
-
-## 0. NEW — Direct AI review mode (branch `feat/direct-ai-review-mode`, NOT merged)
-
-Built 2026-07-04 from a design handoff that **overrides the color-team-only direction** — Direct
-AI is a **coexisting** single-click review mode (upload → one unified AI pass → one score + flat
-findings), alongside the untouched color-team P1/P2/P3 flow. Full plan + status: **`DIRECT_AI_POAM.md`**.
-Commits `fe1e69a` (M0–M2) + `eab666f` (M3–M5); M0–M7 done; **full `pnpm build` green**; engine
-tested offline + one live model round-trip. Security review: clean.
-
-- **New:** `Solicitation.mode` enum (`direct_ai` default / `color_team`), `DirectReview` table
-  (migration `20260704000000_direct_ai_review` + RLS `2026-07-04_direct_reviews_rls.sql`),
-  `Finding` repoint (nullable `pass_id` + `direct_review_id`). `utils/dara/direct-review.ts`
-  engine + worker `direct_review` branch. New UI: `ReviewModeBits`, `UploadAndReview`,
-  `DirectReviewPanel`; `solicitations/new` rebuilt; `[id]` workspace mode-branched.
-- **⚠️ NOT applied to any DB and NOT merged.** Deploy order unchanged: `migrate deploy` →
-  `apply-sql.ts <new rls>` (RLS before code) → deploy. Do NOT merge/deploy until the migration is
-  applied AND you've smoke-tested the DB flow (not yet run — see POA&M).
-- **⚠️ Prompt 3 interaction:** `new/page.tsx`'s `createSolicitation` was **replaced by
-  `createAndRunReview`**. Wire `requireTrialCapacity('solicitation')`/`('review_run')` there +
-  in `runDirectReviewAction` (`[id]/page.tsx`), not the old function. `review_run` count already
-  spans both paradigms (`trial.ts`).
-- **✓ Prompts 6–8 (reskin) compatible:** the new components use the semantic tokens, so the
-  navy/gold reskin retheming carries them along automatically.
-- Also bumped `serverActions.bodySizeLimit` to 25mb (RFP PDFs exceed the 1MB default — also fixes
-  a latent limit on the existing workspace uploader).
-
-**DEPLOYED TO PROD 2026-07-04** (migration applied + verified; `main` synced). Follow-on tweaks
-also shipped: create window is now a two-step flow (Continue/Cancel) with a staged ingestion/
-processing indicator; shared `FileDropzone`/`DocUploader` drag-drop on the workspace uploads.
-
-## 0b. Reskin DONE (Prompts 6–8) — navy/gold/Inter light theme, DEPLOYED TO PROD 2026-07-04
-
-The whole reskin shipped in one pass (the app was already light-default, so it was accent+font+
-shell, not a dark→light migration). `--c-navy`/`--c-gold` tokens + Tailwind `navy`/`gold`; `theme.ts`
-accent → navy (buttons) / gold (focus, eyebrow); IBM Plex → Inter + JetBrains Mono; `forcedTheme=
-"light"` + ThemeToggle removed; Sidebar/PlatformAdminSidebar → navy; Header trial badge → gold;
-sign-in left panel → navy. Swept ~110 `#3b6ef0` bracket literals → navy across all pages + the
-Direct AI components; dark tints lightened (tracks → `bg-line`, low/running badges → `bg-navy/10`).
-**Left intentionally:** Team avatar/dept-dot categorical palettes still contain one blue (one hue
-of 8, not the brand accent). Per-page polish may still be wanted (bulk sweep, not hand-tuned per
-page). `pnpm build` green; QA greps: 0 IBM_Plex, 0 blue bracket-accents.
+Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless
+flagged otherwise. Agent memory (authoritative, load first): `direct-ai-review-mode.md`,
+`ui-redesign-roadmap.md`, `color-team-reframing.md`, `multi-pass-review.md`. Feature plan:
+`DIRECT_AI_POAM.md`. Older MVP prompt-chain (`DARA_CC_PROMPT_CHAIN.md`) is largely superseded
+by this session — Prompt 6-8 (reskin) is DONE; Prompt 3 (trial enforcement) is still open but
+its target moved (see §5).
 
 ---
 
-## 1. Where we are
+## 1. Deploy model (READ FIRST)
 
-- **Branch `main`, clean, HEAD `980cc13`. All deployed to prod + pushed.**
-- **We are executing `DARA_CC_PROMPT_CHAIN.md`** — an 11-prompt MVP-launch hardening pass.
-  - **Prompt 1 (read-only audit): DONE.** Codebase matches the build plan; the one real gap is
-    the **Enterprise plan still creating a Stripe Checkout Session** (Task 8 — fix in Prompt 9).
-    The CRON_SECRET guard is already present. Docs page doesn't exist yet (Prompt 7 creates it).
-  - **Prompt 2 (trial fencing): DONE + extended into an entitlements/gating system** (see §2).
-  - **Prompts 3–11: remaining.**
-- **This session** was mostly an unplanned run of **prod bug-fixes** on the multi-pass/matrix
-  flow (7 deploys) that surfaced while exercising it, capped by Prompt 2. The headline fix:
-  the compliance check **never graded anything** because the batch parser (`mapBatchItem`)
-  rejected every `"#<id>"` the model returned — found by running a real batch against prod data.
-- **Prod:** https://dara.crucibleinsight.com · deploy is manual (`vercel deploy --prod --yes`
-  after `migrate deploy` if schema changed, then `git push`). Auto-deploy still off.
-- **User constraint:** credential rotation (Task 0) is **deferred to public-release time**, so we
-  run Prompts 3–9 as dev sessions and **hold before the Prompt 10 deploy/operator boundary**.
-
-### Watch-outs (don't trip on these)
-
-- **⚠️ Entitlements/gating is DEPLOYED but INERT.** The admin can set trial limits + feature
-  flags (amendments/personas/team) in `/app/admin` → **Gating**, but **nothing enforces them
-  yet** — that's Prompt 3. Don't assume a set flag blocks anything until you wire it.
-- **All long AI actions are now ASYNC** (JobQueue + `/api/cron/passes` cron worker): review
-  passes, compliance check, shred, amendment reconcile. Pattern: an `enqueueX` + an
-  `isXActive`/`activeXIds` poll flag + a client control that polls `router.refresh()`. Orphaned
-  jobs (function killed mid-run) are reaped after 6 min by `reapOrphanedJobs()`. **No synchronous
-  AI requests remain in the solicitation workspace** — don't reintroduce one.
-- **Batch id parsing:** `mapBatchItem` now tolerates `"#1022"` / `1022`. The prompt intentionally
-  lists requirements as `#<id>`; keep the parser tolerant, don't "fix" the prompt.
-- **`AddSection` modals:** use `<CloseModalOnComplete/>` (a `useFormStatus` child) to close on
-  action completion. Do NOT go back to a capture-phase submit listener — it swallows the submit.
-- **`after()` unavailable in Next 14.2.35** — worker kicks via `triggerWorker()` fire-and-forget
-  fetch; the every-minute cron is the backstop. Hard-refresh after every deploy (deploy skew).
-- **Schema deploy order:** `pnpm prisma migrate deploy` (owner/DIRECT_URL) → apply new RLS (only
-  for NEW tables) → `vercel deploy` → `git push`. Column-only adds need only `migrate deploy`.
-- **Local `withTenant` reads P2028 from this machine** (interactive-transaction latency to
-  Supabase). Not a prod issue — verify DB things via `prismaAdmin` in a throwaway tsx script, or
-  in prod. (That's how the compliance bug was diagnosed.)
+- **Prod = `main`, deployed MANUALLY.** Auto-deploy is OFF. The flow used all session:
+  `git push origin main` → `vercel deploy --prod --yes`. `main` is always kept == prod.
+- **Vercel CLI IS installed** (the session-start "not installed" note is stale). `.vercel/`
+  is linked (project `prj_I6CLDhGJlbjro2Mc67i1AyyHpciP`, team `team_hluvXIDuWYVTRTyXnqxTbfWg`).
+- **Schema changes: migrate BEFORE code deploy.** `pnpm prisma migrate deploy` (owner /
+  `DIRECT_URL`) → if a NEW table, apply its RLS via `npx tsx prisma/security/apply-sql.ts <file>`
+  → then `vercel deploy --prod`. Column-only adds need just `migrate deploy` (no RLS).
+- **`.env.local` points at the REMOTE (prod) Supabase.** There is no local DB. `withTenant`
+  interactive transactions throw **P2028 from this dev machine** (pooler latency) — so you
+  cannot exercise tenant DB flows locally; verify on prod/preview or via a `prismaAdmin`/`pg`
+  throwaway script (non-interactive queries work).
+- **Preview caveat:** `vercel deploy` (no `--prod`) builds a preview, but the every-minute
+  Vercel **cron only runs on prod**, and prod runs whatever code is currently deployed — so a
+  Direct AI review kicked off on a preview may hang "Running" (its job gets processed by prod's
+  code, not the preview's). Verify review *completion* on prod.
 
 ---
 
-## 2. The entitlements/gating system (built this session — read before Prompt 3)
+## 2. What shipped this session (all on prod)
 
-**Engine: `utils/dara/trial.ts`.** Resolution chain: **code defaults → platform default →
-per-company override**.
-- `requireTrialCapacity(companyId, resource)` — `resource ∈ {solicitation, review_run, seat}`,
-  default limits 2/3/2. No-op on paid plans; throws `TrialLimitError` when over, or (used=limit=0)
-  when the trial window has expired.
-- `requireFeature(companyId, feature)` — `feature ∈ {amendments, personas, team}`. Applies to ALL
-  plans; throws `FeatureDisabledError` when off. Features default ON.
-- Platform defaults live in `PlatformSetting.defaultEntitlements`; per-company overrides in
-  `Company.entitlements` (both JSON). `resolveEntitlements(raw, base)` merges; `getPlatformDefault
-  Entitlements()` / `setPlatformDefaultEntitlements()` for the singleton.
-- Admin UI in `app/app/admin/page.tsx`: `saveDefaultGating` (platform), `updateCompanyEntitlements`
-  / `clearCompanyEntitlements` (per-company, opt-in — NOT written on a plain account save, so
-  platform-default changes propagate). Sidebar item added in `PlatformAdminSidebar.tsx`.
+**Direct AI review mode (M0–M7)** — a one-click unified review coexisting with the color-team
+P1/P2/P3 flow. New `Solicitation.mode` enum, `DirectReview` table, `Finding` repoint
+(migration `20260704000000` + RLS `2026-07-04_direct_reviews_rls.sql`, both applied to prod).
+Engine `utils/dara/direct-review.ts` + worker `direct_review` branch in `passes.ts` (single LLM
+call). UI: `ReviewModeBits`, `UploadAndReview`, `DirectReviewPanel`, mode-branched workspace
+pipeline (color-team untouched). **Verified end-to-end on prod** (a review completed with a
+score + 27 findings). Full detail: `DIRECT_AI_POAM.md`, `direct-ai-review-mode.md`.
 
-**★ Prompt 3 = wire the enforcement (currently inert):**
-1. `requireTrialCapacity` into `createSolicitation` (`app/app/solicitations/new/page.tsx`),
-   `enqueueReviewRun` (`utils/dara/passes.ts`), `inviteUser` (`app/app/team/actions.ts`).
-   Placement gotchas from the Prompt 1 audit: call it **before** the `withTenant` tx in
-   createSolicitation (it opens its own); seat check only in the **new-invitation** branch of
-   inviteUser (not when re-assigning an existing member). Catch `TrialLimitError` → redirect
-   `/app/billing?limit=<resource>` (or return the form error for invites).
-2. Dashboard trial status bar (`app/app/dashboard/page.tsx`) — days left + used/limit per the plan.
-3. `requireFeature` at feature entry points: **amendments** (Amendments panel + `enqueueReconcile`
-   / upload), **personas** (`/app/personas` + persona actions), **team** (`/app/team` + invite).
-   Decide UX for a fenced feature (hide the nav/section + block the action).
-4. Follow the build plan's Prompt 3 (Task 1.2–1.4, 1.6) for the trial parts; the feature-gate
-   parts are the extension — mirror the same catch/redirect or hide pattern.
+**Navy/gold/Inter light reskin** — `--c-navy`/`--c-gold` tokens, `theme.ts` accent → navy
+(buttons) / gold (focus/eyebrow), IBM Plex → Inter, `forcedTheme="light"`, navy sidebars, navy
+sign-in. Swept ~110 `#3b6ef0` literals → navy. **Then** a full readability pass converting the
+old dark-theme pastels to the design's severity/status palette (pale bg + dark text): red
+`#991B1B`/`#FEE2E2`, orange `#C05621`/`#FFEDD5`, amber `#92400E`/`#FEF3C7`, green
+`#166534`/`#DCFCE7`. (One intentional leftover: team avatar/dept-dot categorical palettes.)
 
----
+**Redesigns from 4 Snagit mockups** (`C:\Users\david\OneDrive\Documents\Snagit\`):
+- **Compliance Matrix** (`ComplianceMatrix.tsx`) — filter chips w/ counts, search, row tinting,
+  inline auto-save of Response Location/Status/Notes (`saveMatrixRow`). Maps to existing
+  `Requirement` fields; no migration.
+- **Dashboard** (`dashboard/page.tsx`) — KPI cards (Active Reviews / Due ≤7d / Avg Compliance /
+  Open Findings) + tracking table (Solicitation / Agency / NAICS / Due Date / Countdown /
+  Review Status). Added `Solicitation.dueDate` + `naics` (migration `20260704010000`, applied to
+  prod). New reusable `CountdownChip` + `ColorTeamStatus` in `ReviewModeBits`.
+- **Editable solicitation names** — `EditableSolTitle` (pencil in workspace header,
+  `renameSolicitationAction`). Plus `SolMetaEditor` (edit reference/agency/NAICS/due-date inline)
+  and Due Date + NAICS fields on the create screen.
 
-## 3. Queue for next session (suggested order)
-
-1. **★ Prompt 3 — enforcement wiring** (above). Ends at `pnpm build` clean; commit + push
-   (deploy is fine here — no operator prereqs — but you may batch with Prompt 4).
-2. **Prompt 4** — onboarding wizard 6 → 3 steps (`profile`, `ai`, `done`); plain-language AI copy.
-3. **Prompt 5** — solicitation workspace 3-tab nav (Compliance/Review/Export) + sidebar simplify.
-4. **Prompts 6–8** — navy/gold/Inter light reskin (tokens → shell/auth → dashboard/solicitation →
-   remaining pages). The big one; page-by-page. Ref: `…/scratchpad/DARA_design.html`.
-5. **Prompt 9** — CUI modal copy, image-only-PDF failure message, in-app docs page, **Enterprise
-   Stripe guard** (the real Prompt-1 gap: `billing/page.tsx` renders a Checkout button for
-   `enterprise` via `PLAN_CATALOG.enterprise` — make it a contact-us link).
-6. **Prompts 10–11** — CRON_SECRET guard (already present, confirm) + quality gates + launch.
-   **Hold here** until the user is ready for release (credential rotation, operator checklist).
-
-### Operator actions (you) — unchanged, still open
-- Platform model → **Sonnet** (biggest quality lever across all AI passes).
-- Optional `CRON_SECRET` in Vercel (all envs) to lock `/api/cron/passes`.
-- Branch protection on `main` (BUILD_STATUS #13). Supabase Auth Site URL + Confirm-email (#1).
+**Create-flow fixes** — two-step Upload & Instant Review (Continue/Cancel + staged processing
+indicator); always-creates-the-sol; shared `FileDropzone`/`DocUploader` drag-drop on workspace
+uploads; `serverActions.bodySizeLimit` = 25mb.
 
 ---
 
-## 4. Fast restart commands
+## 3. ⚠️ In-flight / needs verification (start here next time)
+
+**The create-flow "Run AI Review doesn't advance" fix (`3b0803c`) is DEPLOYED but the user had
+not yet re-tested it when we stopped.**
+- Root cause was a `useTransition` gotcha: with an async callback, `isPending` flips false after
+  the sync part, which cleared the processing panel at the "upload" stage AND dropped the
+  post-await navigation — so the workflow "ended at the upload." Fixed by switching
+  `UploadAndReview` to plain `useState` pending + `try/catch` + `window.location.assign(redirect)`
+  (and `createAndRunReview` now RETURNS `{ok, redirect}` instead of `redirect()`).
+- **Next step:** confirm on prod that Run AI Review now shows the staged processing and lands in
+  the workspace. If it still stalls, the `try/catch` will now surface an error — most likely
+  **combined file size > 25mb** (the user's real set was 5 docs). If so, the fix is to upload
+  files per-file client-side (reuse `DocUploader`/`uploadSolDoc`) or raise `bodySizeLimit`.
+
+---
+
+## 4. Pending work (roadmap — see `ui-redesign-roadmap.md`)
+
+1. **Analysis Report** (`futureautoreviewandcolorreview.png`) — the big remaining piece; a new
+   page unifying auto + color review: exec summary (Overall + Pass 1/2/3 + narrative),
+   **Prioritized Findings & Action Plan** with per-finding **Owner / Effort / Status**, right
+   rail (deadline, finding distribution, DARA recommendation, pre-submission checklist).
+   **Decision made:** finding workflow = **AI-suggested + editable** (the review suggests an
+   owner role + effort estimate, Status defaults Open; users override). **Needs:** migration for
+   `Finding.owner` / `status` (Open/InProgress/Resolved) / `effort` + a checklist concept; prompt
+   changes in `utils/dara/prompt.ts` (`buildDirectReviewPrompt` + pass prompts) to emit
+   owner/effort. Do it in stages: schema + prompt first, then the report page.
+2. **DOCX export** on the compliance matrix (mockup has it) — needs a docx lib (`docx` npm);
+   only XLSX + Print exist today.
+3. **Trial enforcement is still NOT wired** (only the `review_run` count spans both paradigms).
+   When wiring (was "Prompt 3"), target the CURRENT actions: `createAndRunReview` (`new/page.tsx`)
+   and `runDirectReviewAction` + color-team `runReviewAction` — the old `createSolicitation`
+   target no longer exists. Catch `TrialLimitError` → redirect `/app/billing`.
+4. **"Import from SAM.gov"** dashboard button is present but disabled (backlog — needs SAM.gov API).
+5. Nice-to-haves: rename/edit metadata from the solicitations LIST too (only the workspace has it
+   now); `CRON_SECRET` in Vercel to lock `/api/cron/passes` (still open from the old handoff).
+
+---
+
+## 5. Fast restart
+
 ```bash
-git status                 # expect clean main, HEAD 980cc13
-git log --oneline -12
-pnpm install               # if needed
+git status                       # expect clean main, HEAD 3b0803c
+git log --oneline -15
+pnpm install                     # if needed
 pnpm exec tsc --noEmit
-pnpm build
-# New dara_* table/column? DB BEFORE deploy:
-#   pnpm prisma migrate deploy
+pnpm build                       # must pass (25 routes)
+# Deploy (prod = main, manual):
+#   git push origin main
+#   vercel deploy --prod --yes           # then hard-refresh (Ctrl+Shift+R)
+# New dara_* column/table? DB BEFORE the code deploy:
+#   pnpm prisma migrate deploy                                    # owner/DIRECT_URL
 #   npx tsx prisma/security/apply-sql.ts prisma/security/<new>_rls.sql   # only if new table
-# deploy: vercel deploy --prod --yes  then  git push  then HARD-REFRESH (Ctrl+Shift+R)
+# Diagnose prod errors: Vercel MCP get_runtime_errors / get_runtime_logs
+#   (projectId prj_I6CLDhGJlbjro2Mc67i1AyyHpciP, teamId team_hluvXIDuWYVTRTyXnqxTbfWg)
 ```
+
+## 6. Key files
+- Engine: `utils/dara/direct-review.ts`, `utils/dara/passes.ts` (worker), `utils/dara/prompt.ts`.
+- Workspace (2200+ lines, mode-branched): `app/app/solicitations/[id]/page.tsx` — server actions
+  at top (`createAndRunReview` is in `new/page.tsx`; `runDirectReviewAction`, `saveMatrixRow`,
+  `renameSolicitationAction`, `updateSolMetaAction` here), `compliancePanel`, `directReviewPanel`,
+  `pipelineViews`/`pipelineStages` near the bottom.
+- Dashboard: `app/app/dashboard/page.tsx`. Create: `app/app/solicitations/new/page.tsx` +
+  `components/dara/UploadAndReview.tsx`.
+- Shared components: `components/dara/` — `ReviewModeBits` (chips/status/countdown),
+  `ComplianceMatrix`, `DirectReviewPanel`, `FileDropzone`, `DocUploader`, `EditableSolTitle`,
+  `SolMetaEditor`, `theme.ts` (class vocab).
+- Theme tokens: `styles/main.css` (`--c-navy`/`--c-gold`), `tailwind.config.js`.
