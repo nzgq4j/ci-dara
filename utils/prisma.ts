@@ -56,13 +56,25 @@ function connString(primary: string | undefined, varName: string): string {
 // encrypt without CA verification; verify-full (bundled CA) is a future hardening.
 const ssl = { rejectUnauthorized: false };
 
+// Bound how long we'll wait on the DB so a transient pooler blip fails fast instead of hanging
+// the whole function until Vercel's 300s kill (which orphans in-flight worker jobs as
+// `running`). connectionTimeoutMillis caps waiting for a pooled connection; statement_timeout
+// (server) / query_timeout (client) cap a single runaway query. Generous vs. real query times.
+const dbTimeouts = {
+  connectionTimeoutMillis: 15_000,
+  statement_timeout: 60_000,
+  query_timeout: 60_000
+};
+
 const tenantAdapter = new PrismaPg({
   connectionString: connString(process.env.DATABASE_URL_APP, 'DATABASE_URL_APP'),
-  ssl
+  ssl,
+  ...dbTimeouts
 });
 const adminAdapter = new PrismaPg({
   connectionString: connString(process.env.DATABASE_URL_ADMIN, 'DATABASE_URL_ADMIN'),
-  ssl
+  ssl,
+  ...dbTimeouts
 });
 
 export const prismaTenant =

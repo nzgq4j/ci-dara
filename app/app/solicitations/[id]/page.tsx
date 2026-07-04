@@ -1038,76 +1038,97 @@ export default async function SolicitationDetailPage({
   if (!/^\d+$/.test(params.id)) notFound();
   const solId = BigInt(params.id);
 
-  const data = await withTenant(daraUser.companyId, async (tx) => {
-    const solicitation = await tx.solicitation.findFirst({
-      where: { id: solId, companyId: daraUser.companyId },
-      include: {
-        requirements: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
-        solDocs: { orderBy: { uploadedAt: 'desc' } },
-        departments: { include: { team: true } },
-        amendments: {
-          orderBy: { createdAt: 'desc' },
-          include: {
-            documents: { orderBy: { uploadedAt: 'desc' } },
-            changes: {
-              orderBy: { id: 'asc' },
-              include: { requirement: { select: { name: true } } }
-            }
-          }
-        },
-        reviews: {
-          orderBy: { createdAt: 'desc' },
-          include: {
-            documents: { orderBy: { capturedAt: 'desc' } },
-            reviewPersonas: true,
-            passes: {
-              orderBy: { passType: 'asc' },
-              include: { findings: { orderBy: { sortOrder: 'asc' } } }
-            }
-          }
-        },
-        directReviews: {
-          include: { findings: { orderBy: { sortOrder: 'asc' } } }
-        },
-        evaluations: {
-          orderBy: { createdAt: 'desc' },
-          include: {
-            review: true,
-            results: {
-              include: {
-                requirement: true,
-                persona: true,
-                versions: { orderBy: { version: 'desc' } }
-              },
-              orderBy: { requirementId: 'asc' }
-            }
-          }
-        }
-      }
+  // Load in two phases so one interactive transaction never fans out into many concurrent
+  // relation queries on a single pooled connection (that sibling fan-out caused the pg "client
+  // already executing a query" warning and serialized slow renders behind the workspace poll).
+  // First a small access-gate query; then the rest as bounded parallel scoped reads — each on
+  // its own connection — reassembled into the original `solicitation` shape so the render below
+  // is unchanged.
+  const companyId = daraUser.companyId;
+  const gate = await withTenant(companyId, async (tx) => {
+    const sol = await tx.solicitation.findFirst({
+      where: { id: solId, companyId },
+      include: { departments: { include: { team: true } } }
     });
-    if (!solicitation) return null;
-    // Department-access gate (admins all; creator own; others via assigned dept).
+    if (!sol) return null;
     const teamSet = new Set(await userTeamIds(tx, daraUser.id));
     const viewable = canViewSolicitation(
       daraUser.id,
       daraUser.role,
-      solicitation.createdBy,
-      solicitation.departments.map((d) => d.teamId),
+      sol.createdBy,
+      sol.departments.map((d) => d.teamId),
       teamSet
     );
-    if (!viewable) return null;
-    const personas = await tx.persona.findMany({
-      where: { companyId: daraUser.companyId }
-    });
-    const allTeams = await tx.team.findMany({
-      where: { companyId: daraUser.companyId },
-      orderBy: { name: 'asc' }
-    });
-    return { solicitation, personas, allTeams };
+    return { sol, viewable };
   });
+  if (!gate || !gate.viewable) notFound();
 
-  if (!data) notFound();
-  const { solicitation, personas, allTeams } = data;
+  const [meta, reviewGroup, amendEval, complianceActive, shredActive, reconcileActiveIds] =
+    await Promise.all([
+      withTenant(companyId, async (tx) => ({
+        requirements: await tx.requirement.findMany({
+          where: { solicitationId: solId, companyId },
+          orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+        }),
+        solDocs: await tx.solDocument.findMany({
+          where: { solicitationId: solId, companyId },
+          orderBy: { uploadedAt: 'desc' }
+        }),
+        personas: await tx.persona.findMany({ where: { companyId } }),
+        allTeams: await tx.team.findMany({ where: { companyId }, orderBy: { name: 'asc' } })
+      })),
+      withTenant(companyId, async (tx) => ({
+        reviews: await tx.review.findMany({
+          where: { solicitationId: solId, companyId },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            documents: { orderBy: { capturedAt: 'desc' } },
+            reviewPersonas: true,
+            passes: { orderBy: { passType: 'asc' }, include: { findings: { orderBy: { sortOrder: 'asc' } } } }
+          }
+        }),
+        directReviews: await tx.directReview.findMany({
+          where: { solicitationId: solId, companyId },
+          include: { findings: { orderBy: { sortOrder: 'asc' } } }
+        })
+      })),
+      withTenant(companyId, async (tx) => ({
+        amendments: await tx.amendment.findMany({
+          where: { solicitationId: solId, companyId },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            documents: { orderBy: { uploadedAt: 'desc' } },
+            changes: { orderBy: { id: 'asc' }, include: { requirement: { select: { name: true } } } }
+          }
+        }),
+        evaluations: await tx.evaluation.findMany({
+          where: { solicitationId: solId, companyId },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            review: true,
+            results: {
+              include: { requirement: true, persona: true, versions: { orderBy: { version: 'desc' } } },
+              orderBy: { requirementId: 'asc' }
+            }
+          }
+        })
+      })),
+      isComplianceCheckActive(solId, companyId),
+      isShredActive(solId, companyId),
+      activeReconcileAmendmentIds(companyId).then((ids) => new Set(ids))
+    ]);
+
+  const solicitation = {
+    ...gate.sol,
+    requirements: meta.requirements,
+    solDocs: meta.solDocs,
+    amendments: amendEval.amendments,
+    reviews: reviewGroup.reviews,
+    directReviews: reviewGroup.directReviews,
+    evaluations: amendEval.evaluations
+  };
+  const personas = meta.personas;
+  const allTeams = meta.allTeams;
   const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
   const activeCount = personas.filter((p) => p.isActive).length;
   const assignedTeamIds = new Set(solicitation.departments.map((d) => d.teamId.toString()));
@@ -1126,10 +1147,7 @@ export default async function SolicitationDetailPage({
   const complianceReqs = activeRequirements.filter((r) => r.disposition === 'compliance');
   const complianceTotal = complianceReqs.length;
   const complianceGraded = complianceReqs.filter((r) => r.complianceStatus !== 'not_assessed').length;
-  const complianceActive = await isComplianceCheckActive(solicitation.id, daraUser.companyId);
-  // Async shred / amendment-reconcile poll state (background worker jobs).
-  const shredActive = await isShredActive(solicitation.id, daraUser.companyId);
-  const reconcileActiveIds = new Set(await activeReconcileAmendmentIds(daraUser.companyId));
+  // complianceActive / shredActive / reconcileActiveIds are loaded up front with the page data.
   const reviews = solicitation.reviews;
   const amendments = solicitation.amendments;
   const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');

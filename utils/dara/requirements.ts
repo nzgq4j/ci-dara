@@ -39,9 +39,14 @@ function concatDocs(files: DocFile[]): string {
  * Shred a solicitation into requirements, appending them to the compliance matrix.
  * New rows are ordered after any existing requirements. Returns how many were added.
  */
+// Headroom needed to safely run one more coverage pass (LLM call + write) before the tick's
+// deadline. Keeps shred from starting work it can't finish inside the function budget.
+const COVERAGE_BUDGET_MS = 130_000;
+
 export async function shredRequirements(
   solicitationId: bigint,
-  companyId: bigint
+  companyId: bigint,
+  deadlineMs = Infinity
 ): Promise<ShredSummary> {
   // Burst A: load the solicitation docs, company AI config, and current ordering.
   const loaded = await withTenant(companyId, async (tx) => {
@@ -107,6 +112,9 @@ export async function shredRequirements(
   const seenNames = new Set<string>(Array.from(loaded.existingNames));
   shredded.forEach((r) => seenNames.add(norm(r.name)));
   for (let round = 0; round < 2; round++) {
+    // Time-box: skip further coverage passes if this tick can't finish one — the initial shred
+    // is already saved below, and a re-run continues coverage rather than hanging the worker.
+    if (deadlineMs - Date.now() < COVERAGE_BUDGET_MS) break;
     const gap = buildShredGapPrompt(solText, Array.from(seenNames));
     let gapAi;
     try {

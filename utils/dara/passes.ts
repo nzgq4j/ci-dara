@@ -621,8 +621,9 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
       } else if (payload.kind === 'shred' && payload.solicitationId) {
-        // Shred runs its own passes (initial + coverage) to completion within one tick.
-        await shredRequirements(BigInt(payload.solicitationId), companyId);
+        // Shred runs an initial pass + up to 2 coverage passes; the deadline lets it skip
+        // coverage rounds it can't finish this tick instead of overrunning the function budget.
+        await shredRequirements(BigInt(payload.solicitationId), companyId, deadlineMs);
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.reviewId) {

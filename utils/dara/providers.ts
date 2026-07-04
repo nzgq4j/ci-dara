@@ -80,6 +80,26 @@ function providerMaxOutput(provider: string): number {
   return 64000; // anthropic — effectively uncapped for our requests
 }
 
+// Hard ceiling on a single LLM HTTP call. Without it a hung provider connection blocks the
+// worker until the 300s function kill, orphaning the job as `running` (which then pins the
+// workspace poll on). 120s is generous for large completions yet well under the cron budget.
+const AI_TIMEOUT_MS = 120_000;
+
+async function aiFetch(url: string, init: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') {
+      throw new Error(`AI request timed out after ${Math.round(AI_TIMEOUT_MS / 1000)}s.`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Dispatch a completion to the configured provider. */
 export async function complete(
   provider: string,
@@ -105,7 +125,7 @@ async function anthropicComplete(
   apiKey: string,
   maxTokens: number
 ): Promise<AIResult> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await aiFetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -138,7 +158,7 @@ async function openaiComplete(
   apiKey: string,
   maxTokens: number
 ): Promise<AIResult> {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await aiFetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -176,7 +196,7 @@ async function googleComplete(
     model
   )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-  const res = await fetch(url, {
+  const res = await aiFetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
