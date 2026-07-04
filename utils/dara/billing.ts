@@ -70,14 +70,28 @@ export interface BillingInvoice {
   pdfUrl: string | null;
 }
 
+// The upcoming-invoice preview: what Stripe will ACTUALLY charge next, net of discounts,
+// account credit, proration, and tax (amounts in dollars).
+export interface UpcomingInvoice {
+  subtotal: number; // before discounts
+  discount: number; // total discount applied (positive)
+  tax: number;
+  total: number; // after discount + tax
+  amountDue: number; // after account credit — the real charge
+  accountCredit: number; // credit applied this cycle (positive)
+  currency: string;
+  chargeDate: Date | null;
+}
+
 export interface BillingOverview {
   status: Stripe.Subscription.Status;
   nextBillingDate: Date | null; // current period end — the next charge (or the end date if cancelling)
-  renewalAmount: number | null; // dollars, per interval
+  renewalAmount: number | null; // dollars, per interval (list price)
   interval: string | null; // 'month' | 'year'
   cancelAtPeriodEnd: boolean;
   trialEnd: Date | null;
   paymentMethod: { brand: string; last4: string; expMonth: number; expYear: number } | null;
+  upcoming: UpcomingInvoice | null;
   invoices: BillingInvoice[];
 }
 
@@ -125,6 +139,32 @@ export async function getBillingOverview(
       }));
     }
 
+    // Upcoming-invoice preview — the real next charge net of discount/credit/proration/tax.
+    // Best-effort: absent (e.g. a cancelling sub) → null, so the card falls back to list price.
+    let upcoming: UpcomingInvoice | null = null;
+    if (stripeCustomerId && !sub.cancel_at_period_end) {
+      try {
+        const up = await stripe.invoices.retrieveUpcoming({
+          customer: stripeCustomerId,
+          subscription: stripeSubId
+        });
+        const discount = (up.total_discount_amounts ?? []).reduce((s, d) => s + d.amount, 0);
+        const startingBalance = up.starting_balance ?? 0; // negative = account credit
+        upcoming = {
+          subtotal: up.subtotal / 100,
+          discount: discount / 100,
+          tax: (up.tax ?? 0) / 100,
+          total: up.total / 100,
+          amountDue: up.amount_due / 100,
+          accountCredit: startingBalance < 0 ? -startingBalance / 100 : 0,
+          currency: up.currency,
+          chargeDate: up.next_payment_attempt ? new Date(up.next_payment_attempt * 1000) : null
+        };
+      } catch {
+        /* no upcoming invoice */
+      }
+    }
+
     return {
       status: sub.status,
       nextBillingDate: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
@@ -135,6 +175,7 @@ export async function getBillingOverview(
       paymentMethod: card
         ? { brand: card.brand, last4: card.last4, expMonth: card.exp_month, expYear: card.exp_year }
         : null,
+      upcoming,
       invoices
     };
   } catch (e) {

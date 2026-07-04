@@ -156,13 +156,22 @@ export default async function BillingPage({
             />
             <Detail
               icon={<CreditCard className="h-4 w-4" />}
-              label={overview.cancelAtPeriodEnd ? 'Renewal' : 'Renews at'}
+              label={overview.cancelAtPeriodEnd ? 'Renewal' : 'Next charge'}
               value={
                 overview.cancelAtPeriodEnd
                   ? 'Cancels — will not renew'
-                  : overview.renewalAmount != null
-                    ? `$${overview.renewalAmount}/${overview.interval ?? 'mo'}`
-                    : '—'
+                  : overview.upcoming
+                    ? money(overview.upcoming.amountDue, overview.upcoming.currency)
+                    : overview.renewalAmount != null
+                      ? `$${overview.renewalAmount}/${overview.interval ?? 'mo'}`
+                      : '—'
+              }
+              sub={
+                overview.upcoming && (overview.upcoming.discount > 0 || overview.upcoming.accountCredit > 0)
+                  ? `was ${money(overview.upcoming.subtotal, overview.upcoming.currency)}`
+                  : overview.upcoming && overview.interval
+                    ? `per ${overview.interval}`
+                    : undefined
               }
             />
             <Detail
@@ -180,6 +189,28 @@ export default async function BillingPage({
               }
             />
           </div>
+          {overview.upcoming &&
+            (overview.upcoming.discount > 0 || overview.upcoming.accountCredit > 0 || overview.upcoming.tax > 0) && (
+              <dl className="mt-4 space-y-1 rounded-md border border-line bg-bg px-3.5 py-2.5 text-[12px]">
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.07em] text-t5">
+                  Next invoice{overview.upcoming.chargeDate ? ` · ${fmtDate(overview.upcoming.chargeDate)}` : ''}
+                </div>
+                <Line label="Subtotal" value={money(overview.upcoming.subtotal, overview.upcoming.currency)} />
+                {overview.upcoming.discount > 0 && (
+                  <Line label="Discount" value={`− ${money(overview.upcoming.discount, overview.upcoming.currency)}`} accent />
+                )}
+                {overview.upcoming.tax > 0 && (
+                  <Line label="Tax" value={money(overview.upcoming.tax, overview.upcoming.currency)} />
+                )}
+                {overview.upcoming.accountCredit > 0 && (
+                  <Line label="Account credit" value={`− ${money(overview.upcoming.accountCredit, overview.upcoming.currency)}`} accent />
+                )}
+                <div className="mt-1 border-t border-line pt-1">
+                  <Line label="Total due" value={money(overview.upcoming.amountDue, overview.upcoming.currency)} strong />
+                </div>
+              </dl>
+            )}
+
           {overview.cancelAtPeriodEnd && (
             <p className="mt-4 flex items-center gap-2 rounded-md border border-[#92400E]/25 bg-[#FEF3C7] px-3 py-2 text-[12px] text-[#92400E]">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -388,4 +419,21 @@ function StatusPill({ status }: { status: string }) {
 
 function cap(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+function money(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amount);
+  } catch {
+    return `$${amount.toFixed(2)}`;
+  }
+}
+
+function Line({ label, value, accent, strong }: { label: string; value: string; accent?: boolean; strong?: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <dt className={strong ? 'font-semibold text-t2' : 'text-t4'}>{label}</dt>
+      <dd className={`font-medium ${strong ? 'text-t1' : accent ? 'text-[#166534]' : 'text-t2'}`}>{value}</dd>
+    </div>
+  );
 }
