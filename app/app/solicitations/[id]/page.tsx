@@ -37,6 +37,7 @@ import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
 import DocUploader from '@/components/dara/DocUploader';
+import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
 import {
@@ -858,6 +859,31 @@ async function runReviewAction(formData: FormData): Promise<{ ok: boolean }> {
   });
   // Kick the worker immediately (fire-and-forget); the every-minute cron is the backstop.
   triggerWorker();
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
+}
+
+// Rename a solicitation. Auto-review sols get an auto-derived name at upload, so this lets
+// the user set a meaningful one.
+async function renameSolicitationAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const title = String(formData.get('title') ?? '').trim().slice(0, 500);
+  if (!title) return { ok: false, error: 'Name cannot be empty.' };
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.solicitation.update({ where: { id: solId }, data: { title } })
+  );
+  await recordAudit({
+    action: 'solicitation.rename',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: solId,
+    metadata: { title }
+  });
   revalidatePath(`/app/solicitations/${solId}`);
   return { ok: true };
 }
@@ -2237,7 +2263,7 @@ export default async function SolicitationDetailPage({
             {solicitation.agency ? ` · ${solicitation.agency}` : ''}
           </div>
           <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold tracking-tight text-t1">{solicitation.title}</h1>
+            <EditableSolTitle solId={sid} title={solicitation.title} renameAction={renameSolicitationAction} />
             <ModeChip mode={solicitation.mode} />
           </div>
           <p className="mt-1 text-[12px] text-t5">
