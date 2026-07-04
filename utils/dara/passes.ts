@@ -409,29 +409,54 @@ function normRef(s: string): string {
 }
 
 /**
- * Fold the most recent completed Compliance & Format pass's findings into the compliance
- * matrix — no new LLM call. Matches each finding to a requirement by its reference vs the
- * requirement's citation, writes an "AI:" notes block (idempotent), and nudges the status
- * of matched requirements that are still unassessed. Returns how many requirements changed.
+ * Fold the AI review's findings into the compliance matrix — no new LLM call. Sources findings
+ * from the completed Compliance & Format pass (color-team mode) or the completed DirectReview
+ * (Direct AI mode). Matches each finding to a requirement by its reference vs the requirement's
+ * citation, writes an "AI:" notes block (idempotent), and nudges the status of matched
+ * requirements that are still unassessed. Returns how many requirements changed.
  */
 export async function syncMatrixFromPasses(
   solicitationId: bigint,
   companyId: bigint
 ): Promise<{ ok: boolean; synced: number; error?: string }> {
   const loaded = await withTenant(companyId, async (tx) => {
-    const pass = await tx.reviewPass.findFirst({
-      where: { companyId, passType: 'compliance_format', status: 'complete', review: { solicitationId } },
-      orderBy: { completedAt: 'desc' },
-      include: { findings: { orderBy: { sortOrder: 'asc' } } }
+    const sol = await tx.solicitation.findFirst({
+      where: { id: solicitationId, companyId },
+      select: { mode: true }
     });
-    if (!pass) return null;
+    if (!sol) return null;
+
+    // Direct AI: the single unified review's flat findings. Color team: the latest completed
+    // Compliance & Format pass. Both are Finding rows with the same shape.
+    let findings: { severity: 'critical' | 'high' | 'medium' | 'low'; text: string; requirementRef: string; recommendedAction: string }[] | null =
+      null;
+    if (sol.mode === 'direct_ai') {
+      const dr = await tx.directReview.findFirst({
+        where: { solicitationId, companyId, status: 'complete' },
+        include: { findings: { orderBy: { sortOrder: 'asc' } } }
+      });
+      findings = dr ? dr.findings : null;
+    } else {
+      const pass = await tx.reviewPass.findFirst({
+        where: { companyId, passType: 'compliance_format', status: 'complete', review: { solicitationId } },
+        orderBy: { completedAt: 'desc' },
+        include: { findings: { orderBy: { sortOrder: 'asc' } } }
+      });
+      findings = pass ? pass.findings : null;
+    }
+
+    if (!findings) return { mode: sol.mode, findings: null, requirements: [] };
     const requirements = await tx.requirement.findMany({
       where: { solicitationId, companyId, removedAt: null }
     });
-    return { pass, requirements };
+    return { mode: sol.mode, findings, requirements };
   });
-  if (!loaded) {
-    return { ok: false, synced: 0, error: 'No completed Compliance & Format pass yet — run an AI review first.' };
+  if (!loaded || !loaded.findings) {
+    const error =
+      loaded?.mode === 'direct_ai'
+        ? 'No completed AI review yet — run the AI review first.'
+        : 'No completed Compliance & Format pass yet — run an AI review first.';
+    return { ok: false, synced: 0, error };
   }
 
   // Group findings by the requirement they reference (fuzzy: normalized containment).
@@ -441,7 +466,7 @@ export async function syncMatrixFromPasses(
   const groups = new Map<string, Fnd[]>();
   const reqById = new Map<string, Req>(loaded.requirements.map((r) => [r.id.toString(), r] as const));
 
-  for (const f of loaded.pass.findings) {
+  for (const f of loaded.findings) {
     const fr = normRef(f.requirementRef);
     if (fr.length < 3) continue;
     const match = loaded.requirements.find((r) => {
