@@ -82,11 +82,13 @@ verified** — sol#12 created from the same payload that previously failed. See 
   Added `withDbRetry` (retries P1001/P2028/etc.), structured client errors, `[new-sol]` server
   logs, and a client warning for any single file >4 MB. A single >4.5 MB file still fails its own
   request — long-term fix is direct-to-Supabase-Storage signed-URL upload.
-- **⚠️ Two SEPARATE prod bugs surfaced in the logs, NOT yet fixed:**
-  1. `P2022 — column isScored of dara_requirement_versions does not exist`: a color-team
-     migration was never applied to prod → `pnpm prisma migrate deploy` against prod.
-  2. 300s timeouts + `pg` "client already executing a query" warning on `/app/solicitations/[id]`
-     — the workspace page runs concurrent queries on one tenant transaction; needs serializing.
+- **Two follow-ups from the same log dig, both RESOLVED `9be19c5`:**
+  1. `P2022 — column isScored…` was a STALE 2026-07-01 error (code before migration). Prod DB
+     already has the column; all 20 migrations applied. No action.
+  2. 300s timeouts + `pg` "client already executing a query" on `/app/solicitations/[id]`: five
+     components each `setInterval(router.refresh, 3000)` → a backgrounded tab refreshed the heavy
+     sol query forever. Fixed with `components/dara/usePollRefresh.ts` (polls only while the tab
+     is visible). If timeouts persist, split the giant nested `findFirst` in `SolicitationDetailPage`.
 
 ---
 
