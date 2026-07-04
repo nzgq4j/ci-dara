@@ -1,11 +1,42 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-03_
+_Last updated: 2026-07-05_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed)
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed) · HEAD `5d491ea`
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage) · Stripe · Vercel
+
+> **Start-here for the next session is `SESSION_HANDOFF.md`** (deploy model, gotchas, backlog, key files).
+
+---
+
+## 0. Latest session (2026-07-04 → 07-05) — Direct-AI polish, reliability, billing
+
+Commits `f087ac3` → `5d491ea`, all deployed + verified on prod. Highlights:
+
+- **Direct AI create flow fixed** — split into per-file uploads (`createSolShell` + `uploadDocToSol`
+  + `finalizeReview`); a single bundled POST hit Vercel's ~4.5 MB Function body cap. + transient-DB
+  retry + real error surfacing. (memory `create-flow-body-size.md`)
+- **Solicitation Analysis Report** shipped — `/app/solicitations/[id]/report`, the 4th/last mockup.
+  Migration `20260704020000` (Finding owner/effort/status; Review/DirectReview recommendation/
+  submit-date/checklist). AI now emits owner/effort per finding + a holistic recommendation + checklist.
+- **Worker/LLM reliability** — `AI_TIMEOUT_MS=240s` (⚠️ don't lower — 120s silently emptied the
+  compliance matrix), shred time-boxing, pg connection/statement timeouts, worker throws on failed shred.
+- **Workspace perf** — split the giant `[id]` page query into parallel scoped reads; `usePollRefresh`
+  pauses polling when the tab is hidden (killed the 300s-timeout `?_rsc` storm); **compliance sweep now
+  grades 4 batches concurrently** (107 reqs in ~82s).
+- **Delete solicitation** moved to the central Solicitations list (confirm-guarded), works for both modes.
+- **Billing management** — `/app/billing` shows live Stripe subscription details, **actual next charge
+  via `retrieveUpcoming`** (net of discount/credit/tax), invoice history w/ PDFs, and a trial usage card.
+- **Compliance-matrix sync works on the Direct path** — `syncMatrixFromPasses` branches by mode
+  (DirectReview findings vs. color-team pass).
+
+**Open backlog (hardest first):** SAM.gov import (needs API key) · trial enforcement (gate create/run →
+billing) · DOCX matrix export · rename-from-list / `CRON_SECRET`. The full reskin + all 4 mockups are DONE.
+**Deep backlog:** annotated proposal export — regenerate the response doc as `.docx` with **Word
+comments** anchored where the AI suggests changes (OOXML comments; anchor-span location is the hard part).
+See `SESSION_HANDOFF.md` §4.
 
 ---
 
