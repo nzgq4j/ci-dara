@@ -94,15 +94,12 @@ verified** — sol#12 created from the same payload that previously failed. See 
 
 ## 4. Pending work (roadmap — see `ui-redesign-roadmap.md`)
 
-1. **Analysis Report** (`futureautoreviewandcolorreview.png`) — the big remaining piece; a new
-   page unifying auto + color review: exec summary (Overall + Pass 1/2/3 + narrative),
-   **Prioritized Findings & Action Plan** with per-finding **Owner / Effort / Status**, right
-   rail (deadline, finding distribution, DARA recommendation, pre-submission checklist).
-   **Decision made:** finding workflow = **AI-suggested + editable** (the review suggests an
-   owner role + effort estimate, Status defaults Open; users override). **Needs:** migration for
-   `Finding.owner` / `status` (Open/InProgress/Resolved) / `effort` + a checklist concept; prompt
-   changes in `utils/dara/prompt.ts` (`buildDirectReviewPrompt` + pass prompts) to emit
-   owner/effort. Do it in stages: schema + prompt first, then the report page.
+1. ~~**Analysis Report**~~ — **DONE + verified on prod (`a7c142a`).** `/app/solicitations/[id]/report`
+   (all 4 mockups now shipped). Exec summary + Prioritized Findings & Action Plan (inline-editable
+   owner/status; AI owner role + effort) + right rail (deadline, distribution, DARA recommendation +
+   submit date, quick actions, interactive checklist). Migration `20260704020000` applied. AI emits
+   owner/effort per finding + holistic recommendation/checklist (Direct review + final Risk pass).
+   Verified: regenerated sol#12 → all fields populated. See memory `ui-redesign-roadmap.md`.
 2. **DOCX export** on the compliance matrix (mockup has it) — needs a docx lib (`docx` npm);
    only XLSX + Print exist today.
 3. **Trial enforcement is still NOT wired** (only the `review_run` count spans both paradigms).
