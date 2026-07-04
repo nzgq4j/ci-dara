@@ -1253,19 +1253,23 @@ export default async function SolicitationDetailPage({
             </div>
           )}
         </section>
-
-        <section className="flex items-center justify-between gap-3 rounded-[10px] border border-[#991B1B]/25 bg-surf px-4 py-3">
-          <p className="text-[12px] text-t4">
-            <span className="font-semibold text-t3">Delete solicitation</span> — removes its
-            requirements, reviews, documents, and evaluations. Cannot be undone.
-          </p>
-          <form action={deleteSolicitation} className="flex-shrink-0">
-            <input type="hidden" name="solId" value={sid} />
-            <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete</button>
-          </form>
-        </section>
       </div>
     </div>
+  );
+
+  // The delete "danger zone" renders at the workspace footer for BOTH paradigms (it used to
+  // live only in the color-team overview panel, so Direct AI solicitations had no delete).
+  const dangerZone = (
+    <section className="mt-5 flex items-center justify-between gap-3 rounded-[10px] border border-[#991B1B]/25 bg-surf px-4 py-3">
+      <p className="text-[12px] text-t4">
+        <span className="font-semibold text-t3">Delete solicitation</span> — removes its
+        requirements, reviews, documents, and evaluations. Cannot be undone.
+      </p>
+      <form action={deleteSolicitation} className="flex-shrink-0">
+        <input type="hidden" name="solId" value={sid} />
+        <button type="submit" className={btnDanger}><Trash2 className="h-4 w-4" />Delete</button>
+      </form>
+    </section>
   );
 
   const docList = (docs: typeof solicitation.solDocs, empty: string) =>
@@ -2272,6 +2276,8 @@ export default async function SolicitationDetailPage({
         views={pipelineViews}
         initial={isDirect ? 's3' : undefined}
       />
+
+      {dangerZone}
     </div>
   );
 }
