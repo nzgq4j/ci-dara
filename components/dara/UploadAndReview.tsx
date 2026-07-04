@@ -11,18 +11,28 @@
 // is present). Files are held in client state (shared FileDropzone) and posted to the server
 // action as one FormData. Colors use the app's semantic tokens (D5).
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
 import FileDropzone from '@/components/dara/FileDropzone';
 
-type CreateResult = { ok: boolean; error?: string; redirect?: string };
+type ShellResult = { ok: boolean; error?: string; solId?: string };
+type StepResult = { ok: boolean; error?: string; redirect?: string };
+
+// A single Vercel Function request body is capped near 4.5 MB, so we upload one file per
+// request. Warn just under that so an oversized single file gets a clear message instead of a
+// silent 413 mid-flow.
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 export default function UploadAndReview({
-  action
+  createShell,
+  uploadDoc,
+  finalize
 }: {
-  action: (formData: FormData) => Promise<CreateResult>;
+  createShell: (formData: FormData) => Promise<ShellResult>;
+  uploadDoc: (formData: FormData) => Promise<StepResult>;
+  finalize: (formData: FormData) => Promise<StepResult>;
 }) {
   const [step, setStep] = useState<1 | 2>(1);
   const [rfpFiles, setRfpFiles] = useState<File[]>([]);
@@ -43,45 +53,73 @@ export default function UploadAndReview({
   const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
   const willRun = !colorTeam && hasProposal;
 
-  // Staged processing indicator while the server ingests + creates (+ starts the review). The
-  // labels map to what the action actually does in sequence; the bar advances with each.
-  const stages = willRun
-    ? ['Uploading documents…', 'Extracting text…', 'Creating solicitation…', 'Starting AI review…']
-    : ['Uploading documents…', 'Extracting text…', 'Creating solicitation…'];
-  const [stageIdx, setStageIdx] = useState(0);
-  useEffect(() => {
-    if (!pending) {
-      setStageIdx(0);
-      return;
-    }
-    const timers = stages.map((_, i) => setTimeout(() => setStageIdx(i), i * 2200));
-    return () => timers.forEach(clearTimeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending]);
+  // Real progress across the three-step flow (create shell → upload each file → start review),
+  // driven by actual completions rather than a timer. Total steps = 1 shell + N files + 1 start.
+  const totalFiles = rfpFiles.length + proposalFiles.length;
+  const totalSteps = totalFiles + 2;
+  const [progress, setProgress] = useState<{ label: string; done: number }>({ label: '', done: 0 });
+
+  // Any single file over the per-request ceiling would fail its own upload (a Function request
+  // body is capped near 4.5 MB), so flag it up front instead of failing mid-flow.
+  const oversized = [...rfpFiles, ...proposalFiles].filter((f) => f.size > MAX_FILE_BYTES);
 
   const submit = async () => {
     setError(null);
     setPending(true);
-    const fd = new FormData();
-    fd.set('mode', colorTeam ? 'color_team' : 'direct_ai');
-    fd.set('solNumber', solNumber);
-    fd.set('agency', agency);
-    fd.set('naics', naics);
-    fd.set('dueDate', dueDate);
-    rfpFiles.forEach((f) => fd.append('rfpFiles', f));
-    proposalFiles.forEach((f) => fd.append('proposalFiles', f));
+    setProgress({ label: 'Creating solicitation…', done: 0 });
+    let done = 0;
     try {
-      const res = await action(fd);
-      if (res?.ok && res.redirect) {
-        // Hard navigation guarantees the workflow moves forward into the workspace.
-        window.location.assign(res.redirect);
-        return; // keep the processing panel up through the navigation
+      // 1) Create the solicitation shell (metadata only — a tiny request).
+      const meta = new FormData();
+      meta.set('mode', colorTeam ? 'color_team' : 'direct_ai');
+      meta.set('solNumber', solNumber);
+      meta.set('agency', agency);
+      meta.set('naics', naics);
+      meta.set('dueDate', dueDate);
+      meta.set('titleHint', rfpFiles[0]?.name || proposalFiles[0]?.name || '');
+      const shell = await createShell(meta);
+      if (!shell.ok || !shell.solId) {
+        setError(shell.error ?? 'Could not create the solicitation. Please try again.');
+        setPending(false);
+        return;
       }
-      setError(res?.error ?? 'Something went wrong. Please try again.');
+      const solId = shell.solId;
+      setProgress({ label: 'Solicitation created', done: ++done });
+
+      // 2) Upload each file in its own request so no single request exceeds the body limit.
+      const jobs = [
+        ...rfpFiles.map((f) => ({ f, docType: 'rfp' as const })),
+        ...proposalFiles.map((f) => ({ f, docType: 'proposal' as const }))
+      ];
+      for (const { f, docType } of jobs) {
+        setProgress({ label: `Uploading ${f.name}…`, done });
+        const fd = new FormData();
+        fd.set('solId', solId);
+        fd.set('docType', docType);
+        fd.set('file', f);
+        const res = await uploadDoc(fd);
+        if (!res.ok) {
+          setError(res.error ?? `Couldn’t upload ${f.name}. The solicitation was created — you can add this file from the workspace.`);
+          setPending(false);
+          return;
+        }
+        setProgress({ label: `Uploaded ${f.name}`, done: ++done });
+      }
+
+      // 3) Start the unified review (if applicable) and move into the workspace. finalize hands
+      // back a workspace redirect even on a soft error, since the sol + docs already exist.
+      setProgress({ label: willRun ? 'Starting AI review…' : 'Opening workspace…', done });
+      const fin = new FormData();
+      fin.set('solId', solId);
+      fin.set('runReview', willRun ? '1' : '0');
+      const finRes = await finalize(fin);
+      const dest = finRes.redirect ?? `/app/solicitations/${solId}`;
+      window.location.assign(dest); // hard nav; keep the panel up through navigation
+      return;
     } catch {
-      setError('The upload failed — your files may be too large, or the request timed out. Try fewer or smaller files.');
+      setError('Something went wrong — your session may have expired. Reload the page and try again.');
+      setPending(false);
     }
-    setPending(false);
   };
 
   const allFiles = [
@@ -213,6 +251,14 @@ export default function UploadAndReview({
         </p>
       </div>
 
+      {oversized.length > 0 && !pending && (
+        <p className="mt-4 rounded-md border border-[#92400E]/25 bg-[#FEF3C7] px-3 py-2 text-[12px] text-[#92400E]">
+          {oversized.length === 1
+            ? `“${oversized[0].name}” is over 4 MB and may fail to upload. Split or compress it, or add it from the workspace after creating.`
+            : `${oversized.length} files are over 4 MB and may fail to upload. Split or compress them, or add them from the workspace after creating.`}
+        </p>
+      )}
+
       {error && (
         <p className="mt-4 rounded-md border border-[#991B1B]/25 bg-[#FEE2E2] px-3 py-2 text-[12px] text-[#991B1B]">{error}</p>
       )}
@@ -222,15 +268,17 @@ export default function UploadAndReview({
         <div className="mt-5 rounded-lg border border-navy/40 bg-navy/[0.04] px-4 py-4">
           <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-navy">
             <Loader2 className="h-4 w-4 animate-spin" />
-            {stages[stageIdx]}
+            {progress.label || 'Working…'}
           </div>
           <div className="h-1.5 overflow-hidden rounded bg-line">
             <div
-              className="h-full rounded bg-navy transition-all duration-700"
-              style={{ width: `${Math.round(((stageIdx + 1) / stages.length) * 100)}%` }}
+              className="h-full rounded bg-navy transition-all duration-500"
+              style={{ width: `${Math.round((progress.done / Math.max(totalSteps, 1)) * 100)}%` }}
             />
           </div>
-          <p className="mt-2 text-[12px] text-t5">Ingesting and processing your documents — this can take a moment.</p>
+          <p className="mt-2 text-[12px] text-t5">
+            {totalFiles > 0 ? `Uploading ${totalFiles} document${totalFiles > 1 ? 's' : ''}, one at a time — this can take a moment.` : 'Setting up your solicitation…'}
+          </p>
         </div>
       ) : (
         <>
