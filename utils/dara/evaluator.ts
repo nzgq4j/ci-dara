@@ -77,6 +77,10 @@ export interface SweepSummary {
 // fit comfortably under the token cap. (Smaller batches only multiply the document cost.)
 const BATCH_SIZE_COMPLIANCE = 30;
 const BATCH_MAX_TOKENS = 8000;
+// Grade this many 30-requirement batches CONCURRENTLY per round. The LLM call is the
+// bottleneck, so a sequential sweep of a 150+ requirement matrix crawled across many cron
+// ticks; running a few batches in parallel cuts wall-clock ~Nx (matches FACTOR_CONCURRENCY).
+const COMPLIANCE_CONCURRENCY = 4;
 // Don't START a batch unless this much of the deadline remains. The deadline is only
 // checked between batches, so without this a single call can overrun the function's hard
 // limit and be killed mid-write — the "quiet timeout" where progress is lost.
@@ -385,27 +389,49 @@ async function sweepRequirements(
 ): Promise<{ checked: number; error?: string }> {
   let checked = 0;
   let lastError: string | undefined;
+
+  // Slice into 30-item batches once, then grade COMPLIANCE_CONCURRENCY batches per round with
+  // their LLM calls in flight together (the slow part). Results are persisted after each round.
+  const batches: (typeof requirements)[] = [];
   for (let i = 0; i < requirements.length; i += BATCH_SIZE_COMPLIANCE) {
-    // Only start a batch if it can finish before the function is killed. Otherwise stop and
-    // let the caller report partial progress — the user re-runs to grade the remainder.
+    batches.push(requirements.slice(i, i + BATCH_SIZE_COMPLIANCE));
+  }
+
+  for (let i = 0; i < batches.length; i += COMPLIANCE_CONCURRENCY) {
+    // Only start a round if a batch can finish before the function is killed. Otherwise stop
+    // and let the caller report partial progress — the sweep is resumable (re-run grades the
+    // rest; already-graded requirements are skipped by the caller).
     if (deadlineMs - Date.now() < BATCH_BUDGET_MS) break;
-    const batch = requirements.slice(i, i + BATCH_SIZE_COMPLIANCE);
-    const user = buildBatchUserPrompt(
-      batch.map((r) => ({ id: r.id.toString(), name: r.name, description: r.description, isScored: false, farReference: r.farReference })),
-      documentText,
-      solText,
-      true
+    const round = batches.slice(i, i + COMPLIANCE_CONCURRENCY);
+
+    const graded = await Promise.all(
+      round.map(async (batch) => {
+        const user = buildBatchUserPrompt(
+          batch.map((r) => ({ id: r.id.toString(), name: r.name, description: r.description, isScored: false, farReference: r.farReference })),
+          documentText,
+          solText,
+          true
+        );
+        try {
+          const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
+          const { items } = parseBatchResults(ai.text);
+          if (items.length === 0) {
+            return { batch, items: [], error: 'The AI returned no parseable determinations — the model may be truncating output. Try a stronger platform model (e.g. Sonnet).' };
+          }
+          return { batch, items, error: undefined as string | undefined };
+        } catch (e) {
+          return { batch, items: [], error: e instanceof Error ? e.message.slice(0, 300) : 'AI request failed.' };
+        }
+      })
     );
-    try {
-      const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
-      const { items } = parseBatchResults(ai.text);
-      if (items.length === 0) {
-        lastError = 'The AI returned no parseable determinations — the model may be truncating output. Try a stronger platform model (e.g. Sonnet).';
-        continue; // a later batch may still succeed; don't abort the whole sweep
-      }
-      const byId = new Map(items.map((it) => [it.requirementId, it]));
+
+    // Persist each batch's determinations (short transactions, one per batch).
+    for (const g of graded) {
+      if (g.error) lastError = g.error; // keep going so one bad batch doesn't abort the rest
+      if (g.items.length === 0) continue;
+      const byId = new Map(g.items.map((it) => [it.requirementId, it]));
       await withTenant(companyId, async (tx) => {
-        for (const r of batch) {
+        for (const r of g.batch) {
           const it = byId.get(r.id.toString());
           if (!it) continue;
           await tx.requirement.update({
@@ -419,10 +445,6 @@ async function sweepRequirements(
           checked++;
         }
       });
-    } catch (e) {
-      // Surface the reason instead of hiding it; keep going so one bad batch doesn't
-      // abort progress on the rest.
-      lastError = e instanceof Error ? e.message.slice(0, 300) : 'AI request failed.';
     }
   }
   return { checked, error: lastError };
