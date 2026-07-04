@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, useTransition, type ReactNode } from 'react';
+import { useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import ProgressBar from './ProgressBar';
+import { usePollRefresh } from '@/components/dara/usePollRefresh';
 
 // Kicks off a background worker job (shred, amendment reconcile) then polls while it runs.
 // These jobs have no known total, so the bar is indeterminate; an optional live count of
@@ -36,11 +37,7 @@ export default function AsyncJobControl({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 3000);
-    return () => clearInterval(t);
-  }, [active, router]);
+  usePollRefresh(active);
 
   const run = () => {
     setError(null);

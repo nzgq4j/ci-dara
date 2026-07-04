@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import ProgressBar from '@/components/dara/ProgressBar';
+import { usePollRefresh } from '@/components/dara/usePollRefresh';
 
 // Live run indicator: while an evaluation is actively running, it polls the page so the
 // accumulating results show up, and renders a determinate progress bar reflecting what
@@ -20,13 +19,7 @@ export default function RunningBanner({
   total?: number;
   currentLabel?: string;
 }) {
-  const router = useRouter();
-
-  useEffect(() => {
-    if (count <= 0) return;
-    const t = setInterval(() => router.refresh(), 2500);
-    return () => clearInterval(t);
-  }, [count, router]);
+  usePollRefresh(count > 0, 2500);
 
   if (count <= 0) return null;
 

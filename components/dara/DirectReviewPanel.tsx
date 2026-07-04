@@ -8,9 +8,10 @@
 // Reuses the exact finding-row markup / severity styling from ReviewPassPanel (the spec's
 // "reuse the existing finding row component"). Colors map to the app's tokens (D5).
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Loader2, RotateCcw } from 'lucide-react';
+import { usePollRefresh } from '@/components/dara/usePollRefresh';
 
 type Severity = 'critical' | 'high' | 'medium' | 'low';
 export type DirectFinding = {
@@ -74,11 +75,7 @@ export default function DirectReviewPanel({
   const [filter, setFilter] = useState<Filter>('all');
 
   const active = status === 'running';
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 3000);
-    return () => clearInterval(t);
-  }, [active, router]);
+  usePollRefresh(active);
 
   const counts = useMemo(() => {
     const c = { critical: 0, high: 0, medium: 0, low: 0 };

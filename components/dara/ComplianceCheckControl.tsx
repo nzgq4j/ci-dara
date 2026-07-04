@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckSquare, Loader2 } from 'lucide-react';
+import { usePollRefresh } from '@/components/dara/usePollRefresh';
 
 // Runs the compliance sweep in the BACKGROUND worker (async JobQueue) instead of a long
 // synchronous request. Enqueues the job, then polls while it runs — showing REAL progress
@@ -28,11 +29,7 @@ export default function ComplianceCheckControl({
   const [error, setError] = useState<string | null>(null);
 
   // While a check is running, refresh so graded/total climbs live and we notice completion.
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 3000);
-    return () => clearInterval(t);
-  }, [active, router]);
+  usePollRefresh(active);
 
   const run = () => {
     setError(null);

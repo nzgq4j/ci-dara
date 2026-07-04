@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Loader2, CheckCircle2, AlertTriangle, RotateCcw, ChevronDown, Clock } from 'lucide-react';
+import { usePollRefresh } from '@/components/dara/usePollRefresh';
 
 export type PassView = {
   id: string;
@@ -74,11 +75,7 @@ export default function ReviewPassPanel({
   const anyStarted = passes.some((p) => p.status !== 'not_started');
 
   // Poll while a pass is queued/running so the live status/progress advances.
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 3000);
-    return () => clearInterval(t);
-  }, [active, router]);
+  usePollRefresh(active);
 
   const run = () => {
     const fd = new FormData();
