@@ -443,7 +443,7 @@ export default async function AdminPage() {
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t5">
                       Entitlements{' '}
-                      <span className={`normal-case ${isCustom ? 'text-[#e0c97d]' : 'text-t4'}`}>
+                      <span className={`normal-case ${isCustom ? 'text-[#92400E]' : 'text-t4'}`}>
                         · {isCustom ? 'custom override' : 'inheriting platform defaults'}
                       </span>
                     </div>

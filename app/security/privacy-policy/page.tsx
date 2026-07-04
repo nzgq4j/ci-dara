@@ -23,7 +23,7 @@ export default function PrivacyPolicyPage() {
       <h1 className="text-2xl font-bold tracking-tight text-t1">Privacy Policy</h1>
       <p className="mt-1 text-[12px] text-t5">Last updated: {UPDATED}</p>
 
-      <div className="mt-5 rounded-lg border border-[#5a4a1f]/50 bg-[#5a4a1f]/10 px-4 py-3 text-[12px] leading-relaxed text-[#e0c97d]">
+      <div className="mt-5 rounded-lg border border-[#5a4a1f]/50 bg-[#5a4a1f]/10 px-4 py-3 text-[12px] leading-relaxed text-[#92400E]">
         This document is a working draft provided for transparency. It should be
         reviewed and finalized by legal counsel before being relied upon.
       </div>

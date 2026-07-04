@@ -93,7 +93,7 @@ export default function AiActionButton({
           className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-[12px] leading-relaxed ${
             state.ok
               ? 'border-[#1f5a31]/50 bg-[#1f5a31]/15 text-[#7de0a0]'
-              : 'border-[#5a4a1f]/60 bg-[#5a4a1f]/10 text-[#e0c97d]'
+              : 'border-[#5a4a1f]/60 bg-[#5a4a1f]/10 text-[#92400E]'
           }`}
         >
           {state.ok ? (

@@ -43,7 +43,7 @@ export default function CuiBoundaryModal({ provider, mode }: { provider: string;
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a4a1f]/50 bg-[#5a4a1f]/10 px-2.5 py-1 text-[11px] font-medium text-[#e0c97d] transition-colors hover:bg-[#5a4a1f]/20"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a4a1f]/50 bg-[#5a4a1f]/10 px-2.5 py-1 text-[11px] font-medium text-[#92400E] transition-colors hover:bg-[#5a4a1f]/20"
       >
         <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
         CUI data boundary
@@ -62,7 +62,7 @@ export default function CuiBoundaryModal({ provider, mode }: { provider: string;
           >
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#5a4a1f]/20 text-[#e0c97d]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#5a4a1f]/20 text-[#92400E]">
                   <ShieldAlert className="h-4 w-4" aria-hidden="true" />
                 </span>
                 <h2 className="text-[15px] font-bold text-t1">CUI data boundary</h2>

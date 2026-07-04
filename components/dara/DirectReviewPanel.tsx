@@ -25,7 +25,7 @@ type Filter = 'all' | Severity;
 const SEV: Record<Severity, { label: string; cls: string }> = {
   critical: { label: 'CRITICAL', cls: 'bg-[#5a1f1f]/40 text-[#e88]' },
   high: { label: 'HIGH', cls: 'bg-[#5a3a1f]/40 text-[#e0a878]' },
-  medium: { label: 'MEDIUM', cls: 'bg-[#5a4a1f]/35 text-[#e0c97d]' },
+  medium: { label: 'MEDIUM', cls: 'bg-[#5a4a1f]/35 text-[#92400E]' },
   low: { label: 'LOW', cls: 'bg-navy/10 text-navy' }
 };
 const SEV_RANK: Record<Severity, number> = { critical: 3, high: 2, medium: 1, low: 0 };
@@ -33,7 +33,7 @@ const SEV_RANK: Record<Severity, number> = { critical: 3, high: 2, medium: 1, lo
 // Score bands per the spec (>=85 / 65-84 / <65), app token colors.
 function scoreColor(s: number): string {
   if (s >= 85) return 'text-[#7de0a0]';
-  if (s >= 65) return 'text-[#e0c97d]';
+  if (s >= 65) return 'text-[#92400E]';
   return 'text-[#e07d7d]';
 }
 function scoreBar(s: number): string {
@@ -190,7 +190,7 @@ export default function DirectReviewPanel({
           <div className="mt-4 grid grid-cols-4 gap-1.5">
             <Count label="Crit" n={counts.critical} cls="text-[#e88]" />
             <Count label="High" n={counts.high} cls="text-[#e0a878]" />
-            <Count label="Med" n={counts.medium} cls="text-[#e0c97d]" />
+            <Count label="Med" n={counts.medium} cls="text-[#92400E]" />
             <Count label="Low" n={counts.low} cls="text-navy" />
           </div>
         </div>

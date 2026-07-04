@@ -92,7 +92,7 @@ const COMPLIANCE_LABEL: Record<string, string> = Object.fromEntries(
 const STATUS_PILL: Record<string, string> = {
   not_assessed: 'text-t5',
   compliant: 'text-[#7de0a0]',
-  partial: 'text-[#e0c97d]',
+  partial: 'text-[#92400E]',
   non_compliant: 'text-[#e07d7d]',
   not_applicable: 'text-t4'
 };
@@ -1321,7 +1321,7 @@ export default async function SolicitationDetailPage({
           </div>
         </div>
         {solicitation.solDocs.length === 0 && (
-          <p className="mt-3 rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
+          <p className="mt-3 rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#92400E]">
             Upload solicitation documents on the Documents tab first — the generator reads
             their extracted text.
           </p>
@@ -1393,7 +1393,7 @@ export default async function SolicitationDetailPage({
                         <span className="flex-shrink-0 rounded bg-[#1f5a31]/25 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#7de0a0]">new</span>
                       )}
                       {r.changedByAmendmentId && (
-                        <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#e0c97d]">amended v{r.version}</span>
+                        <span className="flex-shrink-0 rounded bg-[#5a4a1f]/30 px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#92400E]">amended v{r.version}</span>
                       )}
                     </div>
                     <div className="px-1">
@@ -1567,7 +1567,7 @@ export default async function SolicitationDetailPage({
       </div>
 
       {!canEvaluate && (
-        <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#e0c97d]">
+        <p className="rounded-lg border border-[#5a4a1f]/50 bg-surf px-4 py-2.5 text-[12px] text-[#92400E]">
           To run a review you need at least one requirement (Compliance stage) and one active
           persona ({activeRequirements.length} requirements, {activeCount} active personas).
         </p>
@@ -1597,7 +1597,7 @@ export default async function SolicitationDetailPage({
               <span className="text-[13px] font-semibold text-t1">{rv.name}</span>
               <StatusBadge status={rv.status} />
               {isStale(rv) && (
-                <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+                <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
                   pre-amendment
                 </span>
               )}
@@ -1868,7 +1868,7 @@ export default async function SolicitationDetailPage({
                   <span className="font-semibold text-t1">{personaMap.get(e.personaId.toString()) ?? 'Persona'}</span>
                   <span className="text-t4"> · {e.review?.name ?? '—'}</span>
                   {e.review && isStale(e.review) && (
-                    <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+                    <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
                       pre-amendment
                     </span>
                   )}
@@ -1925,7 +1925,7 @@ export default async function SolicitationDetailPage({
 
   const CHANGE_BADGE: Record<string, string> = {
     add: 'bg-[#1f5a31]/25 text-[#7de0a0]',
-    modify: 'bg-[#5a4a1f]/30 text-[#e0c97d]',
+    modify: 'bg-[#5a4a1f]/30 text-[#92400E]',
     remove: 'bg-[#5a1f1f]/30 text-[#e07d7d]'
   };
 

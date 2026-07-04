@@ -21,7 +21,7 @@ import {
 const severityBadge: Record<Severity, string> = {
   Critical: 'bg-[#5a1f1f]/40 text-[#ff9b9b]',
   High: 'bg-[#5a3a1f]/40 text-[#e0a07d]',
-  Moderate: 'bg-[#5a4a1f]/30 text-[#e0c97d]',
+  Moderate: 'bg-[#5a4a1f]/30 text-[#92400E]',
   Low: 'bg-navy/10 text-navy',
   Informational: 'bg-line text-t4'
 };
@@ -29,14 +29,14 @@ const severityBadge: Record<Severity, string> = {
 const severityAccent: Record<Severity, string> = {
   Critical: '#e07d7d',
   High: '#e0a07d',
-  Moderate: '#e0c97d',
+  Moderate: '#92400E',
   Low: '#6f9bf5',
   Informational: '#7d97b3'
 };
 
 const statusColor: Record<ControlStatus, string> = {
   Implemented: 'text-[#7de0a0]',
-  Partial: 'text-[#e0c97d]',
+  Partial: 'text-[#92400E]',
   'Not implemented': 'text-[#e07d7d]',
   'Not applicable': 'text-t5',
   Undetermined: 'text-t4'
@@ -212,7 +212,7 @@ export default async function SecurityPage() {
       {/* Findings register */}
       <section>
         <div className="mb-4 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-[#e0c97d]" />
+          <AlertTriangle className="h-4 w-4 text-[#92400E]" />
           <h2 className={sectionTitle}>Assessment Findings</h2>
         </div>
 

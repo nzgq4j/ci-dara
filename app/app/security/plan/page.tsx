@@ -16,7 +16,7 @@ import {
 
 const statusColor: Record<ControlStatus, string> = {
   Implemented: 'text-[#7de0a0]',
-  Partial: 'text-[#e0c97d]',
+  Partial: 'text-[#92400E]',
   'Not implemented': 'text-[#e07d7d]',
   'Not applicable': 'text-[#3d5270]',
   Undetermined: 'text-[#7d97b3]'
@@ -201,7 +201,7 @@ export default async function SecurityPlanPage() {
       {/* 5. POA&M */}
       <section>
         <h2 className={`mb-3 flex items-center gap-2 ${sectionTitle}`}>
-          <ListChecks className="h-4 w-4 text-[#e0c97d]" />5. Plan of Action &amp;
+          <ListChecks className="h-4 w-4 text-[#92400E]" />5. Plan of Action &amp;
           Milestones (POA&amp;M)
         </h2>
         {poam.length === 0 ? (

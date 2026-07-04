@@ -37,7 +37,7 @@ export default function ResultCard({
             </span>
           )}
           {archived && (
-            <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0c97d]">
+            <span className="rounded bg-[#5a4a1f]/30 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
               archived
             </span>
           )}

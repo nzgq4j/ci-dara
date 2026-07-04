@@ -77,7 +77,7 @@ export default function ComplianceCheckControl({
       )}
 
       {error && (
-        <div className="rounded-lg border border-[#5a4a1f]/60 bg-[#5a4a1f]/10 px-3 py-2 text-[12px] leading-relaxed text-[#e0c97d]">
+        <div className="rounded-lg border border-[#5a4a1f]/60 bg-[#5a4a1f]/10 px-3 py-2 text-[12px] leading-relaxed text-[#92400E]">
           {error}
         </div>
       )}
