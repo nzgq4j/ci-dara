@@ -22,6 +22,7 @@ import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment } from '@/utils/dara/amendments';
+import { runDirectReview } from '@/utils/dara/direct-review';
 
 const PASS_MAX_TOKENS = 6000;
 
@@ -496,7 +497,14 @@ async function reapOrphanedJobs(): Promise<void> {
         where: { id: j.id },
         data: { status: 'failed', finishedAt: new Date(), error: 'Worker timed out before the review finished.' }
       });
-      const payload = (j.payload ?? {}) as { passId?: string; reviewId?: string };
+      const payload = (j.payload ?? {}) as { passId?: string; reviewId?: string; directReviewId?: string };
+      // A Direct AI review is a single call — out of attempts means surface the failure.
+      if (payload.directReviewId) {
+        await prismaAdmin.directReview.updateMany({
+          where: { id: BigInt(payload.directReviewId), status: { in: ['running'] } },
+          data: { status: 'error', progress: 0, progressLabel: '', errorMessage: 'Timed out — re-run the review.' }
+        });
+      }
       const where = payload.passId
         ? { id: BigInt(payload.passId) }
         : payload.reviewId
@@ -516,6 +524,14 @@ async function reapOrphanedJobs(): Promise<void> {
   await prismaAdmin.reviewPass.updateMany({
     where: { status: 'running', startedAt: { lt: staleBefore } },
     data: { status: 'queued', progress: 0, progressLabel: '' }
+  });
+
+  // A Direct AI review left `running` past the stale margin whose job was requeued (attempts
+  // remain) re-runs from scratch on the next tick — runDirectReview is idempotent and
+  // replaces findings, so just clear the stale progress so the UI shows a live status.
+  await prismaAdmin.directReview.updateMany({
+    where: { status: 'running', startedAt: { lt: staleBefore } },
+    data: { progress: 0, progressLabel: '' }
   });
 }
 
@@ -560,11 +576,14 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
     if (claim.count === 0) continue;
 
     const companyId = pending.companyId;
-    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string; amendmentId?: string };
+    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string; amendmentId?: string; directReviewId?: string };
 
     try {
       let done = true;
-      if (payload.kind === 'single_pass' && payload.passId) {
+      if (payload.kind === 'direct_review' && payload.directReviewId) {
+        // Single unified LLM call — always finishes within one tick (no time-boxing needed).
+        await runDirectReview(BigInt(payload.directReviewId), companyId);
+      } else if (payload.kind === 'single_pass' && payload.passId) {
         await runPass(BigInt(payload.passId), companyId, deadlineMs);
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);

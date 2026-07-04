@@ -7,6 +7,7 @@ import { withTenant } from '@/utils/prisma';
 import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, cardDashed, btnPrimary } from '@/components/dara/theme';
+import { ModeChip, AiReviewStatus, AiReviewAction } from '@/components/dara/ReviewModeBits';
 
 export default async function SolicitationsPage() {
   const supabase = createClient();
@@ -32,7 +33,8 @@ export default async function SolicitationsPage() {
       orderBy: { createdAt: 'desc' },
       include: {
         _count: { select: { requirements: true, reviews: true, evaluations: true } },
-        departments: { include: { team: { select: { name: true } } } }
+        departments: { include: { team: { select: { name: true } } } },
+        directReviews: { select: { status: true, score: true } }
       }
     });
   });
@@ -93,6 +95,12 @@ export default async function SolicitationsPage() {
                 <th className="px-3.5 py-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-t5">
                   Evaluations
                 </th>
+                <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
+                  AI Review
+                </th>
+                <th className="px-3.5 py-2.5 text-right font-mono text-[10px] uppercase tracking-wide text-t5">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -102,12 +110,15 @@ export default async function SolicitationsPage() {
                   className="border-t border-line transition-colors hover:bg-surf2"
                 >
                   <td className="px-[18px] py-3">
-                    <Link
-                      href={`/app/solicitations/${sol.id}`}
-                      className="text-[13px] font-semibold text-t2 transition-colors hover:text-[#3b6ef0]"
-                    >
-                      {sol.title}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <ModeChip mode={sol.mode} />
+                      <Link
+                        href={`/app/solicitations/${sol.id}`}
+                        className="text-[13px] font-semibold text-t2 transition-colors hover:text-[#3b6ef0]"
+                      >
+                        {sol.title}
+                      </Link>
+                    </div>
                   </td>
                   <td className="px-3.5 py-3 font-mono text-[11px] text-t5">
                     {sol.solNumber || '—'}
@@ -139,6 +150,28 @@ export default async function SolicitationsPage() {
                   </td>
                   <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.evaluations}
+                  </td>
+                  <td className="px-3.5 py-3">
+                    {sol.mode === 'direct_ai' ? (
+                      <AiReviewStatus
+                        status={sol.directReviews[0]?.status}
+                        score={sol.directReviews[0]?.score}
+                      />
+                    ) : (
+                      <span className="font-mono text-[11px] text-t5">Color Team</span>
+                    )}
+                  </td>
+                  <td className="px-3.5 py-3 text-right">
+                    {sol.mode === 'direct_ai' ? (
+                      <AiReviewAction solId={sol.id.toString()} status={sol.directReviews[0]?.status} />
+                    ) : (
+                      <Link
+                        href={`/app/solicitations/${sol.id}`}
+                        className="inline-flex items-center whitespace-nowrap rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-t4 transition-colors hover:border-[#3b6ef0]/50 hover:text-t1"
+                      >
+                        Open
+                      </Link>
+                    )}
                   </td>
                 </tr>
               ))}

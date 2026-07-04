@@ -141,6 +141,24 @@ enum ReviewStatus {
   complete
 }
 
+// Which review paradigm a solicitation runs under. Set at upload, immutable once a
+// review is initiated. `direct_ai` = the single-click unified AI review (one score, one
+// flat findings list); `color_team` = the P1/P2/P3 gated pass workflow. New solicitations
+// default to direct_ai; color_team is opt-in on the upload screen.
+enum ReviewMode {
+  direct_ai
+  color_team
+}
+
+// Lifecycle of a Direct AI review — one unified analysis of the proposal draft vs. the
+// solicitation. Single LLM call (not the three sequential color-team passes).
+enum DirectReviewStatus {
+  not_started
+  running
+  complete
+  error
+}
+
 // What a solicitation document is: the RFP itself, an amendment to it, or our own
 // proposal working draft (which reviews snapshot).
 enum DocType {
@@ -379,18 +397,22 @@ model Solicitation {
   title       String   @db.VarChar(500)
   solNumber   String   @default("") @map("sol_number") @db.VarChar(100)
   agency      String   @default("") @db.VarChar(255)
+  // Which review paradigm this solicitation runs under (set at upload, immutable once a
+  // review is initiated). New solicitations default to direct_ai.
+  mode        ReviewMode @default(direct_ai)
   notes       String?
   createdBy   String?  @map("created_by") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  company      Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  solDocs      SolDocument[]
-  requirements Requirement[]
-  reviews      Review[]
-  evaluations  Evaluation[]
-  departments  SolicitationDepartment[]
-  amendments   Amendment[]
+  company       Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  solDocs       SolDocument[]
+  requirements  Requirement[]
+  reviews       Review[]
+  directReviews DirectReview[]
+  evaluations   Evaluation[]
+  departments   SolicitationDepartment[]
+  amendments    Amendment[]
 
   @@index([companyId])
   @@map("dara_solicitations")
@@ -617,12 +639,15 @@ model ReviewPass {
   @@map("dara_review_passes")
 }
 
-// A single severity-ranked finding produced by a review pass: the issue, the requirement
-// it references, and the recommended action. Rebuilt on each pass re-run.
+// A single severity-ranked finding: the issue, the requirement it references, and the
+// recommended action. Serves BOTH review paradigms — it belongs to exactly one of a
+// color-team ReviewPass (passId) or a Direct AI review (directReviewId). Rebuilt on each
+// (re-)run. The exactly-one invariant is enforced by a CHECK constraint in the migration.
 model Finding {
   id                BigInt          @id @default(autoincrement())
   companyId         BigInt          @map("company_id")
-  passId            BigInt          @map("pass_id")
+  passId            BigInt?         @map("pass_id")
+  directReviewId    BigInt?         @map("direct_review_id")
   severity          FindingSeverity
   text              String
   requirementRef    String          @default("") @map("requirement_ref") @db.VarChar(200)
@@ -630,11 +655,42 @@ model Finding {
   sortOrder         Int             @default(0) @map("sort_order")
   createdAt         DateTime        @default(now()) @map("created_at")
 
-  pass ReviewPass @relation(fields: [passId], references: [id], onDelete: Cascade)
+  pass         ReviewPass?   @relation(fields: [passId], references: [id], onDelete: Cascade)
+  directReview DirectReview? @relation(fields: [directReviewId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
   @@index([passId])
+  @@index([directReviewId])
   @@map("dara_findings")
+}
+
+// A Direct AI review: one unified AI analysis of the solicitation's proposal working draft
+// against the RFP, producing a single 0-100 score and a flat, severity-ranked findings list
+// (no passes, no gates). One per solicitation — a re-run replaces its findings in place.
+// Driven by the same async JobQueue worker as the color-team passes; the UI polls
+// status/progress. Coexists with the color-team Review model; a solicitation uses one
+// paradigm (Solicitation.mode), never both.
+model DirectReview {
+  id             BigInt             @id @default(autoincrement())
+  companyId      BigInt             @map("company_id")
+  solicitationId BigInt             @unique @map("solicitation_id")
+  status         DirectReviewStatus @default(not_started)
+  score          Int? // 0-100, null until complete
+  progress       Int                @default(0) // 0-100, for the live bar while running
+  progressLabel  String             @default("") @map("progress_label") @db.VarChar(200)
+  findingsCount  Int                @default(0) @map("findings_count")
+  errorMessage   String?            @map("error_message") @db.VarChar(500)
+  runAt          DateTime?          @map("run_at") // timestamp of last completed run
+  startedAt      DateTime?          @map("started_at")
+  completedAt    DateTime?          @map("completed_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @default(now()) @updatedAt @map("updated_at")
+
+  solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  findings     Finding[]
+
+  @@index([companyId])
+  @@map("dara_direct_reviews")
 }
 
 // A frozen snapshot of one proposal-draft document captured for a review (evolved

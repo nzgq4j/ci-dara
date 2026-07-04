@@ -177,13 +177,19 @@ export async function requireTrialCapacity(companyId: bigint, resource: TrialRes
   const platformDefaults = await getPlatformDefaultEntitlements();
   const limit = resolveEntitlements(company.entitlements, platformDefaults).limits[resource];
 
-  const used = await withTenant(companyId, (tx) => {
+  const used = await withTenant(companyId, async (tx) => {
     switch (resource) {
       case 'solicitation':
         return tx.solicitation.count({ where: { companyId } });
-      case 'review_run':
-        // Count review runs = reviews that have at least one pass row (each run creates 3).
-        return tx.review.count({ where: { companyId, passes: { some: {} } } });
+      case 'review_run': {
+        // A "review run" spans both paradigms: a color-team review that has at least one pass
+        // row (each run creates 3) OR a Direct AI review that has been initiated.
+        const colorTeam = await tx.review.count({ where: { companyId, passes: { some: {} } } });
+        const directAi = await tx.directReview.count({
+          where: { companyId, status: { not: 'not_started' } }
+        });
+        return colorTeam + directAi;
+      }
       case 'seat':
         return tx.daraUser.count({ where: { companyId, isActive: true } });
     }

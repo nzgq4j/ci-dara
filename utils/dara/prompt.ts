@@ -992,3 +992,67 @@ export function parsePassResult(text: string): ParsedPass {
     .filter((f): f is ParsedPass['findings'][number] => f !== null);
   return { score, summary: summary.slice(0, 500), findings };
 }
+
+// ===================== Direct AI review (unified single-pass) =====================
+//
+// The Direct AI review collapses the three color-team lenses (Compliance & Format,
+// Technical Responsiveness, Risk & Competitive) into ONE review that returns a single
+// overall readiness score plus one flat, severity-ranked findings list spanning all three
+// concerns. Same output shape as a pass (PASS_SCHEMA / ParsedPass), so parsePassResult
+// parses it — re-exported below as parseDirectReviewResult for call-site clarity.
+
+/**
+ * Build the prompt for a Direct AI review: one unified pass over the proposal draft vs. the
+ * solicitation across all three review lenses, yielding a single 0-100 readiness score and a
+ * flat findings list. `requirementsRef` is a compact list of the solicitation's requirements
+ * (name + citation) the model can cite in findings.
+ */
+export function buildDirectReviewPrompt(
+  solText: string,
+  proposalText: string,
+  requirementsRef: string
+): { system: string; user: string } {
+  const token = randomBytes(9).toString('hex');
+  const sol = fenceUntrusted('SOLICITATION', truncate(solText, 40000), token);
+  const proposal = fenceUntrusted('PROPOSAL', truncate(proposalText, 40000), token);
+
+  const lensBlock = PASS_TYPES.map((t, i) => `${i + 1}. ${PASS_LENS[t].label} — ${PASS_LENS[t].guidance}`).join(
+    '\n\n'
+  );
+
+  const system =
+    'You are a senior government-contracting proposal reviewer performing a single unified ' +
+    'AI review of a proposal draft against its solicitation. In ONE pass you cover three ' +
+    'concerns together: compliance & format, technical responsiveness, and risk & ' +
+    'competitive position. You produce ONE overall readiness score and ONE flat list of ' +
+    'severity-ranked findings drawn from all three concerns, each tied to a specific ' +
+    'requirement where possible and paired with a concrete recommended action. Be rigorous ' +
+    'and specific; cite evidence from the proposal and solicitation. Respond only in the ' +
+    'JSON format specified.';
+
+  const user =
+    `## Solicitation (reference)\n\n${sol}\n\n` +
+    `## Proposal draft under review\n\n${proposal}\n\n` +
+    (requirementsRef.trim()
+      ? `## Requirements checklist (cite these in "ref" where relevant)\n\n${truncate(requirementsRef, 6000)}\n\n`
+      : '') +
+    `## Instructions\n\n${INJECTION_GUARD}\n\n` +
+    'Review the proposal draft against the solicitation across all three concerns below, ' +
+    'and return a single consolidated result:\n\n' +
+    `${lensBlock}\n\n` +
+    'Assign one "score" from 0-100 representing the proposal\'s overall readiness to be ' +
+    'submitted competitively (100 = fully compliant, responsive, and low-risk; 0 = not ready). ' +
+    'List every material finding across all three concerns in ONE flat array, most severe ' +
+    'first. Use "critical" for a gap that would make the proposal non-compliant or ' +
+    'non-competitive, "high" for a serious weakness, "medium" for a notable improvement, ' +
+    '"low" for a minor polish item. Do not group by concern and do not invent requirements ' +
+    'not in the documents. If the proposal draft is empty or missing, return score 0 and a ' +
+    'single critical finding saying no proposal draft was captured.\n\n' +
+    `Respond ONLY with a valid JSON object matching this schema exactly:\n\n${PASS_SCHEMA}\n\n` +
+    'Do not include any text outside the JSON object.';
+
+  return { system, user };
+}
+
+/** Parse a Direct AI review response (same shape as a pass): score + flat findings. */
+export const parseDirectReviewResult = parsePassResult;

@@ -1,0 +1,203 @@
+// Direct AI review engine — the single-click, non-process-driven review path.
+//
+// A Direct AI review runs ONE unified analysis of a solicitation's proposal working draft
+// against the RFP (across compliance/format, technical responsiveness, and risk/competitive
+// concerns) and writes a single 0-100 readiness score plus a flat, severity-ranked findings
+// list. It reuses the same async JobQueue worker as the color-team passes (see passes.ts):
+// enqueue drops a `direct_review` job; the worker calls runDirectReview under the job's
+// tenant. Unlike the 3-pass flow this is a single LLM call, so it always finishes within one
+// worker tick — no per-pass time-boxing needed.
+//
+// Mirrors the pass engine's burst pattern: the slow LLM call runs OUTSIDE any tenant
+// transaction; short withTenant() bursts wrap the DB reads/writes around it.
+
+import { withTenant } from '@/utils/prisma';
+import { decryptField } from '@/utils/dara/crypto';
+import { buildDirectReviewPrompt, parseDirectReviewResult } from '@/utils/dara/prompt';
+import { complete, resolveCompanyAI } from '@/utils/dara/providers';
+import { getPlatformAI } from '@/utils/dara/platform-ai';
+
+const DIRECT_MAX_TOKENS = 8000;
+
+interface DocFile {
+  originalFilename: string;
+  extractedText: string | null;
+  extractionStatus: string;
+}
+
+function concatDocs(files: DocFile[]): string {
+  return files
+    .filter((f) => f.extractionStatus === 'complete')
+    .map((f) => ({ name: f.originalFilename, text: decryptField(f.extractedText) }))
+    .filter((d) => d.text.trim() !== '')
+    .map((d) => `=== ${d.name} ===\n\n${d.text}`)
+    .join('\n\n');
+}
+
+/** Create the DirectReview row for a solicitation if it doesn't exist yet (idempotent). */
+export async function ensureDirectReview(solicitationId: bigint, companyId: bigint): Promise<bigint> {
+  return withTenant(companyId, async (tx) => {
+    const existing = await tx.directReview.findUnique({ where: { solicitationId } });
+    if (existing) return existing.id;
+    const created = await tx.directReview.create({
+      data: { companyId, solicitationId, status: 'not_started' }
+    });
+    return created.id;
+  });
+}
+
+/**
+ * Enqueue a Direct AI review run: reset the solicitation's DirectReview to `running` and drop
+ * a JobQueue row the worker picks up. Idempotent — reuses the single DirectReview row per
+ * solicitation, so a re-run replaces the prior findings/score in place.
+ */
+export async function enqueueDirectReview(solicitationId: bigint, companyId: bigint): Promise<void> {
+  const directReviewId = await ensureDirectReview(solicitationId, companyId);
+  await withTenant(companyId, async (tx) => {
+    await tx.directReview.update({
+      where: { id: directReviewId },
+      data: { status: 'running', progress: 0, progressLabel: '', errorMessage: null, startedAt: new Date() }
+    });
+    await tx.jobQueue.create({
+      data: {
+        companyId,
+        jobType: 'evaluate',
+        payload: { kind: 'direct_review', directReviewId: directReviewId.toString() },
+        status: 'pending'
+      }
+    });
+  });
+}
+
+/** True when a Direct AI review is running (or queued) for this solicitation — drives the UI poll. */
+export async function isDirectReviewActive(solicitationId: bigint, companyId: bigint): Promise<boolean> {
+  return withTenant(companyId, async (tx) => {
+    const dr = await tx.directReview.findUnique({
+      where: { solicitationId },
+      select: { id: true, status: true }
+    });
+    if (!dr) return false;
+    if (dr.status === 'running') return true;
+    // Also active if a direct_review job is queued but the row hasn't flipped to running yet.
+    const jobs = await tx.jobQueue.findMany({
+      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
+      select: { payload: true }
+    });
+    const drId = dr.id.toString();
+    return jobs.some((j) => {
+      const p = (j.payload ?? {}) as { kind?: string; directReviewId?: string };
+      return p.kind === 'direct_review' && p.directReviewId === drId;
+    });
+  });
+}
+
+async function failDirectReview(directReviewId: bigint, companyId: bigint, message: string): Promise<void> {
+  await withTenant(companyId, (tx) =>
+    tx.directReview.update({
+      where: { id: directReviewId },
+      data: { status: 'error', progress: 0, progressLabel: '', errorMessage: message }
+    })
+  );
+}
+
+/**
+ * Run a Direct AI review: load the proposal draft + solicitation + requirements, call the
+ * model once for the unified lens, and write the score + flat findings. Resumable/idempotent
+ * — a re-run replaces the review's findings. Returns whether it reached a terminal state.
+ */
+export async function runDirectReview(
+  directReviewId: bigint,
+  companyId: bigint
+): Promise<{ ok: boolean; error?: string }> {
+  const loaded = await withTenant(companyId, async (tx) => {
+    const review = await tx.directReview.findFirst({ where: { id: directReviewId, companyId } });
+    if (!review) return null;
+    const company = await tx.company.findUnique({ where: { id: companyId } });
+    const solDocs = await tx.solDocument.findMany({
+      where: { solicitationId: review.solicitationId, companyId }
+    });
+    const requirements = await tx.requirement.findMany({
+      where: { solicitationId: review.solicitationId, companyId, removedAt: null },
+      select: { name: true, citation: true },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
+    });
+    return { review, company, solDocs, requirements };
+  });
+
+  if (!loaded?.review) return { ok: false, error: 'Direct review not found.' };
+  if (!loaded.company) {
+    await failDirectReview(directReviewId, companyId, 'Company not found.');
+    return { ok: false, error: 'Company not found.' };
+  }
+
+  // Mark running (idempotent — enqueue already did, but a worker retry re-enters here).
+  await withTenant(companyId, (tx) =>
+    tx.directReview.update({
+      where: { id: directReviewId },
+      data: {
+        status: 'running',
+        progress: 20,
+        progressLabel: 'Analyzing the proposal against the solicitation…',
+        startedAt: loaded.review.startedAt ?? new Date(),
+        errorMessage: null
+      }
+    })
+  );
+
+  const proposalText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'proposal'));
+  const solText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'rfp'));
+  const requirementsRef = loaded.requirements
+    .map((r) => `- ${r.name}${r.citation ? ` (${r.citation})` : ''}`)
+    .join('\n');
+
+  const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
+  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  if (!apiKey) {
+    await failDirectReview(directReviewId, companyId, `No API key configured for provider "${provider}".`);
+    return { ok: false, error: 'No API key.' };
+  }
+
+  const { system, user } = buildDirectReviewPrompt(solText, proposalText, requirementsRef);
+
+  let ai;
+  try {
+    ai = await complete(provider, system, user, model, apiKey, DIRECT_MAX_TOKENS);
+  } catch (e) {
+    await failDirectReview(directReviewId, companyId, e instanceof Error ? e.message.slice(0, 480) : 'AI request failed.');
+    return { ok: false, error: 'AI request failed.' };
+  }
+
+  const parsed = parseDirectReviewResult(ai.text);
+
+  await withTenant(companyId, async (tx) => {
+    await tx.finding.deleteMany({ where: { directReviewId, companyId } });
+    if (parsed.findings.length) {
+      await tx.finding.createMany({
+        data: parsed.findings.map((f, i) => ({
+          companyId,
+          directReviewId,
+          severity: f.severity,
+          text: f.text,
+          requirementRef: f.requirementRef,
+          recommendedAction: f.recommendedAction,
+          sortOrder: i
+        }))
+      });
+    }
+    const now = new Date();
+    await tx.directReview.update({
+      where: { id: directReviewId },
+      data: {
+        status: 'complete',
+        score: parsed.score ?? 0,
+        progress: 100,
+        progressLabel: '',
+        findingsCount: parsed.findings.length,
+        runAt: now,
+        completedAt: now
+      }
+    });
+  });
+
+  return { ok: true };
+}

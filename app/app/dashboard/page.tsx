@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
+import { ModeChip, AiReviewStatus } from '@/components/dara/ReviewModeBits';
 
 const planLabels: Record<string, string> = {
   trial: 'Trial',
@@ -87,7 +88,8 @@ export default async function DashboardPage() {
         take: 5,
         include: {
           _count: { select: { requirements: true, reviews: true } },
-          reviews: { select: { passes: { select: { passType: true, status: true, score: true } } } }
+          reviews: { select: { passes: { select: { passType: true, status: true, score: true } } } },
+          directReviews: { select: { status: true, score: true } }
         }
       }),
       tx.evaluation.findMany({
@@ -196,7 +198,7 @@ export default async function DashboardPage() {
                     Reviews
                   </th>
                   <th className="px-3.5 py-2.5 text-left font-mono text-[10px] uppercase tracking-wide text-t5">
-                    AI Passes
+                    AI Review
                   </th>
                 </tr>
               </thead>
@@ -208,7 +210,10 @@ export default async function DashboardPage() {
                   >
                     <td className="px-[18px] py-3">
                       <Link href={`/app/solicitations/${sol.id}`} className="block">
-                        <div className="text-[13px] font-semibold text-t2">{sol.title}</div>
+                        <div className="flex items-center gap-2">
+                          <ModeChip mode={sol.mode} />
+                          <span className="text-[13px] font-semibold text-t2">{sol.title}</span>
+                        </div>
                         <div className="mt-0.5 text-[11px] text-t5">{sol.agency || '—'}</div>
                       </Link>
                     </td>
@@ -222,25 +227,32 @@ export default async function DashboardPage() {
                       {sol._count.reviews}
                     </td>
                     <td className="px-3.5 py-3">
-                      {(() => {
-                        const { byType, avg } = aggPasses(sol.reviews);
-                        return (
-                          <div className="flex items-center gap-1.5">
-                            {PASS_TYPES_ORDER.map((t, i) => (
-                              <span
-                                key={t}
-                                title={`Pass ${i + 1}: ${(byType[t] ?? 'not_run').replace('_', ' ')}`}
-                                className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${passPill[byType[t] ?? 'not_run']}`}
-                              >
-                                P{i + 1}
-                              </span>
-                            ))}
-                            {avg != null && (
-                              <span className="ml-1 font-mono text-[11px] font-semibold text-t3">{avg}</span>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {sol.mode === 'direct_ai' ? (
+                        <AiReviewStatus
+                          status={sol.directReviews[0]?.status}
+                          score={sol.directReviews[0]?.score}
+                        />
+                      ) : (
+                        (() => {
+                          const { byType, avg } = aggPasses(sol.reviews);
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              {PASS_TYPES_ORDER.map((t, i) => (
+                                <span
+                                  key={t}
+                                  title={`Pass ${i + 1}: ${(byType[t] ?? 'not_run').replace('_', ' ')}`}
+                                  className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${passPill[byType[t] ?? 'not_run']}`}
+                                >
+                                  P{i + 1}
+                                </span>
+                              ))}
+                              {avg != null && (
+                                <span className="ml-1 font-mono text-[11px] font-semibold text-t3">{avg}</span>
+                              )}
+                            </div>
+                          );
+                        })()
+                      )}
                     </td>
                   </tr>
                 ))}
