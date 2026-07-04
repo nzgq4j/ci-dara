@@ -35,6 +35,22 @@ tested offline + one live model round-trip. Security review: clean.
 - Also bumped `serverActions.bodySizeLimit` to 25mb (RFP PDFs exceed the 1MB default — also fixes
   a latent limit on the existing workspace uploader).
 
+**DEPLOYED TO PROD 2026-07-04** (migration applied + verified; `main` synced). Follow-on tweaks
+also shipped: create window is now a two-step flow (Continue/Cancel) with a staged ingestion/
+processing indicator; shared `FileDropzone`/`DocUploader` drag-drop on the workspace uploads.
+
+## 0b. Reskin DONE (Prompts 6–8) — navy/gold/Inter light theme, DEPLOYED TO PROD 2026-07-04
+
+The whole reskin shipped in one pass (the app was already light-default, so it was accent+font+
+shell, not a dark→light migration). `--c-navy`/`--c-gold` tokens + Tailwind `navy`/`gold`; `theme.ts`
+accent → navy (buttons) / gold (focus, eyebrow); IBM Plex → Inter + JetBrains Mono; `forcedTheme=
+"light"` + ThemeToggle removed; Sidebar/PlatformAdminSidebar → navy; Header trial badge → gold;
+sign-in left panel → navy. Swept ~110 `#3b6ef0` bracket literals → navy across all pages + the
+Direct AI components; dark tints lightened (tracks → `bg-line`, low/running badges → `bg-navy/10`).
+**Left intentionally:** Team avatar/dept-dot categorical palettes still contain one blue (one hue
+of 8, not the brand accent). Per-page polish may still be wanted (bulk sweep, not hand-tuned per
+page). `pnpm build` green; QA greps: 0 IBM_Plex, 0 blue bracket-accents.
+
 ---
 
 ## 1. Where we are
