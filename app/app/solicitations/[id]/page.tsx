@@ -24,6 +24,7 @@ import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendment
 import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, isShredActive, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { getTrialUsage, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
+import { buildMatrixDocx } from '@/utils/dara/matrix-docx';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
@@ -434,11 +435,11 @@ async function deleteRequirement(formData: FormData) {
 // ---- Compliance matrix export (CSV / Word) ----
 async function exportMatrixAction(
   formData: FormData
-): Promise<{ ok: boolean; filename?: string; mime?: string; content?: string; error?: string }> {
+): Promise<{ ok: boolean; filename?: string; mime?: string; content?: string; encoding?: 'base64'; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
-  const format = String(formData.get('format') ?? 'csv') === 'doc' ? 'doc' : 'csv';
+  const format = String(formData.get('format') ?? 'csv') === 'docx' ? 'docx' : 'csv';
   await requireViewableSolicitation(solId, daraUser);
 
   const loaded = await withTenant(daraUser.companyId, async (tx) => {
@@ -476,20 +477,22 @@ async function exportMatrixAction(
     return { ok: true, filename: `${slug}_compliance_matrix.csv`, mime: 'text/csv;charset=utf-8', content };
   }
 
-  // Word: an HTML document Word opens natively (no dependency).
-  const he = (s: string) =>
-    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const th = cols.map((c) => `<th>${he(c)}</th>`).join('');
-  const trs = rows
-    .map((row) => `<tr>${row.map((c) => `<td>${he(c).replace(/\n/g, '<br>')}</td>`).join('')}</tr>`)
-    .join('');
-  const content =
-    `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8">` +
-    `<style>body{font:11px Arial,sans-serif}h2{font-size:15px}table{border-collapse:collapse;width:100%}` +
-    `th,td{border:1px solid #999;padding:4px 6px;vertical-align:top;text-align:left}th{background:#1B2A4A;color:#fff;font-size:10px}</style></head>` +
-    `<body><h2>${he(title)}</h2><p>${loaded.requirements.length} requirements</p>` +
-    `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
-  return { ok: true, filename: `${slug}_compliance_matrix.doc`, mime: 'application/msword', content };
+  // Word: a real OOXML (.docx) document built with the docx lib (see utils/dara/matrix-docx).
+  const n = loaded.requirements.length;
+  const generatedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const buffer = await buildMatrixDocx({
+    title,
+    subtitle: `${n} requirement${n === 1 ? '' : 's'} · Generated ${generatedAt}`,
+    cols,
+    rows
+  });
+  return {
+    ok: true,
+    filename: `${slug}_compliance_matrix.docx`,
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    content: buffer.toString('base64'),
+    encoding: 'base64'
+  };
 }
 
 // ---- Color-team review actions ----

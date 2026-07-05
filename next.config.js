@@ -30,7 +30,7 @@ const securityHeaders = [
 
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ['mammoth', '@react-pdf/renderer'],
+    serverComponentsExternalPackages: ['mammoth', '@react-pdf/renderer', 'docx'],
     // Solicitation/proposal documents are uploaded through server actions (the workspace
     // uploader and the Upload & Instant Review screen); real RFP PDFs exceed the 1MB
     // default. Raise the server-action body limit to accommodate document uploads.

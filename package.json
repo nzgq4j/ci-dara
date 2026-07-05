@@ -43,6 +43,7 @@
     "class-variance-authority": "^0.7.0",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",
+    "docx": "^9.7.1",
     "dotenv": "^17.4.2",
     "lucide-react": "0.330.0",
     "mammoth": "^1.12.0",
