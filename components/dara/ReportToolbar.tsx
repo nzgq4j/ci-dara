@@ -23,7 +23,29 @@ export default function ReportToolbar({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [pdfPending, startPdf] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch the server-rendered vector PDF and save it (blob download) so we can show a pending
+  // state and surface errors, instead of navigating the tab at a raw PDF response.
+  const exportPdf = () => {
+    setError(null);
+    startPdf(async () => {
+      try {
+        const res = await fetch(`/app/solicitations/${solId}/report/pdf`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'analysis-report'}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        setError('Could not generate the PDF. Try again.');
+      }
+    });
+  };
 
   const exportXlsx = () => {
     // An HTML table with an .xls extension opens natively in Excel — no dependency needed.
@@ -65,10 +87,12 @@ export default function ReportToolbar({
       {error && <span className="text-[12px] text-[#991B1B]">{error}</span>}
       <button
         type="button"
-        onClick={() => window.print()}
-        className="inline-flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px] font-medium text-t3 transition-colors hover:border-navy/30 hover:text-t1"
+        onClick={exportPdf}
+        disabled={pdfPending}
+        className="inline-flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px] font-medium text-t3 transition-colors hover:border-navy/30 hover:text-t1 disabled:opacity-50"
       >
-        <Download className="h-4 w-4" /> Export PDF
+        {pdfPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        {pdfPending ? 'Preparing…' : 'Export PDF'}
       </button>
       <button
         type="button"
