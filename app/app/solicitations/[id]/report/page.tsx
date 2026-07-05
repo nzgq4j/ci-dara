@@ -7,6 +7,7 @@ import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { enqueueReviewRun, triggerWorker } from '@/utils/dara/passes';
+import { isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
 import { card } from '@/components/dara/theme';
 import { CountdownChip } from '@/components/dara/ReviewModeBits';
 import { DistributionBar, ScoreCard, StatCard } from '@/components/dara/reportBits';
@@ -119,6 +120,7 @@ async function regenerateReport(formData: FormData): Promise<StepResult> {
     revalidatePath(`/app/solicitations/${solId}/report`);
     return { ok: true };
   } catch (e) {
+    if (isTrialLimitError(e)) return { ok: false, error: trialLimitMessage(e) };
     console.error('[report] regenerateReport failed:', e);
     return { ok: false, error: 'Could not start the review.' };
   }

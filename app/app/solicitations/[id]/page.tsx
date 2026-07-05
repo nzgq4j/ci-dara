@@ -25,6 +25,7 @@ import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, isShredActive, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
+import { getTrialUsage, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
 import PipelineStepper from '@/components/dara/PipelineStepper';
 import CuiBoundaryModal from '@/components/dara/CuiBoundaryModal';
 import ResultCard from '@/components/dara/ResultCard';
@@ -849,14 +850,19 @@ async function applyChangeAction(formData: FormData) {
 // Run a color-team review as a multi-pass AI review: enqueue the three passes (Compliance
 // & Format → Technical Responsiveness → Risk & Competitive) and kick the async worker so
 // they run without blocking the request. The UI polls each pass's status/progress.
-async function runReviewAction(formData: FormData): Promise<{ ok: boolean }> {
+async function runReviewAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const reviewId = BigInt(String(formData.get('reviewId')));
   await requireViewableSolicitation(solId, daraUser);
 
-  await enqueueReviewRun(reviewId, daraUser.companyId);
+  try {
+    await enqueueReviewRun(reviewId, daraUser.companyId);
+  } catch (e) {
+    if (isTrialLimitError(e)) return { ok: false, error: trialLimitMessage(e) };
+    throw e;
+  }
   await recordAudit({
     action: 'review.run',
     companyId: daraUser.companyId,
@@ -928,12 +934,17 @@ async function updateSolMetaAction(formData: FormData): Promise<{ ok: boolean; e
 }
 
 // Run / re-run the unified Direct AI review for a solicitation (non-process mode).
-async function runDirectReviewAction(formData: FormData): Promise<{ ok: boolean }> {
+async function runDirectReviewAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  await enqueueDirectReview(solId, daraUser.companyId);
+  try {
+    await enqueueDirectReview(solId, daraUser.companyId);
+  } catch (e) {
+    if (isTrialLimitError(e)) return { ok: false, error: trialLimitMessage(e) };
+    throw e;
+  }
   await recordAudit({
     action: 'review.run',
     companyId: daraUser.companyId,
@@ -1140,6 +1151,18 @@ export default async function SolicitationDetailPage({
   // Direct AI mode: the single unified review for this solicitation (0 or 1 per sol).
   const isDirect = solicitation.mode === 'direct_ai';
   const directReview = solicitation.directReviews[0] ?? null;
+
+  // Trial gate: when the company is on a trial and has exhausted its review-run allowance, a
+  // NEW review run (the first run of a not-yet-counted review) is blocked. Re-runs of an
+  // already-counted review are always allowed, so the per-panel checks below only fence a
+  // first run. The server enqueue functions enforce the same rule; this just disables the Run
+  // button up front (with the specific reason) instead of failing after a click.
+  const isTrial = daraUser.company.plan === 'trial';
+  const reviewRun = isTrial ? (await getTrialUsage(companyId)).items.find((i) => i.resource === 'review_run') : null;
+  const atReviewRunLimit = !!reviewRun && reviewRun.used >= reviewRun.limit;
+  const reviewRunLimitMsg = reviewRun
+    ? `You have used all ${reviewRun.limit} review runs on your trial. Upgrade to continue.`
+    : '';
   // Latest moment the matrix was changed by an applied amendment — a review snapshotted
   // before this saw an outdated matrix (flagged stale in the Color Teams / Review tabs).
   const latestAmendmentAt = amendments
@@ -1594,11 +1617,13 @@ export default async function SolicitationDetailPage({
               <ReviewPassPanel
                 solId={sid}
                 reviewId={rv.id.toString()}
-                canRun={canEvaluate && rv.documents.length > 0}
+                canRun={canEvaluate && rv.documents.length > 0 && !(atReviewRunLimit && rv.passes.length === 0)}
                 disabledReason={
                   rv.documents.length === 0
                     ? 'Capture the proposal draft first (button above).'
-                    : 'Add at least one requirement (Compliance stage) and one active persona.'
+                    : atReviewRunLimit && rv.passes.length === 0
+                      ? reviewRunLimitMsg
+                      : 'Add at least one requirement (Compliance stage) and one active persona.'
                 }
                 runAction={runReviewAction}
                 rerunAction={rerunPassAction}
@@ -2139,11 +2164,13 @@ export default async function SolicitationDetailPage({
       runAtLabel={directReview?.runAt ? fmtDateTime(directReview.runAt) : null}
       findings={directFindings}
       runAction={runDirectReviewAction}
-      canRun={proposalDocs.length > 0}
+      canRun={proposalDocs.length > 0 && !(atReviewRunLimit && (directReview?.status ?? 'not_started') === 'not_started')}
       disabledReason={
         proposalDocs.length === 0
           ? 'Upload your proposal draft in the Solicitation stage to run a review.'
-          : undefined
+          : atReviewRunLimit && (directReview?.status ?? 'not_started') === 'not_started'
+            ? reviewRunLimitMsg
+            : undefined
       }
     />
   );

@@ -6,6 +6,7 @@ import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { userTeamIds, solAccessWhere } from '@/utils/dara/sol-access';
 import { ModeChip, AiReviewStatus, CountdownChip, ColorTeamStatus } from '@/components/dara/ReviewModeBits';
+import { getTrialUsage } from '@/utils/dara/trial';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // Deterministic UTC formatters (locale/tz-dependent formatters mismatch server↔client).
@@ -68,6 +69,16 @@ export default async function DashboardPage() {
   const now = Date.now();
   const today = fmtDay(new Date(now));
 
+  // Trial status bar data (only for trial accounts — paid plans render nothing).
+  const isTrial = daraUser.company.plan === 'trial';
+  const trial = isTrial ? await getTrialUsage(companyId) : null;
+  const trialDaysLeft = trial?.trialEndsAt
+    ? Math.max(0, Math.ceil((trial.trialEndsAt.getTime() - now) / 86_400_000))
+    : null;
+  const usageFor = (r: 'solicitation' | 'review_run') => trial?.items.find((i) => i.resource === r);
+  const solUsage = usageFor('solicitation');
+  const runUsage = usageFor('review_run');
+
   // Per-sol derived data.
   const rows = sols.map((s) => {
     const days = daysUntil(s.dueDate, now);
@@ -105,6 +116,28 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-6xl fade">
+      {/* Trial status bar — only for trial accounts; disappears entirely once on a paid plan. */}
+      {isTrial && trial && (
+        <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-line border-l-4 border-l-gold bg-gold/10 px-4 py-3 text-[13px] text-t2">
+          <span className="font-semibold text-navy">
+            Trial{trialDaysLeft != null ? ` · ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} remaining` : ''}
+          </span>
+          {solUsage && (
+            <span>
+              Solicitations: <span className="font-semibold">{solUsage.used} of {solUsage.limit}</span>
+            </span>
+          )}
+          {runUsage && (
+            <span>
+              Review runs: <span className="font-semibold">{runUsage.used} of {runUsage.limit}</span>
+            </span>
+          )}
+          <Link href="/app/billing" className="ml-auto font-semibold text-navy hover:underline">
+            Upgrade →
+          </Link>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>

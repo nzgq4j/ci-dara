@@ -11,6 +11,7 @@
 import { Prisma } from '@prisma/client';
 import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
+import { requireTrialCapacity } from '@/utils/dara/trial';
 import {
   buildPassPrompt,
   parsePassResult,
@@ -74,6 +75,14 @@ export async function ensurePasses(reviewId: bigint, companyId: bigint): Promise
  * the worker will pick up. Returns nothing — the UI polls pass status.
  */
 export async function enqueueReviewRun(reviewId: bigint, companyId: bigint): Promise<void> {
+  // Trial gate: a "review run" is metered by distinct reviews that have been run, so only the
+  // FIRST run of a review consumes a slot — re-runs of an already-counted review are free and
+  // must never be blocked. A review counts once it has pass rows, so gate before ensurePasses.
+  const alreadyCounted = await withTenant(companyId, (tx) =>
+    tx.reviewPass.count({ where: { reviewId, companyId } })
+  );
+  if (alreadyCounted === 0) await requireTrialCapacity(companyId, 'review_run');
+
   await ensurePasses(reviewId, companyId);
   await withTenant(companyId, async (tx) => {
     await tx.reviewPass.updateMany({

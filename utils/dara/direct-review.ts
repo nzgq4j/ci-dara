@@ -17,6 +17,7 @@ import { decryptField } from '@/utils/dara/crypto';
 import { buildDirectReviewPrompt, parseDirectReviewResult } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { requireTrialCapacity } from '@/utils/dara/trial';
 
 const DIRECT_MAX_TOKENS = 10000;
 
@@ -61,6 +62,16 @@ export async function ensureDirectReview(solicitationId: bigint, companyId: bigi
  * solicitation, so a re-run replaces the prior findings/score in place.
  */
 export async function enqueueDirectReview(solicitationId: bigint, companyId: bigint): Promise<void> {
+  // Trial gate: only the FIRST run of this solicitation's review consumes a review-run slot.
+  // A DirectReview counts once it leaves `not_started`, so gate when there's no row yet or it's
+  // still `not_started` — re-runs (status running/complete/error) are free and never blocked.
+  const existing = await withTenant(companyId, (tx) =>
+    tx.directReview.findUnique({ where: { solicitationId }, select: { status: true } })
+  );
+  if (!existing || existing.status === 'not_started') {
+    await requireTrialCapacity(companyId, 'review_run');
+  }
+
   const directReviewId = await ensureDirectReview(solicitationId, companyId);
   await withTenant(companyId, async (tx) => {
     await tx.directReview.update({

@@ -8,6 +8,7 @@ import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract } from '@/utils/dara/documents';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { triggerWorker } from '@/utils/dara/passes';
+import { requireTrialCapacity, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
 import UploadAndReview from '@/components/dara/UploadAndReview';
 
 type ShellResult = { ok: boolean; error?: string; solId?: string };
@@ -52,6 +53,8 @@ function isRedirectError(e: unknown): boolean {
 // bounce) must be re-thrown so Next can perform the navigation.
 function toError(label: string, e: unknown): { ok: false; error: string } {
   if (isRedirectError(e)) throw e;
+  // A trial-limit hit is an expected outcome, not a failure — surface the specific upgrade copy.
+  if (isTrialLimitError(e)) return { ok: false, error: trialLimitMessage(e) };
   const code = (e as { code?: string })?.code;
   console.error(`[new-sol] ${label} failed:`, code ?? '', (e as Error)?.message ?? e);
   if (isTransientDbError(e)) {
@@ -104,6 +107,9 @@ async function createSolShell(formData: FormData): Promise<ShellResult> {
     const titleHint = stripExt(String(formData.get('titleHint') ?? ''));
 
     const title = solNumber || titleHint || 'New solicitation';
+
+    // Trial gate: block the (limit+1)th solicitation before creating it. Paid plans are a no-op.
+    await requireTrialCapacity(companyId, 'solicitation');
 
     const sol = await withDbRetry('create solicitation', () =>
       withTenant(companyId, (tx) =>

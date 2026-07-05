@@ -7,6 +7,7 @@ import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { recordAudit } from '@/utils/dara/audit';
 import { sendInvitationEmail, TEAM_ROLES, INVITE_TTL_DAYS } from '@/utils/dara/teams';
+import { requireTrialCapacity, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
 
 async function requireCompanyAdmin() {
   const supabase = createClient();
@@ -32,6 +33,22 @@ export async function inviteUser(
   if (!e || !e.includes('@')) return { ok: false, error: 'Enter a valid email.' };
   const r = (isRole(role) ? role : 'reviewer') as any;
   const tid = teamId ? BigInt(teamId) : null;
+
+  // Trial gate: a NEW seat (an invite to someone who isn't already a member) is metered.
+  // Re-assigning an existing member's role/department below is not a new seat, so only gate
+  // when there's no matching active user yet. Checked outside the main interactive transaction
+  // to avoid nesting withTenant (requireTrialCapacity opens its own).
+  const alreadyMember = await withTenant(admin.companyId, (tx) =>
+    tx.daraUser.findFirst({ where: { email: e, companyId: admin.companyId }, select: { id: true } })
+  );
+  if (!alreadyMember) {
+    try {
+      await requireTrialCapacity(admin.companyId, 'seat');
+    } catch (err) {
+      if (isTrialLimitError(err)) return { ok: false, error: trialLimitMessage(err) };
+      throw err;
+    }
+  }
 
   const created = await withTenant(admin.companyId, async (tx) => {
     if (tid) {

@@ -80,6 +80,30 @@ export class FeatureDisabledError extends Error {
   }
 }
 
+/** Typed guard so callers can catch a trial-limit hit and surface the copy below. */
+export function isTrialLimitError(e: unknown): e is TrialLimitError {
+  return e instanceof TrialLimitError;
+}
+
+/**
+ * User-facing copy for a trial-limit hit. `used === limit === 0` is the sentinel for an
+ * expired trial window (see requireTrialCapacity), which gets its own message. All strings
+ * end with "Upgrade to continue." so any surface can pair them with a link to /app/billing.
+ */
+export function trialLimitMessage(err: TrialLimitError): string {
+  if (err.used === 0 && err.limit === 0) {
+    return 'Your free trial has ended. Upgrade to continue.';
+  }
+  switch (err.resource) {
+    case 'solicitation':
+      return `You have used ${err.used} of ${err.limit} solicitations on your trial. Upgrade to continue.`;
+    case 'review_run':
+      return `You have used all ${err.limit} review runs on your trial. Upgrade to continue.`;
+    case 'seat':
+      return `You have used all ${err.limit} seats on your trial. Upgrade to continue.`;
+  }
+}
+
 // ---- Entitlement resolution (raw JSON → typed, with defaults) ----
 
 /**
