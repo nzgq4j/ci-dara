@@ -28,10 +28,12 @@ import { severityRank } from '@/components/dara/reportBits';
 
 const NAVY = '1B2A4A';
 const MUTED = '64748B';
-// Bound the text sent to the anchor call so a huge draft can't blow the token budget. Passages
-// past this point simply fall back to the General findings section (still a comment).
-const MAX_ANCHOR_CHARS = 60_000;
+// Bound the text sent to the anchor call so a huge draft can't blow the token budget. Sonnet's
+// 200k context easily covers a full proposal; anything past this falls back to General findings.
+const MAX_ANCHOR_CHARS = 200_000;
 const ANCHOR_MAX_TOKENS = 8_000;
+// Ignore anchor quotes shorter than this (normalized) — too short to place reliably.
+const MIN_ANCHOR_LEN = 10;
 
 const SEVERITY_LABEL: Record<string, string> = {
   critical: 'CRITICAL',
@@ -206,6 +208,34 @@ async function anchorFindings(source: Source): Promise<Map<string, string>> {
   return anchors;
 }
 
+// Normalize a string for anchor matching (lowercase, collapse ALL whitespace incl. NBSP/tabs to
+// single spaces, fold smart quotes/dashes to ASCII) while recording, per normalized char, the
+// index it came from in the ORIGINAL string — so a normalized match maps back to a real span we
+// can wrap. Extracted PDF/Word text is full of NBSPs, double spaces, tabs and smart punctuation
+// that an AI "verbatim" quote won't reproduce, which is why plain indexOf never matched.
+function normalizeWithMap(s: string): { norm: string; map: number[] } {
+  let norm = '';
+  const map: number[] = [];
+  let prevSpace = false;
+  for (let i = 0; i < s.length; i++) {
+    let ch = s[i];
+    if (ch === '’' || ch === '‘' || ch === 'ʼ') ch = "'";
+    else if (ch === '“' || ch === '”') ch = '"';
+    else if (ch === '–' || ch === '—' || ch === '−') ch = '-';
+    if (/\s/.test(ch)) {
+      if (prevSpace) continue;
+      norm += ' ';
+      map.push(i);
+      prevSpace = true;
+    } else {
+      norm += ch.toLowerCase();
+      map.push(i);
+      prevSpace = false;
+    }
+  }
+  return { norm, map };
+}
+
 function commentBody(f: FindingLite): Paragraph[] {
   const head = `${SEVERITY_LABEL[f.severity] ?? f.severity.toUpperCase()}${f.requirementRef ? ` · ${f.requirementRef}` : ''}`;
   const paras = [new Paragraph({ children: [new TextRun({ text: head, bold: true, size: 18, color: NAVY })] })];
@@ -238,7 +268,18 @@ export function buildDocx(source: Source, anchors: Map<string, string>): Promise
     children: commentBody(f)
   }));
 
-  // Proposal body split into lines; anchor each finding whose quote is found within a single line.
+  // Precompute each finding's normalized anchor quote once (skip empties / too-short ones).
+  const normQuote = new Map<string, string>();
+  for (const f of source.findings) {
+    const q = anchors.get(f.id);
+    if (!q) continue;
+    const nq = normalizeWithMap(q).norm.trim();
+    if (nq.length >= MIN_ANCHOR_LEN) normQuote.set(f.id, nq);
+  }
+
+  // Proposal body split into lines. For each line we normalize (collapsing PDF whitespace/smart
+  // punctuation) and match anchors against the normalized text, then map the hit back to the real
+  // span via the index map so the comment wraps the actual characters.
   const lines = source.proposalText.split('\n');
   const anchored = new Set<string>();
   const body: Paragraph[] = [];
@@ -251,14 +292,19 @@ export function buildDocx(source: Source, anchors: Map<string, string>): Promise
     }
     // Collect the anchors that fall inside this line, left-to-right, non-overlapping.
     const hits: { id: number; start: number; end: number }[] = [];
-    for (const f of source.findings) {
-      if (anchored.has(f.id)) continue;
-      const quote = anchors.get(f.id);
-      if (!quote) continue;
-      const at = line.indexOf(quote);
-      if (at < 0) continue;
-      hits.push({ id: cid.get(f.id)!, start: at, end: at + quote.length });
-      anchored.add(f.id);
+    if (normQuote.size > 0) {
+      const { norm, map } = normalizeWithMap(line);
+      for (const f of source.findings) {
+        if (anchored.has(f.id)) continue;
+        const nq = normQuote.get(f.id);
+        if (!nq) continue;
+        const at = norm.indexOf(nq);
+        if (at < 0) continue;
+        const start = map[at];
+        const end = (map[at + nq.length - 1] ?? map[map.length - 1]) + 1;
+        hits.push({ id: cid.get(f.id)!, start, end });
+        anchored.add(f.id);
+      }
     }
     if (hits.length === 0) {
       body.push(new Paragraph({ children: [new TextRun({ text: line, size: 20 })] }));
@@ -283,6 +329,10 @@ export function buildDocx(source: Source, anchors: Map<string, string>): Promise
   // Header + any unanchored findings collected up top (each still a real comment).
   const n = source.findings.length;
   const unanchored = source.findings.filter((f) => !anchored.has(f.id));
+  // Diagnostic (counts only, no content): distinguishes an AI/anchor miss from a matching miss.
+  console.log(
+    `[annotated] sol=${source.solNumber || source.title} findings=${n} aiQuotes=${anchors.size} usableQuotes=${normQuote.size} anchoredInline=${anchored.size}`
+  );
   const header: Paragraph[] = [
     new Paragraph({
       children: [new TextRun({ text: `Annotated response — ${source.solNumber || source.title}`, bold: true, color: NAVY, size: 30 })]
