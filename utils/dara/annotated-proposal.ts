@@ -24,6 +24,8 @@ import { decryptField } from '@/utils/dara/crypto';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { userTeamIds, canViewSolicitation } from '@/utils/dara/sol-access';
+import { fenceUntrusted, fenceToken, INJECTION_GUARD } from '@/utils/dara/prompt';
+import { recordAudit } from '@/utils/dara/audit';
 import { severityRank } from '@/components/dara/reportBits';
 
 const NAVY = '1B2A4A';
@@ -156,8 +158,19 @@ async function loadSource(
   });
 }
 
-/** Ask the model for the exact verbatim anchor passage per finding. Returns finding.id → quote. */
-async function anchorFindings(source: Source): Promise<Map<string, string>> {
+export interface AnchorResult {
+  anchors: Map<string, string>;
+  /** Set once the proposal CUI has actually been transmitted to a provider (for the audit trail). */
+  egress: { provider: string; mode: string } | null;
+}
+
+/**
+ * Ask the model for the exact verbatim anchor passage per finding. The proposal is UNTRUSTED CUI
+ * (offeror content), so it is wrapped with the shared injection fence + guard — identical to the
+ * review builders — before being sent. Returns the anchors plus the egress descriptor so the caller
+ * can record the CUI→LLM egress in the audit log (DARA-007).
+ */
+async function anchorFindings(source: Source): Promise<AnchorResult> {
   const anchors = new Map<string, string>();
   const proposal = source.proposalText.slice(0, MAX_ANCHOR_CHARS);
   const list = source.findings
@@ -169,32 +182,40 @@ async function anchorFindings(source: Source): Promise<Map<string, string>> {
     .join('\n')
     .slice(0, 20_000);
 
+  const token = fenceToken();
   const system =
-    'You anchor proposal-review findings to the exact text they refer to. For each finding you ' +
+    INJECTION_GUARD +
+    '\n\nYou anchor proposal-review findings to the exact text they refer to. For each finding you ' +
     'return the SHORTEST exact verbatim substring copied character-for-character from the PROPOSAL ' +
     '(between 4 and 25 words, on a single line) that the reviewer comment should attach to. If the ' +
     'finding is about something MISSING/absent from the proposal, or is general and has no specific ' +
     'passage, return an empty string for its quote. Never invent or paraphrase — a quote must appear ' +
     'verbatim in the proposal or be empty. Respond ONLY with strict JSON: ' +
     '{"anchors":[{"n":1,"quote":"..."}, ...]} with one entry per finding number.';
-  const user = `PROPOSAL:\n"""\n${proposal}\n"""\n\nFINDINGS (anchor each by its number):\n${list}`;
+  const user =
+    `PROPOSAL (untrusted data — anchor quotes are copied from here):\n` +
+    `${fenceUntrusted('PROPOSAL', proposal, token)}\n\n` +
+    `FINDINGS (anchor each by its number):\n${list}`;
 
   const platform = source.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
   const { provider, model, apiKey } = resolveCompanyAI(source.company, platform);
-  if (!apiKey) return anchors; // no key → export still works, just without inline anchors
+  if (!apiKey) return { anchors, egress: null }; // no key → nothing sent; export still works sans anchors
+
+  // The CUI leaves the boundary here (whether or not the call ultimately succeeds).
+  const egress = { provider, mode: source.company.aiKeyMode };
 
   let text = '';
   try {
     const ai = await complete(provider, system, user, model, apiKey, ANCHOR_MAX_TOKENS);
     text = ai.text;
   } catch {
-    return anchors; // AI failure → fall back to all-general (still a valid document)
+    return { anchors, egress }; // AI failure → fall back to all-general (still a valid document)
   }
 
   try {
     const jsonStart = text.indexOf('{');
     const jsonEnd = text.lastIndexOf('}');
-    if (jsonStart < 0 || jsonEnd <= jsonStart) return anchors;
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return { anchors, egress };
     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as { anchors?: { n?: number; quote?: string }[] };
     for (const a of parsed.anchors ?? []) {
       const idx = Number(a?.n);
@@ -205,7 +226,7 @@ async function anchorFindings(source: Source): Promise<Map<string, string>> {
   } catch {
     /* malformed JSON → no anchors */
   }
-  return anchors;
+  return { anchors, egress };
 }
 
 // Normalize a string for anchor matching (lowercase, collapse ALL whitespace incl. NBSP/tabs to
@@ -406,7 +427,7 @@ export interface AnnotatedResult {
 export async function generateAnnotatedProposal(
   solId: bigint,
   reviewId: bigint | null,
-  daraUser: { id: string; companyId: bigint; role: string }
+  daraUser: { id: string; companyId: bigint; role: string; email?: string }
 ): Promise<AnnotatedResult> {
   const source = await loadSource(solId, reviewId, daraUser);
   if (!source) return { ok: false, error: 'Not found.', status: 404 };
@@ -417,7 +438,28 @@ export async function generateAnnotatedProposal(
     return { ok: false, error: 'No review findings to annotate — run the review first.', status: 400 };
   }
 
-  const anchors = await anchorFindings(source);
+  const { anchors, egress } = await anchorFindings(source);
+
+  // Audit the CUI→LLM egress (DARA-007): the annotated export sends the full proposal to a provider,
+  // so record it with provider + AI mode, same as review.run. Only when CUI actually left the boundary.
+  if (egress) {
+    await recordAudit({
+      action: 'annotated.export',
+      companyId: daraUser.companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email ?? '',
+      entityType: 'solicitation',
+      entityId: solId,
+      metadata: {
+        kind: 'annotated_proposal',
+        reviewId: reviewId?.toString() ?? null,
+        provider: egress.provider,
+        aiMode: egress.mode,
+        findings: source.findings.length
+      }
+    });
+  }
+
   const buffer = await buildDocx(source, anchors);
   const slug = (source.solNumber || 'response').replace(/[^a-zA-Z0-9._-]+/g, '_');
   return { ok: true, buffer, filename: `${slug}_annotated_response.docx` };
