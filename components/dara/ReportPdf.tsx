@@ -99,15 +99,18 @@ const s = StyleSheet.create({
   },
 
   // Findings table
+  // NOTE: this header is `fixed` (repeats on every page). @react-pdf has a bug where a `fixed`
+  // element with a real CSS border compounds its box height on every page until it overflows
+  // to a garbage value and pdfkit throws "unsupported number" (see the /pdf route). So the
+  // top/bottom rules here are background-fill hairlines (rHair), not borders.
+  tHeadWrap: {},
   tHead: {
     flexDirection: 'row',
     backgroundColor: SURF,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: LINE,
     paddingVertical: 4,
     paddingHorizontal: 4
   },
+  rHair: { height: 1, backgroundColor: LINE },
   th: { fontSize: 6.5, letterSpacing: 0.8, color: FAINT, textTransform: 'uppercase', fontFamily: 'Helvetica-Bold' },
   row: {
     flexDirection: 'row',
@@ -136,6 +139,7 @@ const s = StyleSheet.create({
 
   // Readiness section
   twoCol: { flexDirection: 'row', gap: 10 },
+  col: { flex: 1 },
   box: { flex: 1, borderWidth: 1, borderColor: LINE, borderRadius: 4, padding: 8 },
   boxTitle: { fontFamily: 'Helvetica-Bold', fontSize: 8.5, color: INK, marginBottom: 5 },
   kv: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 },
@@ -165,19 +169,21 @@ const s = StyleSheet.create({
   daraTitle: { fontFamily: 'Helvetica-Bold', fontSize: 8.5, color: INK, marginBottom: 4 },
   daraSubmit: { fontSize: 8, fontFamily: 'Helvetica-Bold', color: '#334155', marginTop: 4 },
 
+  // `fixed` footer — border omitted for the same reason as tHead (see rHair note); the top rule
+  // is a background-fill hairline child.
   footer: {
     position: 'absolute',
     bottom: 22,
     left: 40,
     right: 40,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderColor: LINE,
-    paddingTop: 5,
     fontSize: 7,
     color: FAINT
   },
+  footerRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 5 },
+  // height MUST be explicit: a `fixed` element with a render={} callback and auto height
+  // compounds its box height on every page in @react-pdf 4.5.x until it overflows to a garbage
+  // coordinate (pdfkit "unsupported number"). An explicit height pins it. See the footer JSX.
+  footerPage: { position: 'absolute', bottom: 22, right: 40, height: 9, fontSize: 7, color: FAINT },
   empty: { fontSize: 9, color: MUTED, textAlign: 'center', marginTop: 24 }
 });
 
@@ -270,20 +276,30 @@ export default function ReportPdf({ model }: { model: ReportModel }) {
               <Text style={s.empty}>No findings — the review surfaced no issues.</Text>
             ) : (
               <View>
-                <View style={s.tHead} fixed>
-                  <Text style={[s.th, s.cNum]}>#</Text>
-                  <Text style={[s.th, s.cSev]}>SEV</Text>
-                  <Text style={[s.th, s.cFind]}>FINDING & ACTION</Text>
-                  <Text style={[s.th, s.cOwner]}>OWNER</Text>
-                  <Text style={[s.th, s.cEffort]}>EFFORT</Text>
-                  <Text style={[s.th, s.cStatus]}>STATUS</Text>
+                <View style={s.tHeadWrap} fixed>
+                  <View style={s.rHair} />
+                  <View style={s.tHead}>
+                    <Text style={[s.th, s.cNum]}>#</Text>
+                    <Text style={[s.th, s.cSev]}>SEV</Text>
+                    <Text style={[s.th, s.cFind]}>FINDING & ACTION</Text>
+                    <Text style={[s.th, s.cOwner]}>OWNER</Text>
+                    <Text style={[s.th, s.cEffort]}>EFFORT</Text>
+                    <Text style={[s.th, s.cStatus]}>STATUS</Text>
+                  </View>
+                  <View style={s.rHair} />
                 </View>
                 {model.findings.map((f, i) => {
                   const sev = SEVERITY[f.severity as SeverityValue] ?? SEVERITY.medium;
                   const eff = f.effortBand ? EFFORT[f.effortBand as EffortBandValue] : null;
                   const st = STATUS_COLOR[f.status] ?? STATUS_COLOR.open;
                   return (
-                    <View key={f.id} style={s.row} wrap={false}>
+                    // wrap={false} lives on an OUTER wrapper (no border). Keeping the border on the
+                    // inner node while a bordered wrap={false} element is the one bumped to the next
+                    // page makes @react-pdf's clipBorderTop receive a garbage coordinate and throw
+                    // "unsupported number" — see the /pdf route. The bordered node must never be the
+                    // page-break boundary itself.
+                    <View key={f.id} wrap={false}>
+                      <View style={s.row}>
                       <Text style={s.cNum}>{String(i + 1).padStart(2, '0')}</Text>
                       <View style={s.cSev}>
                         <Chip text={sev.text} bg={sev.bg} label={sev.label} />
@@ -305,6 +321,7 @@ export default function ReportPdf({ model }: { model: ReportModel }) {
                       <View style={s.cStatus}>
                         <Chip text={st.text} bg={st.bg} label={st.label} />
                       </View>
+                      </View>
                     </View>
                   );
                 })}
@@ -314,7 +331,10 @@ export default function ReportPdf({ model }: { model: ReportModel }) {
             {/* C · Submission Readiness */}
             <SectionBand letter="C" title="SUBMISSION READINESS" />
             <View style={s.twoCol}>
-              <View style={s.box} wrap={false}>
+              {/* wrap={false} on an outer wrapper; border stays on the inner box (see the row
+                  comment above — a bordered wrap={false} node that bumps pages crashes render). */}
+              <View style={s.col} wrap={false}>
+              <View style={s.box}>
                 <Text style={s.boxTitle}>Submission Deadline</Text>
                 {model.daysToDeadline != null ? (
                   <>
@@ -337,8 +357,10 @@ export default function ReportPdf({ model }: { model: ReportModel }) {
                   <Text style={s.kvValue}>{model.estRemaining}</Text>
                 </View>
               </View>
+              </View>
 
-              <View style={s.box} wrap={false}>
+              <View style={s.col} wrap={false}>
+              <View style={s.box}>
                 <Text style={s.boxTitle}>Finding Distribution</Text>
                 {SEV_ORDER.map((k) => (
                   <View key={k} style={s.distRow}>
@@ -348,15 +370,18 @@ export default function ReportPdf({ model }: { model: ReportModel }) {
                   </View>
                 ))}
               </View>
+              </View>
             </View>
 
             {(model.recommendation || model.recommendedSubmitAt) && (
-              <View style={s.daraBox} wrap={false}>
+              <View wrap={false}>
+              <View style={s.daraBox}>
                 <Text style={s.daraTitle}>DARA Recommendation</Text>
                 {model.recommendation ? <Text style={{ fontSize: 8, color: '#334155' }}>{model.recommendation}</Text> : null}
                 {model.recommendedSubmitAt ? (
                   <Text style={s.daraSubmit}>Recommended submission: {fmtDate(model.recommendedSubmitAt)}</Text>
                 ) : null}
+              </View>
               </View>
             )}
 
@@ -380,11 +405,23 @@ export default function ReportPdf({ model }: { model: ReportModel }) {
           </>
         )}
 
-        {/* Footer with page numbers */}
+        {/* Footer. The page-number is a standalone `fixed` Text with an EXPLICIT height (see
+            s.footerPage): a fixed element carrying a render={} callback with auto height makes
+            react-pdf 4.5.x compound its box height on every page until it overflows to a garbage
+            coordinate and pdfkit throws "unsupported number" — this is what broke multi-page
+            reports like sol 13 (127 findings). The left brand block has no render prop so it's
+            fine in the flex container. */}
         <View style={s.footer} fixed>
-          <Text>{model.solNumber ? `${model.solNumber} · ` : ''}DARA · Crucible Insight</Text>
-          <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+          <View style={s.rHair} />
+          <View style={s.footerRow}>
+            <Text>{model.solNumber ? `${model.solNumber} · ` : ''}DARA · Crucible Insight</Text>
+          </View>
         </View>
+        <Text
+          style={s.footerPage}
+          fixed
+          render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
+        />
       </Page>
     </Document>
   );
