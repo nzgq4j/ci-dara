@@ -1,19 +1,49 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-05_
+_Last updated: 2026-07-05 (late)_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed) · HEAD `5d491ea`
-**Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel --prod --yes` after `git push`. (See §4.)
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed) · HEAD `7fe23ab`
+**Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage) · Stripe · Vercel
 
 > **Start-here for the next session is `SESSION_HANDOFF.md`** (deploy model, gotchas, backlog, key files).
+> **Top priority next is the security backlog** — `SECURITY_BACKLOG.md` (untracked; SEC-01..23, prior hardening intact).
 
 ---
 
-## 0. Latest session (2026-07-04 → 07-05) — Direct-AI polish, reliability, billing
+## 0. Latest session (2026-07-05, late) — exports, trial fencing, personas, security re-audit
 
-Commits `f087ac3` → `5d491ea`, all deployed + verified on prod. Highlights:
+Commits `bf72353` → `7fe23ab`, all deployed + verified on prod. Highlights:
+
+- **PDF export 500 fixed** (`bf72353`) — multi-page Analysis Report PDFs crashed (`unsupported number`) on
+  large sols (sol 13, 127 findings/33 pages): a `fixed` react-pdf element with a `render` callback + auto
+  height compounds its box height per page. Fixed via explicit height. `components/dara/ReportPdf.tsx`.
+- **Trial enforcement wired** (`20fcccb`) — `utils/dara/trial.ts` existed but nothing called it; gated
+  createSolShell / inviteUser / enqueueReviewRun + enqueueDirectReview (**review gate = first run only**),
+  Run button disabled at limit, dashboard trial bar. Paid plans no-op.
+- **`CRON_SECRET`** set in all Vercel envs + prod redeploy → `/api/cron/passes` 401 without bearer (verified).
+- **Real `.docx` compliance-matrix export** (`c39c1d1`) — `docx` lib (`utils/dara/matrix-docx.ts`), base64 via
+  the export action; replaced the HTML-as-`.doc` trick. `docx` added to `serverComponentsExternalPackages`.
+- **Per-review response upload + amendments drag-drop** (`e80fe0e`) — color-team reviews upload their own
+  response draft (`uploadReviewDoc`→`ReviewDocument`); "Capture draft"/auto-snapshot removed; sol-level
+  proposal upload now Direct-AI-only; amendments use `DocUploader`. Deleted `utils/dara/reviews.ts`.
+- **Annotated response `.docx`** (`d25fcfd` + anchoring fix `4e231ec`) — proposal draft exported with each
+  finding as a real inline Word comment, anchored via one export-time AI call (no schema/re-run).
+  `utils/dara/annotated-proposal.ts` + `/annotated` route + `AnnotatedExportButton`. `docx@9.7.1` has native
+  comment support; the Document `comments` option takes plain option OBJECTS, not `Comment` instances.
+- **Personas reintegrated as an AI review lens** (`f9f89c4`) — `renderPersonaGuidance` injects selected/active
+  personas' `systemPrompt` into `buildPassPrompt`/`buildDirectReviewPrompt` (augment, not override). They had
+  fallen out entirely (engines used zero persona input; legacy per-persona evaluator still dead). See memory
+  `personas-review-lens.md`.
+- **CMMC L2 security re-audit** (6 parallel domains) — prior DARA-001..019 hardening HOLDS, 26/26 RLS intact,
+  no regressions. Net-new gaps SEC-01..23 in **`SECURITY_BACKLOG.md`** (root, **untracked — do not commit
+  while open**). **SEC-04 FIXED** (`7fe23ab`): annotated-export CUI→LLM egress now audited (`annotated.export`,
+  provider/mode) + fenced. Top open: SEC-01 rate limiting/WAF, SEC-02 Next 14→15 CVEs, SEC-03 CI-not-blocking,
+  SEC-05 cross-department BOLA, SEC-06 deactivated-users-keep-access, SEC-07 sol-delete storage orphan.
+
+### Prior session (2026-07-04 → 07-05) — Direct-AI polish, reliability, billing
+Commits `f087ac3` → `5d491ea`, all deployed. Highlights:
 
 - **Direct AI create flow fixed** — split into per-file uploads (`createSolShell` + `uploadDocToSol`
   + `finalizeReview`); a single bundled POST hit Vercel's ~4.5 MB Function body cap. + transient-DB
@@ -320,8 +350,12 @@ The underlying review methodology is **never named** in UI/prompts/code/docs.
     so david's row stayed `active=true`; and `resolvePlatformAdmin` treats an **active row as admin
     regardless of the env list** — so removing from env alone is not enough. To fully demote: remove
     from `PLATFORM_ADMIN_EMAILS` **and** delete (or deactivate) the `dara_platform_admins` row.
-11. **Open security findings** (full detail + status on `/app/security`). **None
-    open.** DARA-007 (CUI→LLM) is **Risk accepted** with controls. Latest closures:
+11. **Open security findings.** The original DARA-001..019 register is closed (DARA-007 risk-accepted).
+    **A 2026-07-05 CMMC L2 re-audit of the new surface (exports, /annotated, per-review upload, personas,
+    trial) found net-new gaps SEC-01..23 — see `SECURITY_BACKLOG.md` (untracked).** Prior hardening holds
+    (26/26 RLS, no regressions). SEC-04 fixed; top open = SEC-01 rate limiting, SEC-02 Next 14→15, SEC-03
+    branch-protection/CI-gated-deploy, SEC-05 BOLA, SEC-06 isActive, SEC-07 sol-delete storage orphan.
+    Original register detail on `/app/security`. Latest original closures:
     **DARA-017 (migration history) Remediated 2026-06-29** (prod baselined to
     `prisma/migrations/0_init`; two-layer schema source of truth documented in
     `prisma/security/DARA-017-migrations.md`; legacy drift verified already gone) and
@@ -392,7 +426,9 @@ The underlying review methodology is **never named** in UI/prompts/code/docs.
   forward workflow is `migrate dev`/`deploy` (no `db push`). Two-layer schema source of
   truth (Prisma migrations + owner-SQL manifest) documented in
   `prisma/security/DARA-017-migrations.md` + `prisma/migrations/README.md`.
-- **No open findings remain.** DARA-007 is Risk accepted with controls.
+- **Original register (DARA-001..019): no open findings** (DARA-007 risk-accepted). **But the 2026-07-05
+  re-audit found net-new gaps SEC-01..23 on surface added since June — tracked in `SECURITY_BACKLOG.md`
+  (untracked file). SEC-04 fixed; the rest are open.** See memory `security-reaudit-2026-07`.
 
 ### Compliance / docs (new)
 - **System Security Plan (SSP)** — started 2026-06-28 as a living in-app document at

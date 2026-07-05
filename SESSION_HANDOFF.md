@@ -1,182 +1,159 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-05 (late) · HEAD `b1c1847` · branch `main` (clean, **deployed to prod**) · for: next session_
+_Prepared: 2026-07-05 (late) · HEAD `7fe23ab` · branch `main` (clean, **deployed to prod**) · for: next session_
 
-Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless
-flagged otherwise. Agent memory (authoritative, load first): `direct-ai-review-mode.md`,
-`ui-redesign-roadmap.md`, `create-flow-body-size.md`, `color-team-reframing.md`,
-`multi-pass-review.md`, `billing-and-backlog.md`. Deep decision log: `BUILD_STATUS.md`.
+Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless flagged
+otherwise. **Top priority next is the security backlog** (`SECURITY_BACKLOG.md`, §5). Agent memory
+(load first): `security-reaudit-2026-07.md`, `personas-review-lens.md`, `billing-and-backlog.md`,
+`direct-ai-review-mode.md`, `create-flow-body-size.md`. Deep decision log: `BUILD_STATUS.md`.
 
 ---
 
-## 1. Deploy model (READ FIRST)
+## 1. Deploy model (READ FIRST — unchanged)
 
-- **Prod = `main`, deployed MANUALLY.** Auto-deploy is OFF. The flow, every time:
-  `git push origin main` → `vercel deploy --prod --yes`. `main` is always kept == prod.
-- **⚠️ The GitHub→Vercel git integration did NOT fire on push this session** (both pushes; the
-  webhook never created a deployment even though the commit was on `main`). This is exactly why
-  the flow is manual — **always run `vercel deploy --prod --yes` yourself after pushing.** Do not
-  wait on an auto-deploy; it may never come. (`mcp__…list_deployments` to confirm the new SHA is
-  live + `state: READY`, `target: production`.)
-- **Vercel CLI IS installed** (session-start "not installed" note is stale), authed as
-  `islanista-7787`. `.vercel/` linked: project `prj_I6CLDhGJlbjro2Mc67i1AyyHpciP`,
-  team `team_hluvXIDuWYVTRTyXnqxTbfWg`. CLI `--prod` builds from the working tree (deploys show
-  `gitDirty:1` only because of the untracked `tsconfig.tsbuildinfo` — source still == the commit).
-- **Schema changes: migrate BEFORE the code deploy.** `pnpm prisma migrate deploy` (owner /
-  `DIRECT_URL`, via `prisma.config.ts`) → if a NEW table, apply its RLS via
-  `npx tsx prisma/security/apply-sql.ts <file>` → then `vercel deploy --prod`. Column-only adds
-  need just `migrate deploy`. **21 migrations applied to prod** (latest `20260704020000_analysis_report`).
-  **No new migrations this session** — all three changes were code-only.
+- **Prod = `main`, deployed MANUALLY.** Every time: `git push origin main` → `vercel deploy --prod --yes`
+  → confirm the new SHA is `READY` + `target: production` via the Vercel MCP `list_deployments`.
+- **GitHub→Vercel auto-deploy is flaky/off** — do not wait on it; always deploy via CLI yourself.
+- Vercel CLI **is** installed, authed as `islanista-7787`; `.vercel/` linked (project
+  `prj_I6CLDhGJlbjro2Mc67i1AyyHpciP`, team `team_hluvXIDuWYVTRTyXnqxTbfWg`). Deploys show `gitDirty:1`
+  only because of the untracked `tsconfig.tsbuildinfo` — source still == the commit.
+- **Schema changes: migrate BEFORE the code deploy.** `pnpm prisma migrate deploy` → new `dara_*` table
+  also needs its RLS applied via `npx tsx prisma/security/apply-sql.ts <file>` → then deploy.
+  **No new migrations this session — every change was code-only** (21 migrations still the latest).
 - **`.env.local` points at the REMOTE (prod) Supabase.** No local DB. `withTenant` interactive
-  transactions can throw **P2028 from this dev machine** (pooler latency) — verify tenant DB flows
-  on prod, or with a throwaway `pg`/owner (`DIRECT_URL`) non-interactive script. `.env.local` also
-  has the Stripe secret key.
-- **Preview caveat:** the every-minute Vercel **cron only runs on prod**, and prod runs whatever
-  code is currently deployed — a review/shred kicked off on a preview is processed by prod's code.
-  Verify job *completion* on prod.
+  transactions can throw **P2028** from this dev machine (pooler latency) — verify tenant DB flows on
+  prod, or with a throwaway non-interactive `pg` script on `DIRECT_URL`. `.env.local` also has the
+  Stripe secret + `APP_KEY`.
+- Every-minute Vercel **cron only runs on prod**; a review/shred kicked on preview is processed by
+  prod's deployed code. Verify job *completion* on prod.
 
 ---
 
-## 2. What shipped THIS session (2026-07-05 continuation — commits `2df2959`, `b1c1847`)
+## 2. What shipped THIS session (2026-07-05 continuation)
 
-Both live on prod (deployed via CLI). Context: user was doing a full end-to-end walkthrough.
+All live on prod (deployed via CLI). Commits `bf72353` → `7fe23ab`.
 
-### `b1c1847` — Real (vector) PDF export for the Analysis Report ✅ user-confirmed working
-- **Replaces `window.print()`** with a server-rendered PDF via **`@react-pdf/renderer` (v4.5.1)**.
-  New dependency (in `package.json`/`pnpm-lock.yaml`) — registered in
-  `next.config.js` → `experimental.serverComponentsExternalPackages` (alongside `mammoth`).
-- **`components/dara/ReportPdf.tsx`** — branded navy/gold document: header (DARA · Crucible Insight
-  brand mark, title, meta, generated date), Exec Summary score cards, a Prioritized Findings table
-  with severity/status chips (rows use `wrap={false}` so they never clip or split mid-line — the
-  whole class of browser-print bugs is gone by construction), a "Submission Readiness" section
-  (deadline, distribution, DARA recommendation, checklist), and a page-numbered footer.
-  **Uses built-in Helvetica**, NOT the app's Inter — deliberate (keeps bundle light, no font files).
-- **`app/app/solicitations/[id]/report/pdf/route.ts`** — Node-runtime `GET` that renders the PDF to
-  a Buffer and streams it as a download; same view-access checks as the page. (`renderToBuffer`'s
-  types want a `Document` element, so the component element is cast to
-  `Parameters<typeof renderToBuffer>[0]`.)
-- **`utils/dara/report-data.ts`** — new shared **`loadReportModel(solId, daraUser)`** so the report
-  page and the PDF are built from ONE source of truth (can't drift). Also exports `readChecklist`,
-  `scoreBand`, `PASS_META`. The report page was refactored onto it (removed its inline query +
-  computation; imports these helpers now).
-- **`ReportToolbar.tsx`** — Export PDF button now `fetch()`es `/report/pdf` → blob download, with a
-  "Preparing…" spinner + error toast (was `window.print()`).
-- **Verified:** typecheck + `pnpm build` clean (route compiles as dynamic, 0 B client JS);
-  react-pdf smoke-tested in Node (emits valid `%PDF-`). **User confirmed the exported PDF works,
-  with "one or two minor format issues" to polish later** (see backlog §4).
-
-### `2df2959` — Review-quality + reconcile-refresh + print fixes
-1. **Format-finding calibration** (`utils/dara/prompt.ts`) — new `FORMAT_VERIFIABILITY_RULE` woven
-   into `PASS_LENS.compliance_format.guidance` (propagates to BOTH the multi-pass Compliance & Format
-   pass and the Direct review's lens block). The AI was escalating things it *can't verify from
-   extracted text* (font family, exact margins, orientation, paper size) into critical compliance
-   failures with author-facing "open the source Word file / re-export the PDF" remediation. Now those
-   un-verifiable items become **at most a low-severity manual-verify note**; genuinely evidenced
-   format problems (page-limit overruns, missing sections/forms, a font the proposal itself declares
-   out-of-spec) still surface normally. Matches the neutral `unable_to_determine` the compliance-
-   matrix path already used.
-2. **Background-job trailing refresh** (`components/dara/usePollRefresh.ts`) — after a job finishes,
-   `active` flips true→false; the refresh that observes completion reads the JobQueue status and the
-   rows it produced on **separate pooled connections**, so status can read `done` an instant before
-   the just-committed rows are visible to the other snapshot → panel stayed empty until a manual
-   reload. Now on the true→false edge it fires two catch-up `router.refresh()` calls (1.2s, 3.5s).
-   Fixes **reconcile "proposed changes don't appear until I refresh"** (user-reported) and the same
-   class for shred / compliance-check. (Reconcile auto-refresh deployed but not yet re-confirmed in a
-   walkthrough — worth a glance next session.)
-3. **Report print CSS** (`styles/main.css` `.report-print` scope + `no-print` on `ReportToolbar` +
-   `report-print` class on the report root) — full-width, fixed table layout, repeat header, avoid
-   row splits, preserve colors, Letter margins. **Now largely a fallback** since `b1c1847` replaced
-   the Export-PDF button with the real generator, but it still makes browser Ctrl+P sane.
-
-Prior session's work (create-flow reliability, poll storm, the Analysis Report feature, workspace
-query split, worker/LLM timeouts, compliance-sweep concurrency, delete-to-list, billing management,
-Direct-path compliance sync — commits `f087ac3`→`5d491ea`) is documented in `BUILD_STATUS.md`.
+1. **PDF export 500 fix** (`bf72353`) — multi-page Analysis Report PDFs crashed (`unsupported number`)
+   for large sols (sol 13, 127 findings → 33 pages). Root cause: a `fixed` react-pdf element with a
+   `render` callback and auto height compounds its box height each page until it overflows. Fixed with
+   an explicit height on the page-number element (+ hardened bordered blocks). `components/dara/ReportPdf.tsx`.
+2. **Trial enforcement wired** (`20fcccb`) — the trial-limit engine existed (`utils/dara/trial.ts`) but
+   nothing called it. Gated `createSolShell` (solicitation), `inviteUser` (seat, new invites only), and
+   `enqueueReviewRun`/`enqueueDirectReview` (review_run, **first run only** so re-runs aren't blocked);
+   Run button disabled at limit; dashboard trial status bar. Paid plans are a no-op (company 1 is
+   `starter`). See `billing-and-backlog.md`.
+3. **`CRON_SECRET`** — generated + set in all 3 Vercel envs; prod redeployed. `/api/cron/passes` now
+   returns 401 without the bearer (verified); legit Vercel Cron still 200s.
+4. **Real `.docx` compliance-matrix export** (`c39c1d1`) — replaced the HTML-as-`.doc` trick with a genuine
+   OOXML `.docx` via the `docx` lib. `utils/dara/matrix-docx.ts`; base64 through the export action →
+   `MatrixExport` decodes. `docx` added to `next.config` `serverComponentsExternalPackages`.
+5. **Per-review response upload + amendments drag-drop** (`e80fe0e`) — color-team reviews now take a
+   per-review response draft (drag-drop `DocUploader`, `uploadReviewDoc`/`deleteReviewDoc` → `ReviewDocument`),
+   replacing the single-upload + "Capture draft" snapshot model (removed). Sol-level proposal upload now
+   shows only in Direct AI mode. Amendments upload switched to the same `DocUploader`. Deleted `utils/dara/reviews.ts`.
+6. **Annotated response `.docx`** (`d25fcfd`, anchoring fix `4e231ec`) — export the proposal/response draft
+   with each finding as a **real inline Word comment**, anchored to the passage it's about. One AI call at
+   export time maps findings → verbatim quotes (no schema/re-run). `utils/dara/annotated-proposal.ts`,
+   route `app/app/solicitations/[id]/annotated/route.ts`, `components/dara/AnnotatedExportButton.tsx` (on the
+   report toolbar + each color-team review card). Anchoring fix: normalized (whitespace/smart-quote)
+   matching + 200k-char cap (was 0 inline; sol 13 now 13/15 anchored — user-confirmed).
+7. **Personas reintegrated as an AI review lens** (`f9f89c4`) — personas had fallen out of the review
+   process (engines built prompts with zero persona input). Now `renderPersonaGuidance` injects the
+   selected/active personas' `systemPrompt` into `buildPassPrompt` + `buildDirectReviewPrompt`
+   (`personaLensBlock`, augment-not-override, before the JSON tail). `runPass` uses the review's selected
+   personas (else all active); `runDirectReview` uses all active. **`Persona.systemPrompt` is the tweak knob**
+   (edit at `/app/personas`) — steers results without touching hardcoded prompts. See `personas-review-lens.md`.
+8. **CMMC L2 security re-audit** (§5) — 6-domain re-audit; prior hardening holds (26/26 RLS intact, no
+   regressions). Net-new gaps SEC-01..23 in **`SECURITY_BACKLOG.md`** (repo root, **untracked — do NOT
+   commit while open**). **SEC-04 fixed** (`7fe23ab`): the annotated-export CUI→LLM egress now records an
+   `annotated.export` audit entry (provider/mode) + fences the proposal with the shared injection guard.
 
 ---
 
 ## 3. ⚠️ Gotchas that WILL bite if forgotten
 
-- **Auto-deploy is dead/flaky — deploy manually every time** (see §1). Confirm the new SHA is READY
-  on prod via the Vercel MCP before assuming a change is live.
-- **`@react-pdf/renderer` must stay in `serverComponentsExternalPackages`** (next.config.js). Its
-  layout/font engine won't bundle into the Next server build otherwise. Runtime only executes when
-  `/report/pdf` is hit (route is `force-dynamic`), so a green `pnpm build` does NOT prove the PDF
-  renders — smoke-test the component or hit the route.
-- **`AI_TIMEOUT_MS` (utils/dara/providers.ts) must stay ~240s.** A full-RFP shred runs 150-200s and a
-  many-finding direct review ~180-200s; 120s aborted them mid-generation (and, via the old swallow
-  bug, left an EMPTY matrix). Ceiling sits just under the 300s function limit.
+- **Deploy manually every time** (§1); confirm READY on prod before assuming a change is live.
+- **`@react-pdf/renderer`, `mammoth`, AND `docx` must stay in `serverComponentsExternalPackages`**
+  (`next.config.js`). The `/report/pdf` and `/annotated` routes + matrix `.docx` action only execute the
+  lib at request time, so a green `pnpm build` does NOT prove they render — smoke-test the helper or hit the route.
+- **`AI_TIMEOUT_MS` (utils/dara/providers.ts) must stay ~240s.** Full shred/review runs 150-200s; 120s
+  aborted them mid-generation.
 - **The compliance matrix (requirements) comes from the SHRED**, a separate AI job from the review.
-  A direct_ai sol needs the shred to run to populate its matrix. Orphaned jobs reaped after
-  `STALE_MS=6min` (`passes.ts reapOrphanedJobs`).
-- **No schema changes for billing** — subscription dates/amounts read live from Stripe on the
-  (admin-only) billing page.
+- **Personas now feed the review prompts.** Editing/activating a persona changes review output. No-persona
+  companies get an unchanged prompt. The color-team Run gate ("≥1 active persona") is meaningful again.
+- **The `/annotated` route makes a live AI call** (`maxDuration=300`) and has **no rate limit / trial gate**
+  (SEC-01) — flagged in the backlog.
 
 ---
 
-## 4. Backlog (hardest first)
+## 4. Backlog (non-security)
 
-1. **PDF export polish (small, next up).** User said the exported PDF works with "one or two minor
-   format issues" — **get the specifics from them** (likely a column width/spacing/wrapped label or a
-   page-break spot), then tune `components/dara/ReportPdf.tsx` styles. Optional bigger polish:
-   **register Inter** (via `Font.register` + bundled .ttf) so the PDF matches the app typography
-   instead of Helvetica.
-2. **SAM.gov import** — dashboard button present but disabled. Blocked on a **SAM.gov API
-   key/entitlement** from the operator; then scaffold search + import (Opportunities API).
-3. **Trial enforcement** — NOT wired. Gate create/run on `TrialLimitError` → redirect `/app/billing`.
-   Targets: `createSolShell`/`finalizeReview` (`new/page.tsx`), `runDirectReviewAction` +
-   `runReviewAction`. Pairs with the trial usage meters (`getTrialUsage`) + billing trial card.
-4. **DOCX export** on the compliance matrix (mockup has it) — needs a `docx` lib (XLSX + Print exist).
-5. Nice-to-haves: rename/edit metadata from the solicitations LIST; `CRON_SECRET` in Vercel to lock
-   `/api/cron/passes`; "Sync from AI review" button label still says "Compliance & Format findings"
-   (cosmetic — direct mode folds all findings).
-
-### Deep backlog (larger, not yet scoped)
-- **Annotated proposal export (Word w/ comments).** Produce an updated `.docx` of the proposal draft
-  with **Word review comments** anchored where the AI suggests changes (map each finding /
-  `recommendedAction` to the passage). Hard parts: (a) locating each finding's anchor span in the
-  original doc, (b) writing real OOXML comments (`word/comments.xml` + `commentRangeStart/End` —
-  the `docx` npm lib's comment support is limited; may need direct OOXML/`docxtemplater` or
-  round-tripping the source `.docx`). Scope before building.
+1. **PDF-export minor format polish** — user reported small issues, **deferred by them** ("tweak later").
+2. **SAM.gov import** — dashboard button disabled; blocked on a SAM.gov API key/entitlement (operator).
+3. **Annotated export follow-ups** — per-direct-review persona selector; annotate the *original* uploaded
+   `.docx` in place (preserve formatting) instead of rebuilding from text; batch anchoring for huge finding sets.
+4. Nice-to-haves: rename/edit metadata from the solicitations LIST; richer built-in persona templates.
 
 ---
 
-## 5. Fast restart
+## 5. SECURITY BACKLOG — top priority (`SECURITY_BACKLOG.md`)
+
+Full CMMC L2 / NIST 800-171 / OWASP re-audit ran 2026-07-05. **Prior hardening holds — no regressions**
+(26/26 `dara_*` tables RLS, `withTenant` everywhere, Stripe webhook verified, CUI encrypted, admin gating
+fail-closed, prompt-injection fencing, no LLM tool-calling). Net-new gaps, highest first (see the file for
+file:line evidence + fixes + control mappings; it's **untracked**, don't commit while open):
+
+- **P1:** SEC-01 **no rate limiting / WAF / BotID** (SC-5; `/annotated` unbounded, re-runs + non-trial plans
+  unmetered). SEC-02 **`next@14.2.35` = 5 HIGH prod advisories** (SSRF, middleware bypass) — needs 14→15
+  migration. SEC-03 **CI gates don't block deploys** (no branch protection + Vercel deploys on push
+  independent of CI). ~~SEC-04 annotated egress unaudited+unfenced~~ **FIXED this session**.
+- **P2 (verified code gaps):** SEC-05 cross-department **BOLA** on child mutation/delete actions
+  (`updateRequirement`/`saveMatrixRow`/`deleteRequirement`/`deleteSolDoc` + run/rerun/regenerate/archive/
+  applyChange/enqueueReconcile — authorize child by `companyId` only, not the viewable parent sol). SEC-06
+  **deactivated users keep access** (`getDaraUser` ignores `isActive`). SEC-07 **solicitation delete orphans
+  CUI files** (`deleteSolicitationAction` no `removeStored`). SEC-08 **CSV formula/DDE injection** in matrix
+  CSV export. SEC-09 **no crypto key-rotation** path. SEC-10 pass-re-run + exports unaudited. SEC-11 **MFA not
+  enforced** (verify Supabase). SEC-12 decompression-bomb guard. SEC-13 CSP nonce (known-deferred).
+- **P3/best-practice:** SEC-14 cron fail-closed. SEC-15 CI RLS-drift check + isolation test. SEC-16 SHA-pin
+  GH Actions. SEC-17 scan SBOM + license gate. SEC-18 kill latent `dangerouslySetInnerHTML`. SEC-19 generic
+  client errors. SEC-20 password policy. SEC-21 audit retention policy. SEC-22 persona-injection residual.
+  SEC-23 tenant right-to-delete.
+- **Suggested quick code wins next:** SEC-08 (CSV escaping), SEC-06 (`isActive` fail-closed), SEC-07
+  (`removeStored` on sol delete), SEC-10 (export/re-run audit), SEC-14 (cron fail-closed). Then SEC-05 (BOLA
+  sweep) and SEC-01 (rate limiting). **Operator:** SEC-03 (branch protection + CI-gated deploy), SEC-02
+  (Next 15), SEC-11/SEC-20 (Supabase MFA/password).
+
+---
+
+## 6. Fast restart
 
 ```bash
-git status                       # expect clean main, HEAD b1c1847
-git log --oneline -12
-pnpm install                     # if needed (react-pdf added this session)
+git status                       # expect clean main, HEAD 7fe23ab
+git log --oneline -14
+pnpm install                     # if needed (docx added this session)
 pnpm exec tsc --noEmit
-pnpm build                       # must pass (27 routes; /report/pdf is the newest)
-# Deploy (prod = main, MANUAL — auto-deploy is off/flaky):
-#   git push origin main
-#   vercel deploy --prod --yes           # ALWAYS; then hard-refresh (Ctrl+Shift+R)
-#   confirm live: Vercel MCP list_deployments → newest SHA, state READY, target production
-# Schema? DB BEFORE the code deploy:  pnpm prisma migrate deploy  (+ apply-sql RLS if NEW table)
+pnpm build                       # must pass (27 routes; /annotated is the newest)
+# Deploy (prod = main, MANUAL): git push origin main && vercel deploy --prod --yes ; confirm via MCP list_deployments
 # Diagnose prod: Vercel MCP get_runtime_errors / get_runtime_logs
 #   (projectId prj_I6CLDhGJlbjro2Mc67i1AyyHpciP, teamId team_hluvXIDuWYVTRTyXnqxTbfWg)
-# Verify tenant DB flows: throwaway `npx tsx` script with pg + DIRECT_URL (non-interactive).
+# Verify tenant DB flows: throwaway `npx tsx` with pg + DIRECT_URL (non-interactive).
 ```
 
-## 6. Key files
+## 7. Key files (this session)
 
-- **Analysis Report + PDF:** `utils/dara/report-data.ts` (`loadReportModel` — shared loader,
-  the source of truth), `components/dara/ReportPdf.tsx` (react-pdf document),
-  `app/app/solicitations/[id]/report/pdf/route.ts` (streaming route),
-  `app/app/solicitations/[id]/report/page.tsx` (refactored onto the loader),
-  `components/dara/reportBits.tsx` (severity/effort palette — shared by page + PDF),
-  `ReportFindings.tsx`, `ChecklistPanel.tsx`, `ReportToolbar.tsx` (Export PDF fetch/download).
-- **Reviews/AI:** `utils/dara/direct-review.ts`, `utils/dara/passes.ts` (worker + `reapOrphanedJobs`
-  + `syncMatrixFromPasses`), `utils/dara/evaluator.ts` (compliance sweep), `utils/dara/requirements.ts`
-  (shred), `utils/dara/prompt.ts` (`PASS_LENS`/`FORMAT_VERIFIABILITY_RULE`, `PASS_SCHEMA`,
-  owner/effort/report block), `utils/dara/providers.ts` (`AI_TIMEOUT_MS`).
-- **Amendments/reconcile:** `utils/dara/amendments.ts` (`reconcileAmendment`, `applyAmendmentChange`);
-  reconcile UI + poll in `app/app/solicitations/[id]/page.tsx` (AsyncJobControl) +
-  `components/dara/usePollRefresh.ts` (trailing catch-up refresh).
-- **Workspace** (2200+ lines, mode-branched): `app/app/solicitations/[id]/page.tsx`.
-- **Billing:** `app/app/billing/page.tsx`, `utils/dara/billing.ts`, `utils/dara/trial.ts`.
-- **Create:** `app/app/solicitations/new/page.tsx` + `components/dara/UploadAndReview.tsx`.
-- **List/Dashboard:** `app/app/solicitations/page.tsx` (delete), `app/app/dashboard/page.tsx`.
-- **Shared:** `components/dara/` — `usePollRefresh`, `ReviewModeBits`, `ComplianceMatrix`,
-  `DeleteSolButton`, `SolMetaEditor`, `theme.ts`. Prisma/RLS: `utils/prisma.ts` (+ pg timeouts).
+- **Trial:** `utils/dara/trial.ts` (`requireTrialCapacity`, `trialLimitMessage`), gates in
+  `app/app/solicitations/new/page.tsx` (createSolShell), `utils/dara/passes.ts` (enqueueReviewRun),
+  `utils/dara/direct-review.ts` (enqueueDirectReview), `app/app/team/actions.ts` (inviteUser); dashboard bar
+  in `app/app/dashboard/page.tsx`.
+- **Exports:** `utils/dara/matrix-docx.ts` (+ `exportMatrixAction`/`MatrixExport.tsx`),
+  `components/dara/ReportPdf.tsx` + `app/app/solicitations/[id]/report/pdf/route.ts`.
+- **Annotated:** `utils/dara/annotated-proposal.ts`, `app/app/solicitations/[id]/annotated/route.ts`,
+  `components/dara/AnnotatedExportButton.tsx`; fencing primitives now exported from `utils/dara/prompt.ts`.
+- **Per-review upload:** `uploadReviewDoc`/`deleteReviewDoc` + review card in
+  `app/app/solicitations/[id]/page.tsx`; `components/dara/DocUploader.tsx` (added `reviewId`).
+- **Personas lens:** `utils/dara/personas.ts` (`renderPersonaGuidance`), `utils/dara/prompt.ts`
+  (`personaLensBlock`, `buildPassPrompt`/`buildDirectReviewPrompt`), engines in `passes.ts`/`direct-review.ts`.
+- **Security:** `SECURITY_BACKLOG.md` (root, untracked), `utils/dara/audit.ts` (`recordAudit`),
+  `utils/prisma.ts` (`withTenant`), `prisma/security/*.sql` (RLS).
+- **Workspace** (2300+ lines, mode-branched): `app/app/solicitations/[id]/page.tsx`.
 ```
