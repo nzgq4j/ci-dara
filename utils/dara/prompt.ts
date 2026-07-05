@@ -853,6 +853,26 @@ export type PassTypeValue = (typeof PASS_TYPES)[number];
 export const FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export type FindingSeverityValue = (typeof FINDING_SEVERITIES)[number];
 
+// Calibrate format findings to what extracted text can actually evidence. Physical/visual
+// attributes (font, exact margins, orientation, paper size) don't fully survive text
+// extraction, so the AI must not escalate "I can't confirm this from the PDF" into a
+// critical/high compliance failure with author-facing remediation — that describes a limit of
+// THIS review, not a defect in the submission. Genuine, evidenced format problems still surface
+// normally. Woven into the Compliance & Format lens (reused by the multi-pass Compliance pass
+// and the unified Direct review).
+const FORMAT_VERIFIABILITY_RULE =
+  'Calibrate format findings to what the extracted text can actually show. Font family, exact ' +
+  'point size, precise margins, line spacing, page orientation, and paper/letter size are not ' +
+  'fully recoverable from extracted text — so when such an attribute is simply not verifiable ' +
+  'from the text, do NOT treat it as a critical/high compliance failure and do NOT frame it as a ' +
+  'defect that "cannot be confirmed from the PDF." Instead record it as at most a LOW-severity ' +
+  'pre-submission reminder to verify the item manually, and never recommend that the offeror open ' +
+  'the source Word/InDesign file or re-export the PDF (that is a limitation of this review, not a ' +
+  'proposal defect). Where the extracted text DOES give real evidence of a format problem — a ' +
+  'volume that plainly exceeds its page limit, a missing required section/heading, an absent ' +
+  'required form, or a font/size the proposal itself declares that violates the RFQ — flag it ' +
+  'normally at the severity it warrants.';
+
 // Per-pass lens: the label, one-line description, what its score measures, and the
 // review instructions handed to the model. These three fixed lenses are the design's
 // Pass 1 / 2 / 3.
@@ -867,7 +887,8 @@ export const PASS_LENS: Record<PassTypeValue, {
     blurb: 'Validates proposal structure, volume/page limits, required forms, and formatting',
     scoreMeans: 'overall administrative & format compliance readiness',
     guidance:
-      'Check the proposal draft against the solicitation\'s Section L instructions and administrative/pass-fail requirements: required volumes and their order, page/format limits (page counts, fonts, margins), mandatory forms and certifications, submission mechanics, and required attachments/exhibits. Each finding is a concrete compliance or format gap (missing form, over-limit volume, absent section, unmet instruction).'
+      'Check the proposal draft against the solicitation\'s Section L instructions and administrative/pass-fail requirements: required volumes and their order, page/format limits (page counts, fonts, margins), mandatory forms and certifications, submission mechanics, and required attachments/exhibits. Each finding is a concrete compliance or format gap (missing form, over-limit volume, absent section, unmet instruction). ' +
+      FORMAT_VERIFIABILITY_RULE
   },
   technical_responsiveness: {
     label: 'Technical Responsiveness Review',

@@ -61,7 +61,7 @@ export default function ReportToolbar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="no-print flex flex-wrap items-center gap-2">
       {error && <span className="text-[12px] text-[#991B1B]">{error}</span>}
       <button
         type="button"

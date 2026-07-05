@@ -178,4 +178,52 @@ p a {
     -webkit-appearance: none;
     appearance: none;
   }
+
+  /* Analysis report (Export PDF = window.print()). Render it as a clean, full-width
+     document: no clipped columns, no rows split across a page break. Without this the
+     findings table — an overflow-x-auto scroll container on screen — is simply clipped on
+     paper (the Status column and long finding text run off the right edge). */
+  .report-print {
+    max-width: none !important;
+    /* Keep the navy section headers, score colors, and severity chips in the PDF — browsers
+       strip background colors on print by default. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Scroll/clip containers must reveal all their content on paper. */
+  .report-print .overflow-x-auto,
+  .report-print .overflow-hidden {
+    overflow: visible !important;
+  }
+  /* Fixed layout forces every column to fit the page width and wrap long text, instead of
+     auto-layout expanding the table past the page and clipping the right-hand columns. */
+  .report-print table {
+    width: 100% !important;
+    table-layout: fixed;
+  }
+  .report-print th,
+  .report-print td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    vertical-align: top;
+  }
+  /* Column widths for the findings table; the unset Finding & Action column (3) takes the
+     remaining width so the narrative gets the space, not the fixed metadata columns. */
+  .report-print thead th:nth-child(1) { width: 2.2rem; }
+  .report-print thead th:nth-child(2) { width: 4.75rem; }
+  .report-print thead th:nth-child(4) { width: 6rem; }
+  .report-print thead th:nth-child(5) { width: 6.5rem; }
+  .report-print thead th:nth-child(6) { width: 5rem; }
+  /* Repeat the header on each printed page; never split a finding row across pages. */
+  .report-print thead {
+    display: table-header-group;
+  }
+  .report-print tr {
+    break-inside: avoid;
+  }
+}
+
+/* Give printed pages a sane margin (Letter). Top-level so it applies to every print path. */
+@page {
+  margin: 0.5in;
 }

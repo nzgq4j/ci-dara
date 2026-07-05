@@ -271,7 +271,7 @@ export default async function AnalysisReportPage({ params }: { params: { id: str
   const hasReport = overall != null || findings.length > 0;
 
   return (
-    <div className="mx-auto max-w-[1180px] fade">
+    <div className="report-print mx-auto max-w-[1180px] fade">
       {/* Header */}
       <div className="mb-5">
         <nav className="mb-2 flex items-center gap-1 text-[12px] text-t5">
