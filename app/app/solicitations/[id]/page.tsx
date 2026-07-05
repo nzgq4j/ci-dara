@@ -6,7 +6,6 @@ import {
   Plus,
   Trash2,
   Save,
-  Upload,
   FileText,
   Inbox,
   Sparkles,
@@ -21,7 +20,6 @@ import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
-import { captureSnapshot } from '@/utils/dara/reviews';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, isShredActive, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
@@ -51,7 +49,6 @@ import {
   labelClasses,
   btnPrimary,
   btnGhost,
-  fileInputClasses,
   badgeBase,
   statusBadge,
   sectionTitle
@@ -555,8 +552,8 @@ async function createReview(formData: FormData) {
     }
     return review;
   });
-  // Freeze the current proposal draft into the new review (no-op if none uploaded yet).
-  await captureSnapshot(created.id, daraUser.companyId);
+  // Each review starts empty — the reviewer uploads that review's response draft directly on
+  // the review card (per-review documents), rather than snapshotting one solicitation draft.
   await recordAudit({
     action: 'review.create',
     companyId: daraUser.companyId,
@@ -639,25 +636,6 @@ async function deleteReview(formData: FormData) {
 }
 
 // Re-freeze the current proposal draft into a review.
-async function captureSnapshotAction(formData: FormData) {
-  'use server';
-  const daraUser = await authedUser();
-  const id = BigInt(String(formData.get('reviewId')));
-  const solId = BigInt(String(formData.get('solId')));
-  await requireViewableSolicitation(solId, daraUser);
-  const summary = await captureSnapshot(id, daraUser.companyId);
-  await recordAudit({
-    action: 'review.snapshot',
-    companyId: daraUser.companyId,
-    actorId: daraUser.id,
-    actorEmail: daraUser.email,
-    entityType: 'review',
-    entityId: id,
-    metadata: { docs: summary.count }
-  });
-  revalidatePath(`/app/solicitations/${solId}`);
-}
-
 // ---- Document actions ----
 async function uploadSolDoc(formData: FormData) {
   'use server';
@@ -732,6 +710,82 @@ async function deleteSolDoc(formData: FormData) {
     entityType: 'sol_document',
     entityId: id,
     metadata: { filename: owned.originalFilename }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// ---- Per-review response documents (color team) ----
+// Each color-team review carries its OWN response draft (ReviewDocument rows), uploaded
+// directly here — the review is the unit that gets a specific draft version, rather than one
+// solicitation-level draft snapshotted into every review. The pass engine reads
+// review.documents, so these feed the review verbatim.
+async function uploadReviewDoc(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  const reviewId = BigInt(String(formData.get('reviewId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const file = formData.get('file');
+  if (!(file instanceof File) || file.size === 0) return;
+  // Confirm the review belongs to this solicitation/company before attaching the file.
+  const rv = await withTenant(daraUser.companyId, (tx) =>
+    tx.review.findFirst({ where: { id: reviewId, solicitationId: solId, companyId: daraUser.companyId }, select: { id: true } })
+  );
+  if (!rv) return;
+  const doc = await uploadAndExtract(file, daraUser.companyId, 'review', Date.now());
+  const created = await withTenant(daraUser.companyId, async (tx) => {
+    const d = await tx.reviewDocument.create({
+      data: {
+        companyId: daraUser.companyId,
+        reviewId,
+        originalFilename: doc.originalFilename,
+        storedFilename: doc.storedFilename,
+        fileSize: doc.fileSize,
+        extractionStatus: doc.extractionStatus,
+        extractedText: doc.extractedText || null
+      }
+    });
+    // snapshotAt marks "this review has a draft" — set it as soon as one response file lands.
+    await tx.review.update({ where: { id: reviewId }, data: { snapshotAt: new Date() } });
+    return d;
+  });
+  await recordAudit({
+    action: 'document.upload',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'review_document',
+    entityId: created.id,
+    metadata: { solicitationId: solId.toString(), reviewId: reviewId.toString(), filename: doc.originalFilename }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+async function deleteReviewDoc(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('docId')));
+  const reviewId = BigInt(String(formData.get('reviewId')));
+  const solId = BigInt(String(formData.get('solId')));
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.reviewDocument.findFirst({ where: { id, companyId: daraUser.companyId, reviewId } })
+  );
+  if (!owned) return;
+  await removeStored([owned.storedFilename]);
+  await withTenant(daraUser.companyId, async (tx) => {
+    await tx.reviewDocument.delete({ where: { id } });
+    // If that was the review's last response file, clear snapshotAt so the UI reflects "empty".
+    const remaining = await tx.reviewDocument.count({ where: { reviewId, companyId: daraUser.companyId } });
+    if (remaining === 0) await tx.review.update({ where: { id: reviewId }, data: { snapshotAt: null } });
+  });
+  await recordAudit({
+    action: 'document.delete',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'review_document',
+    entityId: id,
+    metadata: { filename: owned.originalFilename, reviewId: reviewId.toString() }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -1306,22 +1360,22 @@ export default async function SolicitationDetailPage({
         />
       </div>
 
-      <div className={`${card} p-5`}>
-        <h2 className={`mb-1 ${sectionTitle}`}>Our proposal (working draft)</h2>
-        <p className="mb-4 text-[13px] text-t4">
-          {isDirect
-            ? 'The draft the AI review scores against the solicitation.'
-            : 'The draft your color teams review. Each review freezes a snapshot of these at the moment it is captured.'}
-        </p>
-        {docList(proposalDocs, 'No proposal documents uploaded yet.')}
-        <DocUploader
-          solId={sid}
-          docType="proposal"
-          uploadAction={uploadSolDoc}
-          label="Drop your proposal draft here"
-          sub="PDF, Word, or text · max 20 MB"
-        />
-      </div>
+      {/* Direct AI scores one solicitation-level draft. Color-team reviews each upload their own
+          response draft on the review card (Color Teams stage), so no shared draft here. */}
+      {isDirect && (
+        <div className={`${card} p-5`}>
+          <h2 className={`mb-1 ${sectionTitle}`}>Our proposal (working draft)</h2>
+          <p className="mb-4 text-[13px] text-t4">The draft the AI review scores against the solicitation.</p>
+          {docList(proposalDocs, 'No proposal documents uploaded yet.')}
+          <DocUploader
+            solId={sid}
+            docType="proposal"
+            uploadAction={uploadSolDoc}
+            label="Drop your proposal draft here"
+            sub="PDF, Word, or text · max 20 MB"
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -1563,12 +1617,6 @@ export default async function SolicitationDetailPage({
           persona ({activeRequirements.length} requirements, {activeCount} active personas).
         </p>
       )}
-      {proposalDocs.length === 0 && (
-        <p className="rounded-lg border border-line bg-surf px-4 py-2.5 text-[12px] text-t4">
-          Upload your proposal working draft on the <span className="text-t2">Solicitation</span> stage,
-          then capture a snapshot for each review.
-        </p>
-      )}
       {stageReviews.length === 0 && (
         <p className="rounded-lg border border-dashed border-line px-4 py-3 text-[12px] text-t4">
           No {ct.label}-team reviews yet — create one below to run a holistic {ct.label.toLowerCase()}-team
@@ -1593,23 +1641,51 @@ export default async function SolicitationDetailPage({
                 </span>
               )}
               <span className="ml-auto text-[11px] text-t5">
-                {rv.snapshotAt ? `${rv.documents.length} doc snapshot · ${fmtDate(rv.snapshotAt)}` : 'no draft captured'}
+                {rv.documents.length > 0
+                  ? `${rv.documents.length} response file${rv.documents.length === 1 ? '' : 's'}${rv.snapshotAt ? ` · ${fmtDate(rv.snapshotAt)}` : ''}`
+                  : 'no response uploaded'}
                 {' · '}{sel.size || activeCount} reviewers
               </span>
             </div>
 
-            {/* Snapshot / delete controls */}
-            <div className="no-print mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-line pt-2">
-              <form action={captureSnapshotAction}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                <button type="submit" className={`${btnGhost} !py-1.5 !text-[12px]`}><Upload className="h-3.5 w-3.5" />{rv.snapshotAt ? 'Re-capture' : 'Capture draft'}</button>
-              </form>
-              <form action={deleteReview}>
-                <input type="hidden" name="solId" value={sid} />
-                <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#dc2626]"><Trash2 className="h-3.5 w-3.5" /></button>
-              </form>
+            {/* Response draft — this review's own upload (each review reviews a specific draft) */}
+            <div className="no-print mt-2 border-t border-line pt-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[12px] font-semibold text-t2">Response draft</span>
+                <form action={deleteReview}>
+                  <input type="hidden" name="solId" value={sid} />
+                  <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                  <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#dc2626]"><Trash2 className="h-3.5 w-3.5" /></button>
+                </form>
+              </div>
+              {rv.documents.length > 0 && (
+                <ul className="mb-3 space-y-1.5">
+                  {rv.documents.map((d) => (
+                    <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2">
+                      <span className="flex min-w-0 items-center gap-2.5">
+                        <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
+                        <span className="truncate text-[13px] text-t2">{d.originalFilename}</span>
+                        <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(d.fileSize)}</span>
+                        <StatusBadge status={d.extractionStatus} />
+                      </span>
+                      <form action={deleteReviewDoc}>
+                        <input type="hidden" name="solId" value={sid} />
+                        <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                        <input type="hidden" name="docId" value={d.id.toString()} />
+                        <button type="submit" className="text-[#991B1B] transition-colors hover:text-[#dc2626]"><Trash2 className="h-4 w-4" /></button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <DocUploader
+                solId={sid}
+                docType="proposal"
+                reviewId={rv.id.toString()}
+                uploadAction={uploadReviewDoc}
+                label="Drop this review’s response draft here"
+                sub="PDF, Word, or text · the draft this review scores · max 20 MB"
+              />
             </div>
 
             {/* Multi-pass AI review */}
@@ -1620,7 +1696,7 @@ export default async function SolicitationDetailPage({
                 canRun={canEvaluate && rv.documents.length > 0 && !(atReviewRunLimit && rv.passes.length === 0)}
                 disabledReason={
                   rv.documents.length === 0
-                    ? 'Capture the proposal draft first (button above).'
+                    ? 'Upload this review’s response draft first (above).'
                     : atReviewRunLimit && rv.passes.length === 0
                       ? reviewRunLimitMsg
                       : 'Add at least one requirement (Compliance stage) and one active persona.'
@@ -2008,13 +2084,14 @@ export default async function SolicitationDetailPage({
                 ))}
               </ul>
             )}
-            <form action={uploadSolDoc} className="flex items-center gap-3">
-              <input type="hidden" name="solId" value={sid} />
-              <input type="hidden" name="docType" value="amendment" />
-              <input type="hidden" name="amendmentId" value={a.id.toString()} />
-              <input type="file" name="file" required accept=".pdf,.docx,.txt,.md" className={fileInputClasses} />
-              <button type="submit" className={btnGhost}><Upload className="h-4 w-4" />Upload</button>
-            </form>
+            <DocUploader
+              solId={sid}
+              docType="amendment"
+              amendmentId={a.id.toString()}
+              uploadAction={uploadSolDoc}
+              label="Drop the amendment document here"
+              sub="PDF, Word, or text · max 20 MB"
+            />
 
             {/* Reconcile */}
             <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">

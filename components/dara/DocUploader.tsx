@@ -14,6 +14,7 @@ export default function DocUploader({
   solId,
   docType,
   amendmentId,
+  reviewId,
   label,
   sub,
   uploadAction
@@ -21,6 +22,7 @@ export default function DocUploader({
   solId: string;
   docType: 'rfp' | 'proposal' | 'amendment';
   amendmentId?: string;
+  reviewId?: string;
   label?: string;
   sub?: string;
   uploadAction: (fd: FormData) => Promise<void>;
@@ -40,6 +42,7 @@ export default function DocUploader({
           fd.set('solId', solId);
           fd.set('docType', docType);
           if (amendmentId) fd.set('amendmentId', amendmentId);
+          if (reviewId) fd.set('reviewId', reviewId);
           fd.set('file', f);
           await uploadAction(fd);
         }
