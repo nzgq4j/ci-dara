@@ -7,6 +7,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download, FileSpreadsheet, RefreshCw, Loader2 } from 'lucide-react';
 import type { ReportFinding } from '@/components/dara/ReportFindings';
+import AnnotatedExportButton from '@/components/dara/AnnotatedExportButton';
 
 export default function ReportToolbar({
   solId,
@@ -101,6 +102,7 @@ export default function ReportToolbar({
       >
         <FileSpreadsheet className="h-4 w-4" /> Export XLSX
       </button>
+      <AnnotatedExportButton solId={solId} label="Annotated .docx" />
       <button
         type="button"
         onClick={regenerate}

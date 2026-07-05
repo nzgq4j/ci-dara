@@ -38,6 +38,7 @@ import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
 import DocUploader from '@/components/dara/DocUploader';
+import AnnotatedExportButton from '@/components/dara/AnnotatedExportButton';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
 import SolMetaEditor from '@/components/dara/SolMetaEditor';
@@ -1655,11 +1656,21 @@ export default async function SolicitationDetailPage({
             <div className="no-print mt-2 border-t border-line pt-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-[12px] font-semibold text-t2">Response draft</span>
-                <form action={deleteReview}>
-                  <input type="hidden" name="solId" value={sid} />
-                  <input type="hidden" name="reviewId" value={rv.id.toString()} />
-                  <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#dc2626]"><Trash2 className="h-3.5 w-3.5" /></button>
-                </form>
+                <div className="flex items-center gap-2">
+                  {rv.passes.some((p) => p.findings.length > 0) && (
+                    <AnnotatedExportButton
+                      solId={sid}
+                      reviewId={rv.id.toString()}
+                      label="Annotated .docx"
+                      className={`${btnGhost} !py-1.5 !text-[12px]`}
+                    />
+                  )}
+                  <form action={deleteReview}>
+                    <input type="hidden" name="solId" value={sid} />
+                    <input type="hidden" name="reviewId" value={rv.id.toString()} />
+                    <button type="submit" title="Delete review" className="rounded border border-line p-1.5 text-t5 transition-colors hover:text-[#dc2626]"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </form>
+                </div>
               </div>
               {rv.documents.length > 0 && (
                 <ul className="mb-3 space-y-1.5">
