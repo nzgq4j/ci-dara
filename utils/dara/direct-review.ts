@@ -18,6 +18,7 @@ import { buildDirectReviewPrompt, parseDirectReviewResult } from '@/utils/dara/p
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { requireTrialCapacity } from '@/utils/dara/trial';
+import { renderPersonaGuidance } from '@/utils/dara/personas';
 
 const DIRECT_MAX_TOKENS = 10000;
 
@@ -135,10 +136,16 @@ export async function runDirectReview(
     const company = await tx.company.findUnique({ where: { id: companyId } });
     const solicitation = await tx.solicitation.findUnique({
       where: { id: review.solicitationId },
-      select: { dueDate: true }
+      select: { dueDate: true, title: true, solNumber: true }
     });
     const solDocs = await tx.solDocument.findMany({
       where: { solicitationId: review.solicitationId, companyId }
+    });
+    // Active company personas steer the direct review (its tweakable reviewer lens).
+    const activePersonas = await tx.persona.findMany({
+      where: { companyId, isActive: true },
+      select: { displayName: true, systemPrompt: true },
+      orderBy: { sortOrder: 'asc' }
     });
     const requirements = await tx.requirement.findMany({
       where: { solicitationId: review.solicitationId, companyId, removedAt: null },
@@ -152,7 +159,7 @@ export async function runDirectReview(
       where: { directReviewId, companyId },
       select: { requirementRef: true, text: true, status: true, ownerName: true }
     });
-    return { review, company, solicitation, solDocs, requirements, priorFindings };
+    return { review, company, solicitation, solDocs, requirements, activePersonas, priorFindings };
   });
 
   if (!loaded?.review) return { ok: false, error: 'Direct review not found.' };
@@ -188,7 +195,11 @@ export async function runDirectReview(
     return { ok: false, error: 'No API key.' };
   }
 
-  const { system, user } = buildDirectReviewPrompt(solText, proposalText, requirementsRef);
+  const personaGuidance = renderPersonaGuidance(loaded.activePersonas, {
+    title: loaded.solicitation?.title,
+    solNumber: loaded.solicitation?.solNumber
+  });
+  const { system, user } = buildDirectReviewPrompt(solText, proposalText, requirementsRef, personaGuidance);
 
   let ai;
   try {

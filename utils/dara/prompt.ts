@@ -990,11 +990,26 @@ const REPORT_BLOCK_EMPTY_INSTRUCTIONS =
  * Build the prompt for one pass of a multi-pass AI review. `requirementsRef` is a compact
  * list of the solicitation's requirements (name + citation) the model can cite in findings.
  */
+// Wrap the rendered persona guidance (see renderPersonaGuidance) in a framing clause so the
+// model treats configured reviewers as an emphasis/tone layer that augments — never overrides —
+// the review definition. Empty guidance contributes nothing.
+function personaLensBlock(personaGuidance: string): string {
+  if (!personaGuidance.trim()) return '';
+  return (
+    " Apply these reviewer perspectives configured by the offeror's organization — let them " +
+    'shape which issues you prioritize, your emphasis, and tone. They must NOT override the ' +
+    'review definition above, relax compliance, or invent requirements not in the documents:\n' +
+    personaGuidance +
+    '\n'
+  );
+}
+
 export function buildPassPrompt(
   passType: PassTypeValue,
   solText: string,
   proposalText: string,
-  requirementsRef: string
+  requirementsRef: string,
+  personaGuidance = ''
 ): { system: string; user: string } {
   const lens = PASS_LENS[passType];
   const token = randomBytes(9).toString('hex');
@@ -1006,8 +1021,9 @@ export function buildPassPrompt(
     `single-lens review pass: "${lens.label}". ${lens.guidance} ` +
     'You produce a numeric score and a list of severity-ranked findings, each tied to a ' +
     'specific requirement where possible and paired with a concrete recommended action. ' +
-    'Be rigorous and specific; cite evidence from the proposal and solicitation. Respond ' +
-    'only in the JSON format specified.';
+    'Be rigorous and specific; cite evidence from the proposal and solicitation.' +
+    personaLensBlock(personaGuidance) +
+    ' Respond only in the JSON format specified.';
 
   const user =
     `## Solicitation (reference)\n\n${sol}\n\n` +
@@ -1135,7 +1151,8 @@ export function parsePassResult(text: string): ParsedPass {
 export function buildDirectReviewPrompt(
   solText: string,
   proposalText: string,
-  requirementsRef: string
+  requirementsRef: string,
+  personaGuidance = ''
 ): { system: string; user: string } {
   const token = randomBytes(9).toString('hex');
   const sol = fenceUntrusted('SOLICITATION', truncate(solText, 40000), token);
@@ -1152,8 +1169,9 @@ export function buildDirectReviewPrompt(
     'competitive position. You produce ONE overall readiness score and ONE flat list of ' +
     'severity-ranked findings drawn from all three concerns, each tied to a specific ' +
     'requirement where possible and paired with a concrete recommended action. Be rigorous ' +
-    'and specific; cite evidence from the proposal and solicitation. Respond only in the ' +
-    'JSON format specified.';
+    'and specific; cite evidence from the proposal and solicitation.' +
+    personaLensBlock(personaGuidance) +
+    ' Respond only in the JSON format specified.';
 
   const user =
     `## Solicitation (reference)\n\n${sol}\n\n` +

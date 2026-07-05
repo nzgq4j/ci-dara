@@ -1595,7 +1595,11 @@ export default async function SolicitationDetailPage({
           ))}
         </div>
       )}
-      <p className="text-[11px] text-t5">No reviewers selected → all active personas run.</p>
+      <p className="text-[11px] text-t5">
+        These perspectives steer the AI review — edit their instructions on the{' '}
+        <Link href="/app/personas" className="text-navy hover:underline">Personas</Link> page to tune results.
+        None selected → all active personas apply.
+      </p>
     </div>
   );
 

@@ -44,6 +44,41 @@ export const BUILTIN_PERSONAS: { displayName: string; systemPrompt: string }[] =
 ];
 
 /**
+ * Render a set of personas into a reviewer-lens guidance block for injection into the review
+ * prompts (passes + direct). Each persona's free-text systemPrompt is the user's tweak knob —
+ * this is how results get steered without touching the hardcoded prompt. Legacy per-criterion
+ * templates are tidied: solicitation vars are filled, and sentences that reference the (now
+ * absent) single criterion/FAR — or still carry a leftover `{{...}}` token — are dropped, so
+ * the block reads as a clean list of perspectives. Returns '' when there's nothing to apply.
+ */
+export function renderPersonaGuidance(
+  personas: { displayName: string; systemPrompt: string }[],
+  ctx: { title?: string; solNumber?: string }
+): string {
+  const SENT = String.fromCharCode(0);
+  const items = personas
+    .map((p) => {
+      const filled = p.systemPrompt
+        .split('{{SOLICITATION_TITLE}}')
+        .join(ctx.title ?? '')
+        .split('{{REFERENCE_NUMBER}}')
+        .join(ctx.solNumber ?? '')
+        .replace(/\{\{[^}]*\}\}/g, SENT); // sentinel-mark any leftover legacy var (criterion/FAR)
+      const text = filled
+        .split(/(?<=[.!?])\s+/) // by sentence
+        .map((seg) => seg.replace(/\s+/g, ' ').trim())
+        .filter((seg) => seg && !seg.includes(SENT) && !/^(Solicitation|FAR|Criterion)\s*:/i.test(seg))
+        .join(' ')
+        .replace(/\s+([.,;:])/g, '$1')
+        .trim();
+      return { name: p.displayName.trim(), text };
+    })
+    .filter((p) => p.text);
+  if (items.length === 0) return '';
+  return items.map((p) => `- ${p.name}: ${p.text}`).join('\n');
+}
+
+/**
  * Ensure the company has the built-in personas. Idempotent: only creates ones
  * whose displayName is not already present for the company. Returns the number
  * created.

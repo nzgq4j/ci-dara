@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { requireTrialCapacity } from '@/utils/dara/trial';
+import { renderPersonaGuidance } from '@/utils/dara/personas';
 import {
   buildPassPrompt,
   parsePassResult,
@@ -245,7 +246,15 @@ export async function runPass(
   const loaded = await withTenant(companyId, async (tx) => {
     const pass = await tx.reviewPass.findFirst({
       where: { id: passId, companyId },
-      include: { review: { include: { documents: true, solicitation: { select: { dueDate: true } } } } }
+      include: {
+        review: {
+          include: {
+            documents: true,
+            solicitation: { select: { dueDate: true, title: true, solNumber: true } },
+            reviewPersonas: { include: { persona: true } }
+          }
+        }
+      }
     });
     if (!pass) return null;
     const company = await tx.company.findUnique({ where: { id: companyId } });
@@ -257,12 +266,18 @@ export async function runPass(
       select: { name: true, citation: true },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
+    // Active company personas (the fallback lens when the review selected none).
+    const activePersonas = await tx.persona.findMany({
+      where: { companyId, isActive: true },
+      select: { displayName: true, systemPrompt: true },
+      orderBy: { sortOrder: 'asc' }
+    });
     // Preserve user-driven status/owner-name across a pass re-run (matched by ref + text).
     const priorFindings = await tx.finding.findMany({
       where: { passId, companyId },
       select: { requirementRef: true, text: true, status: true, ownerName: true }
     });
-    return { pass, company, solDocs, requirements, priorFindings };
+    return { pass, company, solDocs, requirements, activePersonas, priorFindings };
   });
 
   if (!loaded?.pass) return { ok: false, error: 'Pass not found.' };
@@ -300,7 +315,19 @@ export async function runPass(
     return { ok: false, error: 'No API key.' };
   }
 
-  const { system, user } = buildPassPrompt(passType, solText, proposalText, requirementsRef);
+  // Reviewer personas shape the pass: the review's selected personas (active only), else all
+  // active company personas. Their free-text systemPrompt is the user's knob to steer results.
+  const selectedPersonas = loaded.pass.review.reviewPersonas
+    .map((rp) => rp.persona)
+    .filter((p) => p.isActive)
+    .map((p) => ({ displayName: p.displayName, systemPrompt: p.systemPrompt }));
+  const effectivePersonas = selectedPersonas.length > 0 ? selectedPersonas : loaded.activePersonas;
+  const personaGuidance = renderPersonaGuidance(effectivePersonas, {
+    title: loaded.pass.review.solicitation.title,
+    solNumber: loaded.pass.review.solicitation.solNumber
+  });
+
+  const { system, user } = buildPassPrompt(passType, solText, proposalText, requirementsRef, personaGuidance);
 
   let ai;
   try {
