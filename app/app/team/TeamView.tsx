@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, MoreHorizontal, X, UserPlus, Mail, Check, Ban, Send } from 'lucide-react';
 import PageHeader from '@/components/dara/PageHeader';
+import Avatar from '@/components/dara/Avatar';
 import { card, fieldClasses, labelClasses, btnPrimary, btnGhost } from '@/components/dara/theme';
 import {
   inviteUser,
@@ -25,6 +26,7 @@ export interface MemberItem {
   id: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   role: string;
   isActive: boolean;
   departmentId: string | null;
@@ -61,13 +63,6 @@ function hashIndex(s: string, n: number) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % n;
 }
-function initials(name: string, email: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  if (parts.length === 1 && parts[0].length >= 2) return parts[0].slice(0, 2).toUpperCase();
-  return (email[0] || '?').toUpperCase();
-}
-
 function Badge({ role }: { role: string }) {
   return (
     <span className={`inline-flex items-center rounded px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide ${ROLE_BADGE[role] ?? 'bg-line text-t4'}`}>
@@ -202,12 +197,14 @@ export default function TeamView({
             <div key={m.id} className="grid grid-cols-[1fr_150px_160px_130px_40px] items-center gap-3 border-b border-line px-5 py-4 last:border-b-0">
               {/* User */}
               <div className="flex min-w-0 items-center gap-3">
-                <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white"
-                  style={{ background: AVATAR_COLORS[hashIndex(m.id, AVATAR_COLORS.length)] }}
-                >
-                  {initials(m.name, m.email)}
-                </div>
+                <Avatar
+                  avatarUrl={m.avatarUrl}
+                  name={m.name}
+                  email={m.email}
+                  sizeClass="h-10 w-10 text-[12px]"
+                  fallbackClassName="text-white"
+                  fallbackStyle={{ background: AVATAR_COLORS[hashIndex(m.id, AVATAR_COLORS.length)] }}
+                />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-[14px] font-semibold text-t1">{m.name}</span>

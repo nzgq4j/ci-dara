@@ -20,7 +20,9 @@ export default async function WelcomePage() {
   if (daraUser.onboardedAt) redirect('/app/dashboard');
 
   const meta = (user.user_metadata ?? {}) as Record<string, any>;
-  const avatarUrl: string | null = meta.avatar_url || meta.picture || null;
+  // Prefer the uploaded avatar; fall back to an OAuth provider picture.
+  const avatarUrl: string | null =
+    daraUser.avatarUrl || meta.avatar_url || meta.picture || null;
   const firstName =
     (daraUser.name || meta.full_name || meta.name || daraUser.email || 'there')
       .toString()

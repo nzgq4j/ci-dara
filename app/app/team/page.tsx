@@ -66,6 +66,7 @@ export default async function TeamPage() {
       id: u.id,
       name: u.name || u.email,
       email: u.email,
+      avatarUrl: u.avatarUrl,
       role: u.role,
       isActive: u.isActive,
       departmentId: m ? m.teamId.toString() : null,
