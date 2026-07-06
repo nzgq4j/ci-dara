@@ -1,10 +1,12 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { recordAudit } from '@/utils/dara/audit';
+import { LEGAL_VERSION } from '@/utils/dara/legal-content';
 
 // Resolve the signed-in DARA user for an onboarding step. Cross-tenant safe: the
 // user already has a company (provisioned at sign-in); we only ever touch their
@@ -70,6 +72,44 @@ export async function saveAiMode(
     })
   );
   return { ok: true };
+}
+
+// Record the user's acceptance ("digital signature") of the current Terms of Service +
+// Supplemental Policy Addendum. Stores current-state on the user and writes an immutable
+// signing event to the audit log (version, typed name, IP, user-agent). Used by both the
+// onboarding Agreement step and the account Legal page.
+export async function acceptLegal(
+  signedName: string
+): Promise<{ ok: boolean; error?: string; version?: string; acceptedAt?: string }> {
+  const daraUser = await requireOnboarder();
+  const name = signedName.trim().slice(0, 255);
+  if (name.length < 2) {
+    return { ok: false, error: 'Type your full legal name to sign.' };
+  }
+  const now = new Date();
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.daraUser.update({
+      where: { id: daraUser.id },
+      data: {
+        tosAcceptedVersion: LEGAL_VERSION,
+        tosAcceptedAt: now,
+        tosSignedName: name
+      }
+    })
+  );
+  const h = headers();
+  const ip = (h.get('x-forwarded-for') || '').split(',')[0].trim() || null;
+  await recordAudit({
+    action: 'legal.accept',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'user',
+    entityId: daraUser.id,
+    // The signing record: which version, the typed signature, and request provenance.
+    metadata: { version: LEGAL_VERSION, signedName: name, ip, userAgent: h.get('user-agent') || null }
+  });
+  return { ok: true, version: LEGAL_VERSION, acceptedAt: now.toISOString() };
 }
 
 // Finish the org-creator wizard: stamp both the company and the user as onboarded

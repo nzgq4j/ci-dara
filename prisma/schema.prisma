@@ -295,6 +295,11 @@ model DaraUser {
   // bcrypt hashes of single-use recovery codes (plaintext shown once at setup).
   mfaEnabled     Boolean  @default(false) @map("mfa_enabled")
   mfaBackupCodes String[] @default([]) @map("mfa_backup_codes")
+  // Legal acceptance (Terms of Service + Supplemental Policy Addendum). Current state
+  // only; the immutable signing event is also written to dara_audit_log (legal.accept).
+  tosAcceptedVersion String?   @map("tos_accepted_version") @db.VarChar(20)
+  tosAcceptedAt      DateTime? @map("tos_accepted_at")
+  tosSignedName      String?   @map("tos_signed_name") @db.VarChar(255)
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 

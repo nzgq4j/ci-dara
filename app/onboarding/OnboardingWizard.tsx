@@ -14,6 +14,7 @@ import {
   Trash2,
   ShieldCheck,
   KeyRound,
+  ScrollText,
   Loader2
 } from 'lucide-react';
 import {
@@ -31,6 +32,7 @@ import {
 } from './actions';
 import { inviteUser } from '@/app/app/team/actions';
 import OnboardingTwoFactor from './OnboardingTwoFactor';
+import OnboardingAgreement from './OnboardingAgreement';
 
 type AiMode = 'platform' | 'byok';
 
@@ -46,6 +48,7 @@ const STEPS = [
   { key: 'ai', label: 'AI', icon: Cpu },
   { key: 'team', label: 'Team', icon: UsersRound },
   { key: 'security', label: 'Security', icon: ShieldCheck },
+  { key: 'agreement', label: 'Agreement', icon: ScrollText },
   { key: 'done', label: 'Done', icon: Check }
 ] as const;
 
@@ -80,6 +83,8 @@ export default function OnboardingWizard({
     { email: '', role: 'reviewer' }
   ]);
   const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [tosSigned, setTosSigned] = useState(false);
+  const [tosName, setTosName] = useState('');
 
   const firstName = (name || prefillName).split(' ')[0] || 'there';
   const initials = (name || email || '?').slice(0, 2).toUpperCase();
@@ -447,8 +452,49 @@ export default function OnboardingWizard({
             </div>
           )}
 
-          {/* Step 7 — Done */}
+          {/* Step 7 — Agreement (required) */}
           {step === 6 && (
+            <div className="fade">
+              <StepHead
+                icon={ScrollText}
+                title="Terms &amp; agreements"
+                subtitle="Review, download, and sign our Terms of Service and policies to continue."
+              />
+              <OnboardingAgreement
+                prefillName={name}
+                signed={tosSigned}
+                signedName={tosName}
+                onSigned={(n) => {
+                  setTosSigned(true);
+                  setTosName(n);
+                }}
+              />
+              <div className="mt-7 flex items-center justify-between">
+                <button
+                  type="button"
+                  className={btnGhost}
+                  onClick={() => go(5)}
+                  disabled={pending}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className={btnPrimary}
+                  onClick={() => go(7)}
+                  disabled={pending || !tosSigned}
+                  title={!tosSigned ? 'Sign the agreement to continue' : undefined}
+                >
+                  Continue
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 8 — Done */}
+          {step === 7 && (
             <div className="fade text-center">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#DCFCE7] text-[#166534]">
                 <Check className="h-8 w-8" />
@@ -472,7 +518,7 @@ export default function OnboardingWizard({
                 <button
                   type="button"
                   className={btnGhost}
-                  onClick={() => go(5)}
+                  onClick={() => go(6)}
                   disabled={pending}
                 >
                   <ArrowLeft className="h-4 w-4" />
