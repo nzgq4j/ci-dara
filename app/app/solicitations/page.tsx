@@ -7,6 +7,7 @@ import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { userTeamIds, solAccessWhere, canViewSolicitation } from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
+import { removeStored } from '@/utils/dara/documents';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, cardDashed, btnPrimary } from '@/components/dara/theme';
 import { ModeChip, AiReviewStatus, AiReviewAction } from '@/components/dara/ReviewModeBits';
@@ -25,28 +26,47 @@ async function deleteSolicitationAction(formData: FormData) {
   if (!daraUser) redirect('/signin');
   const id = BigInt(String(formData.get('solId')));
 
-  const deleted = await withTenant(daraUser.companyId, async (tx) => {
+  const result = await withTenant(daraUser.companyId, async (tx) => {
     const sol = await tx.solicitation.findFirst({
       where: { id, companyId: daraUser.companyId },
       include: { departments: { select: { teamId: true } } }
     });
-    if (!sol) return false;
+    if (!sol) return null;
     const teamSet = new Set(await userTeamIds(tx, daraUser.id));
     if (!canViewSolicitation(daraUser.id, daraUser.role, sol.createdBy, sol.departments.map((d) => d.teamId), teamSet)) {
-      return false;
+      return null;
     }
+    // SEC-07 (NIST MP-6 / SI-12): gather every stored CUI blob BEFORE the cascade drops the
+    // DB pointers. DB rows cascade on delete; Storage objects do not — leaving them orphans
+    // full CUI (RFP/proposal/amendment PDFs+DOCX and per-review response drafts) in the
+    // bucket with nothing pointing at it. SolDocument covers rfp/proposal/amendment docs;
+    // ReviewDocument covers each color-team review's response draft.
+    const [solDocs, reviewDocs] = await Promise.all([
+      tx.solDocument.findMany({
+        where: { solicitationId: id, companyId: daraUser.companyId },
+        select: { storedFilename: true }
+      }),
+      tx.reviewDocument.findMany({
+        where: { companyId: daraUser.companyId, review: { solicitationId: id } },
+        select: { storedFilename: true }
+      })
+    ]);
+    const stored = [...solDocs, ...reviewDocs].map((d) => d.storedFilename).filter(Boolean);
     await tx.solicitation.delete({ where: { id } });
-    return true;
+    return { stored };
   });
 
-  if (deleted) {
+  if (result) {
+    // Storage I/O outside the transaction (matches deleteSolDoc / deleteAmendment).
+    await removeStored(result.stored);
     await recordAudit({
       action: 'solicitation.delete',
       companyId: daraUser.companyId,
       actorId: daraUser.id,
       actorEmail: daraUser.email,
       entityType: 'solicitation',
-      entityId: id
+      entityId: id,
+      metadata: { removedFiles: result.stored.length }
     });
   }
   revalidatePath('/app/solicitations');

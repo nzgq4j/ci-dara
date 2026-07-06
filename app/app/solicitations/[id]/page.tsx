@@ -456,6 +456,18 @@ async function exportMatrixAction(
   });
   if (!loaded.sol) return { ok: false, error: 'Solicitation not found.' };
 
+  // SEC-10 (NIST AU-2/AU-3): a compliance-matrix export is a CUI egress off-platform.
+  // Record the action + format (no CUI content) so downloads are auditable.
+  await recordAudit({
+    action: 'matrix.export',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: solId,
+    metadata: { format, requirementCount: loaded.requirements.length }
+  });
+
   const cols = ['#', 'Requirement', 'Detail', 'Source', 'Type', 'Citation', 'Response Location', 'Status', 'Notes'];
   const rows = loaded.requirements.map((r, i) => [
     String(i + 1),
@@ -473,7 +485,16 @@ async function exportMatrixAction(
   const title = `Compliance Matrix — ${loaded.sol.solNumber}${loaded.sol.title ? ` · ${loaded.sol.title}` : ''}`;
 
   if (format === 'csv') {
-    const esc = (s: string) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+    // SEC-08 (OWASP CSV injection / CWE-1236): AI-shredded requirement text originates in
+    // attacker-supplied solicitation docs. A cell that begins with = + - @ (or a control
+    // char that a spreadsheet strips back to one) is evaluated as a formula/DDE in
+    // Excel/Sheets on a reviewer's workstation — e.g. `=cmd|'/c calc'!A1`. Prefix any such
+    // cell with a single quote so it renders as literal text, then apply RFC-4180 quoting.
+    const esc = (s: string) => {
+      let v = String(s ?? '');
+      if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
+      return `"${v.replace(/"/g, '""')}"`;
+    };
     const content = [cols, ...rows].map((row) => row.map(esc).join(',')).join('\r\n');
     return { ok: true, filename: `${slug}_compliance_matrix.csv`, mime: 'text/csv;charset=utf-8', content };
   }
@@ -1030,6 +1051,17 @@ async function rerunPassAction(formData: FormData): Promise<{ ok: boolean }> {
   const passId = BigInt(String(formData.get('passId')));
   await requireViewableSolicitation(solId, daraUser);
   await enqueuePassRun(passId, daraUser.companyId);
+  // SEC-10 (NIST AU-2/AU-3): a pass re-run is a full CUI→LLM egress; record it like the
+  // initial run so every AI pass over CUI has a provider-independent audit trail.
+  await recordAudit({
+    action: 'review.pass.rerun',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'review_pass',
+    entityId: passId,
+    metadata: { solicitationId: solId.toString() }
+  });
   triggerWorker();
   revalidatePath(`/app/solicitations/${solId}`);
   return { ok: true };

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
-import { getDaraUser } from '@/utils/dara/provision';
+import { findDaraUserRaw } from '@/utils/dara/provision';
 import { resolvePlatformAdmin } from '@/utils/dara/platform';
 import Sidebar from '@/components/layout/Sidebar';
 import PlatformAdminSidebar from '@/components/layout/PlatformAdminSidebar';
@@ -31,7 +31,10 @@ export default async function AppLayout({
     );
   }
 
-  const daraUser = await getDaraUser(user.id);
+  // Use the raw lookup here (not getDaraUser, which is fail-closed on !isActive) so a
+  // deactivated user still reaches the terminal AccountDisabled screen below instead of a
+  // bare signin redirect. Every other caller resolves via the fail-closed getDaraUser.
+  const daraUser = await findDaraUserRaw(user.id);
   if (!daraUser) redirect('/signin');
 
   // Banned/deactivated by a platform admin — terminal screen (no redirect loop).

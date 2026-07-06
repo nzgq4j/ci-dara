@@ -105,11 +105,27 @@ export async function provisionNewUser(
   return user;
 }
 
-export async function getDaraUser(supabaseUserId: string) {
+// Raw lookup — returns the row regardless of active state. Only the app-shell layout
+// uses this, to render the terminal "account disabled" screen. Everything else (server
+// actions, route handlers, pages) must resolve the current user via getDaraUser, which
+// is fail-closed.
+export async function findDaraUserRaw(supabaseUserId: string) {
   return prismaAdmin.daraUser.findUnique({
     where: { id: supabaseUserId },
     include: { company: true },
   });
+}
+
+// SEC-06 (NIST AC-2 / IA-4): fail-closed on deactivation. A banned/deactivated user must
+// lose ALL application access independent of the best-effort Supabase-side auth ban (which
+// swallows errors, and even on success leaves existing tokens valid until jwt_expiry).
+// Returning null for an inactive account makes every caller that resolves "the current
+// user" — server actions and route handlers included, not just the page shell — treat a
+// disabled account as unauthenticated.
+export async function getDaraUser(supabaseUserId: string) {
+  const user = await findDaraUserRaw(supabaseUserId);
+  if (!user || !user.isActive) return null;
+  return user;
 }
 
 // Record a sign-in time (powers the Team page "Last active" column). Best-effort:

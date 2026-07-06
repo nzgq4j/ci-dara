@@ -9,10 +9,17 @@ export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 async function handle(req: NextRequest) {
-  // If CRON_SECRET is configured, require Vercel Cron's bearer token. When unset, allow
-  // (the run still works via the in-request after() trigger; cron is just the backstop).
+  // SEC-14 (NIST AC-3): CRON_SECRET is MANDATORY in production — fail closed if it ever
+  // drifts out of the env rather than silently accepting unauthenticated calls to this
+  // long-budget, CUI-processing worker. Outside production it stays optional so local/
+  // preview cron and the in-request trigger work without the bearer. triggerWorker()
+  // forwards the same bearer when the secret is set, so legit continuations still pass.
   const secret = process.env.CRON_SECRET;
-  if (secret) {
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ ok: false, error: 'server misconfigured' }, { status: 500 });
+    }
+  } else {
     const auth = req.headers.get('authorization');
     if (auth !== `Bearer ${secret}`) {
       return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });

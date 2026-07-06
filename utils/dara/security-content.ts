@@ -41,10 +41,10 @@ export interface Finding {
 
 export const ASSESSMENT = {
   title: 'DARA Cybersecurity Assessment',
-  performed: 'June 27, 2026',
+  performed: 'June 27, 2026 · re-audited July 5, 2026',
   assessor: 'Internal security review (automated, evidence-based)',
   scope:
-    'Application architecture, authn/z & tenant isolation, CUI/FCI data handling, secrets management, database & RLS, API & webhook security, AI/LLM data flow, file uploads, dependencies & supply chain, cloud/deployment configuration.',
+    'Application architecture, authn/z & tenant isolation, CUI/FCI data handling, secrets management, database & RLS, API & webhook security, AI/LLM data flow, file uploads, dependencies & supply chain, cloud/deployment configuration. The July 5, 2026 CMMC L2 re-audit re-examined the surface added since June — document/annotated-response exports, per-review uploads, personas as a review lens, and trial enforcement — and confirmed the prior remediations (DARA-001…019) remain intact with no regressions.',
   method:
     'Read-only static review of the repository, configuration, and dependency tree. No exploit code was run against production or third-party services. Every control is rated by repository evidence only; items not determinable from the repo are marked Undetermined.',
   evidenceStandard:
@@ -102,28 +102,28 @@ export const FRAMEWORKS: Framework[] = [
 ];
 
 export const CONTROL_POSTURE: ControlPosture[] = [
-  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; platform-admin via env allow-list (no source-embedded identities) with audited admin actions (DARA-010); app-layer companyId scoping retained as defense-in-depth. Remaining: a per-user platform-admin DB role for finer control.' },
+  { family: 'Access Control', code: 'AC', status: 'Partial', note: 'Per-tenant RLS on all tenant tables under a least-privilege non-BYPASSRLS app role (company_id GUC per request); anon/authenticated REST access revoked; platform-admin via env allow-list (no source-embedded identities) with audited admin actions (DARA-010); deactivated accounts now fail closed across the app (DARA-026); app-layer companyId scoping retained as defense-in-depth. Remaining: a cross-department authorization gap on some child mutation actions (DARA-025) and a per-user platform-admin DB role for finer control.' },
   { family: 'Awareness & Training', code: 'AT', status: 'Not implemented', note: 'No security training program evidenced in the repository.' },
-  { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (sign-in/provisioning, authz + BYOK-key changes, persona changes, CUI document/evaluation handling, billing). Remaining: an admin-only, per-company audit viewer (planned under Team), a retention policy, and log review/alerting.' },
-  { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; single pnpm lockfile (frozen in CI); CI security gates in place (secret scan, dependency audit, SAST, SBOM); tracked migration baseline + documented two-layer schema source of truth (DARA-017). Remaining: enabling branch protection on main to enforce the CI gates.' },
-  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth with Google SSO (OAuth/PKCE) and email+password; "remember me" session controls; committed DB credential remediated (env, rotated, history-purged). MFA available via the identity provider; org-level enforcement Unverified.' },
+  { family: 'Audit & Accountability', code: 'AU', status: 'Partial', note: 'Append-only audit trail (dara_audit_log) records actor/action/target/time for security-relevant events (sign-in/provisioning, authz + BYOK-key changes, persona changes, CUI document/evaluation handling, billing). CUI export/egress paths — matrix/report exports, AI pass re-runs, and the annotated export — are now audited (DARA-024, DARA-030). Remaining: an admin-only, per-company audit viewer (planned under Team), a defined retention/review policy (DARA-041), and log review/alerting.' },
+  { family: 'Configuration Management', code: 'CM', status: 'Partial', note: 'Good .gitignore; single pnpm lockfile (frozen in CI); CI security gates in place (secret scan, dependency audit, SAST, SBOM); tracked migration baseline + documented two-layer schema source of truth (DARA-017). Remaining: enable branch protection on main so the CI gates actually block deploys, which today run independently of the Vercel deploy (DARA-023), plus automated RLS-drift detection (DARA-035).' },
+  { family: 'Identification & Authentication', code: 'IA', status: 'Partial', note: 'Supabase Auth with Google SSO (OAuth/PKCE) and email+password; "remember me" session controls; committed DB credential remediated (env, rotated, history-purged). MFA is available via the identity provider but not yet enforced in code or at the project level (DARA-031), and password policy/lockout needs verification (DARA-040) — both required for CMMC L2.' },
   { family: 'Incident Response', code: 'IR', status: 'Not implemented', note: 'No incident response plan evidenced.' },
   { family: 'Maintenance', code: 'MA', status: 'Undetermined', note: 'No maintenance procedure evidenced in the repository.' },
-  { family: 'Media Protection', code: 'MP', status: 'Partial', note: 'BYOK keys and CUI extracted text both encrypted at rest (AES-256-GCM; DARA-009); private storage bucket; best-effort deletion. Remaining: a formal media sanitization/retention policy.' },
+  { family: 'Media Protection', code: 'MP', status: 'Partial', note: 'BYOK keys and CUI extracted text both encrypted at rest (AES-256-GCM; DARA-009); private storage bucket; solicitation delete now removes all stored CUI blobs, no longer orphaning files (DARA-027). Remaining: a formal media sanitization/retention policy and a tenant-level right-to-delete / CUI purge (DARA-043).' },
   { family: 'Personnel Security', code: 'PS', status: 'Not applicable', note: 'Organizational process; not assessable from the repository.' },
   { family: 'Physical Protection', code: 'PE', status: 'Not applicable', note: 'Inherited from cloud providers (Vercel / Supabase / AWS).' },
   { family: 'Risk Assessment', code: 'RA', status: 'Partial', note: 'This assessment performed; automated dependency audit + CodeQL SAST run in CI on every push/PR. Remaining: continuous/runtime vulnerability scanning and a recurring risk-assessment cadence.' },
   { family: 'Security Assessment & Monitoring', code: 'CA', status: 'Partial', note: 'Point-in-time review plus per-push CI scanning (secret, dependency, SAST). A System Security Plan is documented in-app (/app/security/plan). Remaining: continuous runtime monitoring and alerting.' },
-  { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP; DB TLS enforced (DARA-014); CUI encrypted at rest (DARA-009). CUI→LLM egress: commercial endpoints retained with compensating controls — boundary notices, BYOK option, per-run audit (DARA-007, risk accepted); zero-data-retention agreements on platform keys pursued offline.' },
-  { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'Next.js patched to 14.2.35; LLM input fenced; React output escaping sound; automated dependency audit + CodeQL SAST in CI. Remaining: triage of dev-only transitive advisories.' },
+  { family: 'System & Communications Protection', code: 'SC', status: 'Partial', note: 'Platform TLS; security headers + CSP; DB TLS enforced (DARA-014); CUI encrypted at rest (DARA-009). CUI→LLM egress: commercial endpoints retained with compensating controls — boundary notices, BYOK option, per-run audit (DARA-007, risk accepted); zero-data-retention agreements on platform keys pursued offline. Remaining (SC-5): no application-layer rate limiting / WAF (DARA-021) and a decompression-bomb guard on document extraction (DARA-032); a nonce-based CSP to drop unsafe-inline (DARA-033).' },
+  { family: 'System & Information Integrity', code: 'SI', status: 'Partial', note: 'LLM input fenced (incl. the annotated-export path, DARA-024); React output escaping sound; automated dependency audit + CodeQL SAST in CI. Remaining: Next.js 14.2.35 now carries unpatched high-severity advisories (SSRF, middleware bypass) requiring a 14→15 upgrade (DARA-022), and a latent dangerouslySetInnerHTML sink to remove (DARA-038).' },
   { family: 'Planning', code: 'PL', status: 'Partial', note: 'System Security Plan drafted as a living in-app document (/app/security/plan) mapping implemented controls to NIST families, with the findings register serving as the POA&M. Remaining: formal sign-off and a maintenance cadence.' },
-  { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Frozen pnpm lockfile, high-severity dependency audit, and a CycloneDX SBOM generated in CI. Remaining: artifact provenance/signing.' }
+  { family: 'Supply Chain Risk Management', code: 'SR', status: 'Partial', note: 'Frozen pnpm lockfile, high-severity dependency audit, and a CycloneDX SBOM generated in CI. Remaining: scan the SBOM + add a license gate rather than only generating it (DARA-037), SHA-pin third-party GitHub Actions (DARA-036), and artifact provenance/signing.' }
 ];
 
 // ── System Security Plan (SSP) — living document; see /app/security/plan ─────────
 export const SSP = {
-  version: 'Draft 0.1',
-  updated: 'June 28, 2026',
+  version: 'Draft 0.2',
+  updated: 'July 5, 2026',
   owner: 'Crucible Insight LLC',
   system: 'DARA — Document Analysis & Response Assistant',
   overview:
@@ -391,16 +391,298 @@ export const FINDINGS: Finding[] = [
     remediation: 'Confirm the bucket is private, add storage policies, and use short-lived signed URLs if files become downloadable.',
     mapping: 'NIST AC-3, SC-28 · OWASP API1',
     window: 'Mid-term (31–90 days)'
+  },
+
+  // ── July 5, 2026 CMMC L2 re-audit (DARA-021…043; net-new surface since June) ─────
+  // The prior remediations (DARA-001…019) remain intact with no regressions. The items
+  // below cover attack surface added since June (document/annotated exports, per-review
+  // uploads, personas-as-review-lens, trial enforcement) plus best-practice hardening.
+  {
+    id: 'DARA-021',
+    title: 'No application rate limiting or abuse protection',
+    severity: 'High',
+    status: 'Open',
+    component: 'Vercel WAF / app endpoints (AI-run, export, upload, auth)',
+    evidence: 'No WAF, BotID, Firewall/Attack Mode, or app-level rate limits are configured (vercel.json defines only the cron). Expensive authenticated endpoints are unbounded per tenant: the annotated-export route (live LLM call), review/pass re-runs (the trial meter fires only on the first run), report/matrix exports, and uploads. On non-trial (paid) plans the trial meter short-circuits entirely, so AI egress and spend are unmetered.',
+    impact: 'A single authenticated tenant can drive unbounded LLM cost and load (denial-of-wallet / DoS). No cross-tenant exposure.',
+    remediation: 'Add Vercel WAF rate-limit rules (or an edge/Upstash limiter) on AI-run, export, upload, and auth paths; BotID on auth; a per-tenant AI call/cost budget or re-run throttle.',
+    mapping: 'NIST SC-5 · OWASP A10 / LLM04 · CMMC L2',
+    window: 'Short-term (8–30 days)'
+  },
+  {
+    id: 'DARA-022',
+    title: 'Next.js 14.2.35 carries unpatched high-severity advisories',
+    severity: 'High',
+    status: 'Open',
+    component: 'package.json · next@14.2.35',
+    evidence: 'pnpm audit --prod flags multiple HIGH advisories for the 14.x line — SSRF (GHSA-c4j6-fc7j-m34r), middleware/proxy authorization bypass (GHSA-3g8h-86w9-wvmq), and RSC denial-of-service. All fixes are on the 15.x line; 14.2.x will not receive them.',
+    impact: 'The production framework has known SSRF and middleware-bypass advisories with no available patch on the current major version.',
+    remediation: 'Plan and execute a Next.js 14 → 15 migration with regression testing, then track the patched line.',
+    mapping: 'NIST SA-10/11, SR-3, SI-2 · OWASP A06',
+    window: 'Short-term (8–30 days)'
+  },
+  {
+    id: 'DARA-023',
+    title: 'CI security gates do not block production deploys',
+    severity: 'Moderate',
+    status: 'Open',
+    component: 'GitHub branch protection · Vercel deploy trigger',
+    evidence: 'Branch protection on main is not enforced, and Vercel deploys on git push independently of GitHub Actions, so a red Security/CodeQL check does not stop a production deploy. The CI gates (DARA-015) are informational today.',
+    impact: 'A change that fails secret-scanning, dependency audit, or SAST can still reach production.',
+    remediation: 'Enable branch protection requiring the Security + CodeQL status checks and blocking force-push/deletion on main; gate the Vercel prod deploy on CI (ignored-build-step tied to CI, or deployment protection).',
+    mapping: 'NIST CM-3, SA-10, SR-4 · OWASP A05',
+    window: 'Short-term (8–30 days)'
+  },
+  {
+    id: 'DARA-024',
+    title: 'Annotated-export CUI→LLM egress unaudited and unfenced',
+    severity: 'High',
+    status: 'Remediated',
+    component: 'app/app/solicitations/[id]/annotated · utils/dara/annotated-proposal.ts',
+    evidence: 'The annotated-proposal export sends the full decrypted proposal to the commercial LLM to anchor findings. It now records an annotated.export audit entry (provider/mode/reviewId) at the egress and wraps the proposal in the shared randomized fence + injection guard, matching every other prompt builder and the DARA-007 audit premise.',
+    impact: 'Resolved. The only previously-unaudited CUI→LLM egress is now on the audit trail and fenced like the rest.',
+    remediation: 'Completed (commit 7fe23ab): recordAudit at the egress + fenceUntrusted/INJECTION_GUARD on the proposal text.',
+    mapping: 'NIST AU-2, AU-3 · OWASP LLM01 · DARA-007',
+    window: 'Closed'
+  },
+  {
+    id: 'DARA-025',
+    title: 'Cross-department authorization gap on child mutation/delete actions',
+    severity: 'High',
+    status: 'Open',
+    component: 'app/app/solicitations/[id] server actions',
+    evidence: 'Department-scoped access (app-layer; DB RLS is company-level) is enforced on the solicitation-detail gate, but several child mutate/delete actions authorize the child by companyId only, not by the viewable parent solicitation — e.g. requirement update/save/delete, sol-document delete, and run/re-run/regenerate/archive/apply-change/reconcile actions that accept a separately-supplied child id.',
+    impact: 'Same-tenant only (no cross-company leak): a reviewer or out-of-department member could tamper with or delete another department’s data, or trigger AI runs (cost + CUI egress) on it, using a guessable sequential id.',
+    remediation: 'Resolve each child through its parent solicitation and run requireViewableSolicitation before mutating (the uploadReviewDoc pattern); tie reviewId/passId to the checked solId.',
+    mapping: 'NIST AC-3, AC-6 · OWASP API1/A01 (BOLA)',
+    window: 'Short-term (8–30 days)'
+  },
+  {
+    id: 'DARA-026',
+    title: 'Deactivated users retained application access',
+    severity: 'High',
+    status: 'Remediated',
+    component: 'utils/dara/provision.ts · getDaraUser',
+    evidence: 'getDaraUser now returns null when is_active is false, failing closed across server actions and route handlers (not just the page shell) and independent of the best-effort Supabase auth ban. The app-shell layout uses a separate raw lookup so a deactivated user still reaches the terminal “account disabled” screen.',
+    impact: 'Resolved. A banned/deactivated account loses all application access immediately, regardless of whether the identity-provider ban succeeded.',
+    remediation: 'Completed (this session): fail-closed is_active check centralized in getDaraUser; findDaraUserRaw reserved for the disabled-screen path.',
+    mapping: 'NIST AC-2, IA-4',
+    window: 'Closed'
+  },
+  {
+    id: 'DARA-027',
+    title: 'Solicitation delete orphaned CUI files in storage',
+    severity: 'Moderate',
+    status: 'Remediated',
+    component: 'app/app/solicitations/page.tsx · deleteSolicitationAction',
+    evidence: 'Deleting a solicitation cascaded the DB rows but never removed the stored blobs, leaving uploaded RFP/proposal/amendment files and per-review response drafts (full CUI) in the private bucket with no DB pointer. The action now gathers every SolDocument and ReviewDocument storedFilename before the cascade and removeStored()s them; the audit entry records the count.',
+    impact: 'Resolved. No orphaned CUI objects remain after a solicitation is deleted.',
+    remediation: 'Completed (this session): collect + removeStored all stored files on solicitation delete.',
+    mapping: 'NIST MP-6, SI-12',
+    window: 'Closed'
+  },
+  {
+    id: 'DARA-028',
+    title: 'CSV formula / DDE injection in compliance-matrix export',
+    severity: 'Moderate',
+    status: 'Remediated',
+    component: 'app/app/solicitations/[id] · exportMatrixAction (CSV)',
+    evidence: 'CSV cell escaping previously only doubled quotes, so AI-shredded requirement text (derived from attacker-supplied solicitation docs) beginning with = + - @ or a control char could execute as a formula/DDE in a reviewer’s spreadsheet. Cells starting with a trigger character are now prefixed with a single quote before RFC-4180 quoting. (The DOCX export is unaffected.)',
+    impact: 'Resolved. Exported matrix CSVs can no longer inject formulas into Excel / Google Sheets.',
+    remediation: 'Completed (this session): formula-injection neutralization added to the CSV escaper.',
+    mapping: 'OWASP A03 · CWE-1236',
+    window: 'Closed'
+  },
+  {
+    id: 'DARA-029',
+    title: 'No encryption key-rotation / rewrap path',
+    severity: 'Moderate',
+    status: 'Open',
+    component: 'utils/dara/crypto.ts',
+    evidence: 'The data key is derived as a bare SHA-256(APP_KEY); the v1: prefix versions the envelope format, not the key. Rotating APP_KEY would render all existing ciphertext (BYOK provider keys and every encrypted extracted_text) undecryptable — there is no key-id tag and no re-encrypt migration.',
+    impact: 'Key rotation is effectively impossible without data loss, weakening incident response for a suspected APP_KEY compromise.',
+    remediation: 'Add a key-id to the crypto envelope plus a rewrap/re-encrypt migration before rotation is needed; optionally move from bare SHA-256 to scrypt/HKDF-with-salt.',
+    mapping: 'NIST SC-12, SC-28',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-030',
+    title: 'Audit coverage gaps for new CUI egress and exports',
+    severity: 'Moderate',
+    status: 'Remediated',
+    component: 'exportMatrixAction · report/pdf route · rerunPassAction',
+    evidence: 'Beyond the annotated export (DARA-024), several CUI egress/export paths emitted no audit record. Added recordAudit to the compliance-matrix export (CSV/DOCX), the analysis-report PDF export, and single-pass re-runs (a full CUI→LLM pass) — action + entity + non-CUI metadata only.',
+    impact: 'Resolved. All identified CUI export/egress paths now write an audit record.',
+    remediation: 'Completed (this session): matrix.export, report.export, and review.pass.rerun audit events added.',
+    mapping: 'NIST AU-2, AU-3',
+    window: 'Closed'
+  },
+  {
+    id: 'DARA-031',
+    title: 'Multi-factor authentication not enforced',
+    severity: 'High',
+    status: 'Open',
+    component: 'Supabase Auth (project config) · /app session policy',
+    evidence: 'No MFA challenge or enrollment exists in the application; authentication is password + magic-link + OAuth only. MFA is a mandatory 800-171 r3 (03.05.03 / IA-2) requirement for FCI/CUI systems.',
+    impact: 'Accounts with access to CUI can authenticate with a single factor.',
+    remediation: 'Enforce MFA at the Supabase project level; if relied upon for authorization, add an app-side AAL2-session requirement on /app.',
+    mapping: 'NIST 800-171 03.05.03 · IA-2 · CMMC L2',
+    window: 'Short-term (8–30 days) — operator'
+  },
+  {
+    id: 'DARA-032',
+    title: 'No decompression-bomb guard in document extraction',
+    severity: 'Moderate',
+    status: 'Open',
+    component: 'utils/dara/documents.ts · extractText',
+    evidence: 'assertValidUpload caps input at 20 MB with magic-byte checks, but .docx (ZIP → mammoth) and PDF (unpdf) are parsed with no decompression-ratio or output-size limit — a crafted 20 MB file can inflate to gigabytes and exhaust function memory during extraction.',
+    impact: 'A single malicious upload can OOM/DoS the extraction function.',
+    remediation: 'Bound the decompressed and extracted-text size during extraction; abort past a threshold.',
+    mapping: 'NIST SC-5 · OWASP A05',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-033',
+    title: 'CSP allows unsafe-inline (no nonce)',
+    severity: 'Low',
+    status: 'Open',
+    component: 'next.config.js',
+    evidence: "script-src/style-src include 'unsafe-inline' and img-src is broad (https:). This is the previously-deferred nonce hardening first noted under DARA-011.",
+    impact: 'Reduced defense-in-depth against a future injection; not an active vulnerability on its own.',
+    remediation: 'Move to a nonce-based script-src to drop unsafe-inline.',
+    mapping: 'NIST SC-18 · OWASP A05',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-034',
+    title: 'Cron worker fail-open when CRON_SECRET unset',
+    severity: 'Low',
+    status: 'Remediated',
+    component: 'app/api/cron/passes/route.ts',
+    evidence: 'The pass worker previously allowed unauthenticated calls whenever CRON_SECRET was unset. It now requires the bearer in production (returns 500 if the secret ever drifts out of the env) while staying optional outside production; triggerWorker forwards the same bearer for legitimate in-request continuations.',
+    impact: 'Resolved. In production the long-budget, CUI-processing worker cannot be invoked without the shared secret.',
+    remediation: 'Completed (this session): CRON_SECRET is mandatory in production.',
+    mapping: 'NIST AC-3',
+    window: 'Closed'
+  },
+  {
+    id: 'DARA-035',
+    title: 'No automated RLS-drift / isolation check in CI',
+    severity: 'Low',
+    status: 'Open',
+    component: 'CI · prisma/security',
+    evidence: 'RLS policies and grants are applied by hand-run scripts with no automated coverage check, and the two-tenant isolation harness (dara004-isolation-test.ts) is not run in CI. A new dara_* table shipped without its RLS file would not be caught automatically.',
+    impact: 'Risk of undetected RLS drift as the schema grows.',
+    remediation: 'Add a CI check that verifies pg_policies/grants for every @@map("dara_*") model and runs the isolation harness against an ephemeral database.',
+    mapping: 'NIST CM-3, CM-6',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-036',
+    title: 'Third-party GitHub Actions pinned to mutable tags',
+    severity: 'Low',
+    status: 'Open',
+    component: '.github/workflows',
+    evidence: 'Third-party actions (gitleaks, anchore/sbom-action) are referenced by mutable tags rather than full commit SHAs, so an upstream tag move could alter CI behavior.',
+    impact: 'Supply-chain risk in the CI pipeline.',
+    remediation: 'Pin third-party actions to full commit SHAs.',
+    mapping: 'NIST SR-3, SR-4',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-037',
+    title: 'SBOM generated but not scanned or license-gated',
+    severity: 'Low',
+    status: 'Open',
+    component: 'CI (CycloneDX SBOM)',
+    evidence: 'A CycloneDX SBOM is produced each CI run (DARA-015) but never consumed — no vulnerability scan (e.g. Grype) and no license allow/deny gate act on it.',
+    impact: 'Dependency vulnerabilities and disallowed licenses are not surfaced or enforced.',
+    remediation: 'Scan the SBOM in CI and add a license policy gate.',
+    mapping: 'NIST SR-3, SA-15',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-038',
+    title: 'Latent dangerouslySetInnerHTML in report page',
+    severity: 'Low',
+    status: 'Open',
+    component: 'app/app/solicitations/[id]/report/page.tsx',
+    evidence: 'A dangerouslySetInnerHTML sink currently renders only static string literals, but it is an XSS footgun and contradicts the “no dangerous rendering sinks” self-assessment.',
+    impact: 'No active vulnerability today; a future edit feeding it dynamic data would introduce XSS.',
+    remediation: 'Replace the sink with a plain text node.',
+    mapping: 'OWASP A03',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-039',
+    title: 'Raw provider/webhook error text surfaced to clients',
+    severity: 'Low',
+    status: 'Open',
+    component: 'utils/dara/passes.ts (failPass) · app/api/webhooks',
+    evidence: 'Failure paths store/return raw messages — failPass persists the AI provider’s e.message and the webhook returns "Webhook Error: ${msg}" — which can leak internal detail.',
+    impact: 'Information disclosure via error messages.',
+    remediation: 'Return generic client-facing errors and log the detail server-side only.',
+    mapping: 'OWASP A05',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-040',
+    title: 'Password policy and brute-force lockout unverified',
+    severity: 'Low',
+    status: 'Open',
+    component: 'Supabase Auth (project config)',
+    evidence: 'Minimum length (8+), HIBP/leaked-password protection, and auth rate limits are not confirmed from the project config; password.trim() silently strips edge whitespace before submission.',
+    impact: 'Weak or leaked passwords may be accepted, and auth endpoints may lack lockout.',
+    remediation: 'Verify/enforce Supabase password minimums, leaked-password protection, and auth rate limits.',
+    mapping: 'NIST IA-5, AC-7',
+    window: 'Short-term (8–30 days) — operator'
+  },
+  {
+    id: 'DARA-041',
+    title: 'No audit-log retention or review policy',
+    severity: 'Low',
+    status: 'Open',
+    component: 'dara_audit_log · governance',
+    evidence: 'The append-only audit log has strong integrity but no defined retention period / purge-partition (unbounded growth) and no documented AU-6 review cadence (who reads it, when).',
+    impact: 'Unbounded log growth and no defined log-review process.',
+    remediation: 'Define a retention period + purge/partition strategy and an AU-6 review cadence.',
+    mapping: 'NIST AU-6, AU-11',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-042',
+    title: 'Persona system prompts injected at system-instruction trust level',
+    severity: 'Low',
+    status: 'Open',
+    component: 'utils/dara/personas.ts · prompt.ts',
+    evidence: 'Persona.systemPrompt (tenant-admin authored) is injected into the review prompts as a lens with a soft “must not override” framing. It is company-scoped, so the worst case is self-inflicted bias.',
+    impact: 'A company admin could bias their own reviews; no cross-tenant impact.',
+    remediation: 'Document the trust boundary; optionally constrain persona guidance to tone/emphasis or move it out of the system role.',
+    mapping: 'OWASP LLM01',
+    window: 'Best practice'
+  },
+  {
+    id: 'DARA-043',
+    title: 'No tenant/account right-to-delete (CUI purge)',
+    severity: 'Low',
+    status: 'Open',
+    component: 'Account lifecycle',
+    evidence: 'There is no company-level purge of all CUI (documents, findings, storage). Already tracked as the GDPR account-deletion backlog item.',
+    impact: 'A tenant data-deletion request cannot be fully honored today.',
+    remediation: 'Build a company-scoped purge of all CUI across the database and storage.',
+    mapping: 'NIST MP-6 · data minimization',
+    window: 'Mid-term (31–90 days)'
   }
 ];
 
 export const SEVERITY_ORDER: Severity[] = ['Critical', 'High', 'Moderate', 'Low', 'Informational'];
 
 export const POSITIVES: string[] = [
+  'A July 2026 re-audit confirmed the prior remediations (DARA-001…019) hold with no regressions: all 26 tenant tables carry per-tenant RLS + least-privilege grants, and every data path added since June (exports, annotated export, per-review uploads) routes through the tenant transaction.',
   'Application-layer tenant scoping by companyId is applied consistently; no live cross-tenant (IDOR) query was found in the application data plane.',
   'No LLM tool/function calling is configured, which limits the blast radius of prompt injection to output manipulation.',
   'No client-exposed secrets; only public keys carry the NEXT_PUBLIC_ prefix.',
   'CSRF posture is adequate: state changes use Next.js Server Actions and the Stripe webhook verifies its signature.',
-  'No dangerous rendering sinks (no dangerouslySetInnerHTML / eval); React output escaping is relied on throughout.',
+  'React output escaping is relied on throughout and no eval is used; the single dangerouslySetInnerHTML sink renders only static literals and is slated for removal (DARA-038).',
   'BYOK provider keys are encrypted at rest with AES-256-GCM (random IV + auth tag).'
 ];

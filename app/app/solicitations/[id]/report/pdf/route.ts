@@ -7,6 +7,7 @@ import { renderToBuffer } from '@react-pdf/renderer';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { loadReportModel } from '@/utils/dara/report-data';
+import { recordAudit } from '@/utils/dara/audit';
 import ReportPdf from '@/components/dara/ReportPdf';
 
 export const runtime = 'nodejs';
@@ -24,6 +25,18 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   if (!/^\d+$/.test(params.id)) return new Response('Not found', { status: 404 });
   const model = await loadReportModel(BigInt(params.id), daraUser);
   if (!model) return new Response('Not found', { status: 404 });
+
+  // SEC-10 (NIST AU-2/AU-3): the analysis-report PDF carries CUI off-platform; audit the
+  // export (action + entity only, no CUI content).
+  await recordAudit({
+    action: 'report.export',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'solicitation',
+    entityId: params.id,
+    metadata: { format: 'pdf' }
+  });
 
   // ReportPdf returns a <Document>; renderToBuffer's types want a Document element specifically,
   // so cast the component element to its expected parameter type.
