@@ -1,12 +1,18 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-06 (evening) · last DEPLOYED code `c282963` (`dpl_AgrHPtXNWN…`) · branch `main` · for: next session_
+_Prepared: 2026-07-06 (night) · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`) · branch `main` · for: next session_
 
 Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless flagged
-otherwise. Last deployed code commit is `c282963`; this handoff commit is docs-only (not deployed). **Top priority next: DARA-045 (team invites
-don't email — see §5/§8) and the rest of the security backlog** (`SECURITY_BACKLOG.md`, §5). Agent memory
-(load first): `security-reaudit-2026-07.md`, `mfa-totp.md`, `legal-tos.md`, `personas-review-lens.md`,
+otherwise. Last deployed code commit is `6eeb625`. **Invites now WORK** — the dead-link bug was config, fixed
+this session (Option A, see §2.0). **Top priority next: the security backlog** (`SECURITY_BACKLOG.md`, §5) —
+DARA-025 BOLA (code) + DARA-022/023 (operator). Agent memory (load first): `account-self-service.md`,
+`security-reaudit-2026-07.md`, `mfa-totp.md`, `legal-tos.md`, `personas-review-lens.md`,
 `billing-and-backlog.md`. Deep decision log: `BUILD_STATUS.md`.
+
+> ⚠️ **Two operator steps pending in the Supabase dashboard** (from this session): (a) **enable Manual
+> Linking** so account "Connect Google" works (until then that button shows a friendly "not enabled yet"
+> message); (b) **paste the 12 branded email templates** (`supabase/templates/` → dashboard; `README.md` maps
+> each file to its slot).
 
 ---
 
@@ -30,10 +36,44 @@ don't email — see §5/§8) and the rest of the security backlog** (`SECURITY_B
 
 ---
 
-## 2. What shipped THIS session (2026-07-06) — security fixes, 2FA, legal/TOS, invites, auth
+## 2. What shipped
+
+### 2.0 Most recent (2026-07-06, night) — invites verified, account self-service, avatars, dept editor, email templates
+
+Commits `21fcae9` (account + dept editor + templates + avatar migration) → `6eeb625` (avatars in Teams/welcome).
+Both DEPLOYED to prod. **One prod migration applied** (`20260707000000_user_avatar` — additive `avatar_url` on
+`dara_users`; existing RLS covers it) + **new public Storage bucket `dara-avatars`** (created via
+`node --env-file=.env.local scripts/create-avatars-bucket.mjs`). See memory `account-self-service.md`.
+
+1. **Invite flow VERIFIED working — DARA-045 link side CLOSED.** The earlier dead link (`/signin/...#access_token=…`)
+   was Supabase's *default implicit-flow* template returning the session in the URL `#fragment`, which no server
+   route can read (our `/auth/confirm` reads `?token_hash=`, `/auth/callback` reads `?code=`). **Fix = Option A,
+   operator config (done this session):** Site URL = bare `https://dara.crucibleinsight.com`, redirect allowlist
+   `…/**`, and the branded token_hash "Invite user" template. A test invite now lands on `/welcome` signed in.
+   Delivery is via **Resend Custom SMTP** (operator-configured), so the built-in rate limit no longer applies.
+2. **Account self-service — `/app/account/profile`** (new sidebar "Profile" link, 3 panels): edit display name +
+   upload/remove **avatar**; **set/change password** (`updateUser` — fixes OTP-invited users with no password);
+   **link/unlink Google** (`linkIdentity`/`unlinkIdentity`, client-side). All audited (`account.*`). Server actions
+   in `app/app/account/profile/actions.ts`. The **Reset Password** email lands here so users set a new password.
+3. **Avatars wherever an account circle shows** — shared `components/dara/Avatar.tsx` (image-or-initials); rendered
+   in the sidebar, the **Teams member list**, and the welcome screen (uploaded avatar preferred over the OAuth
+   picture). Public bucket (non-CUI, public read, no signed URLs); uploads via service-role with magic-byte checks
+   (`utils/dara/avatar.ts`). Onboarding wizard + platform-admin sidebar intentionally left initials-only.
+4. **Per-solicitation department editor on the LIST** — `components/dara/DepartmentEditor.tsx` modal +
+   `setDepartmentsAction` in `app/app/solicitations/page.tsx`, gated to **admin + creator**
+   (`canManageDepartments` — user chose to keep the creator, not admin-only). Mirrors the Overview-tab card.
+5. **12 branded Supabase email templates** in `supabase/templates/` (+ `README.md` slot map): confirm-signup,
+   magic-link, email-change, recovery, reauthentication, and 7 security notices. All link-based ones use the
+   `/auth/confirm?token_hash=…` flow (NOT the implicit `#access_token` flow). **Must be pasted into the Supabase
+   dashboard to take effect** — the folder is source-of-truth only.
+
+⚠️ **Pending operator (Supabase dashboard):** (a) **enable Manual Linking** so "Connect Google" works;
+(b) **paste the 12 email templates**. Everything else above is fully live.
+
+### 2.1 Earlier session (2026-07-06) — security fixes, 2FA, legal/TOS, invites, auth
 
 Commits `258a5eb` → `1754cf6`. All DEPLOYED through `2e2e74c` (last two are register-text only). **Two prod
-migrations applied this session** (`20260706000000_user_mfa`, `20260706010000_user_legal_acceptance`).
+migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_user_legal_acceptance`).
 
 1. **Security quick-wins** (`258a5eb`) — DARA-026 (`getDaraUser` fail-closed on `isActive`; layout uses new
    `findDaraUserRaw` so the disabled screen still renders), DARA-027 (sol delete now `removeStored`s all
@@ -115,8 +155,14 @@ migrations applied this session** (`20260706000000_user_mfa`, `20260706010000_us
   (`verifyOtp` token_hash, invite/confirmation). Shared provisioning in `utils/dara/auth-finalize.ts`.
 - **Legal docs:** edit `.docx` in `public/legal/`, run `node scripts/gen-legal.mjs`, commit both. Bumping
   the ToS "Version x.y" line auto-prompts users to re-accept on `/app/account/legal`.
-- **⚠️ Team invite emails don't reliably send (DARA-045, §8)** — Supabase built-in email rate-limits + can't
-  re-send to an already-registered address. Not yet fixed (user deferred).
+- **Invites now work (DARA-045, §8)** via Resend SMTP + the `/auth/confirm` token_hash flow. Do NOT revert any
+  email template to Supabase's `{{ .ConfirmationURL }}` — that's the implicit `#access_token` flow our routes
+  can't read. Site URL must stay the **bare origin** (`{{ .SiteURL }}/auth/confirm` links break with a path).
+- **Avatars live in a PUBLIC bucket `dara-avatars`** (non-CUI; public read, no signed URLs). Uploads go through
+  the **service-role** client with magic-byte checks (`utils/dara/avatar.ts`); the DB `avatar_url` is a public
+  URL with a `?v=` cache-bust. Shared render via `components/dara/Avatar.tsx`.
+- **"Connect Google" needs Manual Linking ON** in Supabase (operator). Until then the button fails gracefully
+  with a "not enabled yet" message — the rest of `/app/account/profile` works regardless.
 
 ---
 
@@ -152,27 +198,34 @@ DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-conte
   DARA-038 kill latent `dangerouslySetInnerHTML` · DARA-039 generic client errors · DARA-040 password policy ·
   DARA-041 audit retention · DARA-042 persona-injection residual · DARA-043 tenant right-to-delete ·
   DARA-044 company doc retention/archive limits · **DARA-045 (Moderate) invite email — see §8**.
-- **Suggested next:** DARA-045 (unblock invites) + DARA-025 (BOLA sweep) on code; **operator:** DARA-023
-  (branch protection), DARA-022 (Next 15), DARA-031/040 (enforce MFA / password policy).
+- **Suggested next:** DARA-025 (BOLA sweep) on code; **operator:** DARA-023 (branch protection), DARA-022
+  (Next 15), DARA-031/040 (enforce MFA / password policy). _(DARA-045 invites now work end-to-end — see §2.0/§8.)_
 
 ---
 
 ## 6. Fast restart
 
 ```bash
-git status                       # expect clean main, HEAD 1754cf6 (1 ahead of deploy = register text)
+git status                       # expect clean main, HEAD 6eeb625 (== last deployed)
 git log --oneline -14
 pnpm install
 pnpm exec tsc --noEmit
-pnpm build                       # must pass; newest routes: /auth/confirm, /app/account/{security,legal}, /auth/2fa-challenge
+pnpm build                       # must pass; newest route: /app/account/profile (name/avatar/password/link Google)
 # Deploy (prod = main, MANUAL): git push origin main && vercel deploy --prod --yes ; confirm via MCP list_deployments
 # Schema first: pnpm prisma migrate deploy (targets prod via .env.local) BEFORE the code deploy
 # Diagnose prod: Vercel MCP get_runtime_errors / get_runtime_logs
 #   (projectId prj_I6CLDhGJlbjro2Mc67i1AyyHpciP, teamId team_hluvXIDuWYVTRTyXnqxTbfWg)
 ```
 
-## 7. Key files (this session)
+## 7. Key files
 
+- **Account self-service (2.0):** `app/app/account/profile/{page,ProfilePanel,PasswordPanel,SignInMethodsPanel,actions}.tsx|ts`;
+  avatar storage `utils/dara/avatar.ts` (public `dara-avatars` bucket) + `scripts/create-avatars-bucket.mjs`;
+  shared `components/dara/Avatar.tsx`; `dara_users.avatar_url` migration `20260707000000_user_avatar`.
+- **Dept editor on the list (2.0):** `components/dara/DepartmentEditor.tsx` + `setDepartmentsAction` in
+  `app/app/solicitations/page.tsx` (gate `canManageDepartments`, `utils/dara/sol-access.ts`).
+- **Email templates (2.0):** `supabase/templates/*.html` (12) + `README.md` (dashboard slot map); all link
+  templates target `/auth/confirm` token_hash. Sidebar avatar/Profile link in `components/layout/Sidebar.tsx`.
 - **2FA (DARA-031):** `app/api/auth/2fa/{setup,verify,challenge,disable}/route.ts`, `utils/dara/mfa.ts`
   (bcrypt backup codes), `utils/dara/mfa-cookie.ts` (Edge-safe HMAC marker), `app/app/account/security/*`,
   `app/auth/2fa-challenge/*`, `middleware.ts` (AAL2 gate), onboarding step `app/onboarding/OnboardingTwoFactor.tsx`.
@@ -188,18 +241,23 @@ pnpm build                       # must pass; newest routes: /auth/confirm, /app
 
 ---
 
-## 8. ⚠️ DARA-045 — team invite emails don't send (deferred by user 2026-07-06)
+## 8. DARA-045 — team invites now WORK (link side closed 2026-07-06 night)
 
-Confirmed: Supabase's **built-in email** blocks invites — `inviteUserByEmail` fails with **"email rate limit
-exceeded"** (shared sender, a few/hour) and **"A user with this email address has already been registered"**
-when re-sending to an address a prior invite already registered. **The link side is FIXED** (`/auth/confirm`
-token_hash, so once an email lands the link completes → onboarding). **User deferred the fix.**
+**Resolved for the normal flow.** A test invite delivers and lands the invitee on `/welcome` signed in.
+Two things closed it this session:
 
-**The real fix = code-owned email via Resend:** send our own branded email, minting links with
-`admin.generateLink` (`type=invite` for new users, `type=magiclink` for existing) — works for first-invites
-AND resends, no rate cap. Needs `RESEND_API_KEY` in Vercel + a verified `crucibleinsight.com` from-domain
-(SPF/DKIM/DMARC). Interim stopgap: Custom SMTP in Supabase raises the cap but still can't re-send to an
-existing address. **Workaround today:** the invitation ROW is source-of-truth, so an invitee can still join
-by signing in. Also: the branded `supabase/templates/invite.html` still needs pasting into the Supabase
-dashboard (its link now uses `/auth/confirm`).
+1. **Delivery** — operator configured **Resend Custom SMTP** in Supabase, so the built-in "email rate limit
+   exceeded" cap no longer applies.
+2. **The link** — the earlier dead link was Supabase's *default implicit-flow* template dumping the session in
+   the URL `#fragment` on `/signin/...`, which no server route can read. Fixed by **Option A config**: Site URL
+   = bare `https://dara.crucibleinsight.com`, redirect allowlist `…/**`, and the branded token_hash "Invite
+   user" template (`supabase/templates/invite.html`) pasted into the dashboard. Links now hit `/auth/confirm`
+   (`verifyOtp` on `token_hash`) → provision → onboarding/welcome.
+
+**Residual (minor, optional):** `inviteUserByEmail` still errors "A user with this email address has already
+been registered" when re-inviting an address that a prior invite already registered. The invitation ROW is
+source-of-truth, so that person can just sign in. If you want clean **resend-to-existing**, the code-owned path
+is `admin.generateLink` (`type=invite` for new / `type=magiclink` for existing) sent via Resend — needs
+`RESEND_API_KEY` + a verified `crucibleinsight.com` from-domain. Not built (not needed for the normal flow).
+Remember to **paste the other 11 branded templates** too (§2.0) so all auth emails match.
 ```

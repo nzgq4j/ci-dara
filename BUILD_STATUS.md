@@ -3,17 +3,42 @@
 _Last updated: 2026-07-06_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `c282963` (`dpl_AgrHPtXNWN…`) · doc-only commits after it are not deployed
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`)
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
 > **Start-here for the next session is `SESSION_HANDOFF.md`** (deploy model, gotchas, backlog, key files).
-> **Top priority next: DARA-045 (invites don't email) + the security backlog** — `SECURITY_BACKLOG.md`
-> (untracked; findings unified to `DARA-021..045`, prior hardening intact).
+> **Top priority next: the security backlog** — `SECURITY_BACKLOG.md` (untracked; findings unified to
+> `DARA-021..045`, prior hardening intact). DARA-025 BOLA (code) + DARA-022/023 (operator). Invites now WORK.
+> **Two operator dashboard steps pending:** enable Supabase Manual Linking + paste the 12 email templates.
 
 ---
 
-## 0. Latest session (2026-07-06) — security fixes, 2FA, legal/TOS, invites, auth-link flow
+## 0. Latest session (2026-07-06, night) — invites verified + account self-service + avatars + dept editor + email templates
+
+Commits `21fcae9` → `6eeb625`, both DEPLOYED to prod. **One prod migration** (`20260707000000_user_avatar`,
+additive `avatar_url` on `dara_users` — existing RLS/grants cover it) + **new public Storage bucket
+`dara-avatars`** (`scripts/create-avatars-bucket.mjs`). Full detail in `SESSION_HANDOFF.md` §2.0; memory
+`account-self-service.md`.
+
+- **Invite dead-link diagnosed + fixed (DARA-045 link side closed).** The link came back as Supabase's default
+  *implicit flow* — session in the URL `#fragment` on `/signin/...`, unreadable by any server route (ours read
+  `?token_hash=` / `?code=`). Fix was **operator config (Option A)**: Site URL = bare origin, redirect allowlist
+  `…/**`, and the branded token_hash "Invite user" template pasted in. Delivery via **Resend Custom SMTP**.
+  A test invite now lands on `/welcome` signed in. See §8 of the handoff.
+- **Account self-service** — new `/app/account/profile` (sidebar "Profile"): edit display name + avatar,
+  set/change password (fixes OTP-invited users with no password), link/unlink Google (`linkIdentity`). Audited.
+- **Avatars** — shared `components/dara/Avatar.tsx`, shown in the sidebar, **Teams member list**, and welcome
+  screen (uploaded preferred over OAuth picture). Public bucket, service-role upload w/ magic-byte checks.
+- **Per-solicitation department editor on the LIST** — `DepartmentEditor.tsx` modal + `setDepartmentsAction`
+  (`app/app/solicitations/page.tsx`), gated **admin + creator**; mirrors the Overview-tab card.
+- **12 branded Supabase email templates** in `supabase/templates/` (+ README slot map) — confirm-signup,
+  magic-link, email-change, recovery, reauthentication, 7 security notices; all links use `/auth/confirm`.
+  **Must be pasted into the dashboard to take effect.**
+- ⚠️ **Pending operator (Supabase dashboard):** enable **Manual Linking** (for "Connect Google"); paste the
+  **12 email templates**.
+
+## 0b. Prior session (2026-07-06) — security fixes, 2FA, legal/TOS, invites, auth-link flow
 
 Commits `258a5eb` → `1754cf6`; deployed through `2e2e74c` (last two commits = register text only). **Two prod
 migrations applied** (`20260706000000_user_mfa`, `20260706010000_user_legal_acceptance` — both additive on
