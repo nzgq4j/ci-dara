@@ -687,15 +687,15 @@ export const FINDINGS: Finding[] = [
   },
   {
     id: 'DARA-045',
-    title: 'Branded, code-owned transactional emails (deliverability + anti-spoofing)',
-    severity: 'Low',
+    title: 'Code-owned transactional email — invites unreliable on built-in email',
+    severity: 'Moderate',
     status: 'Open',
-    component: 'Supabase Auth email templates · utils/dara/teams.ts · (future) mailer',
-    evidence: 'Auth emails (team invitations, sign-up confirmation, magic links) render from Supabase default templates and send from Supabase’s shared sender — no custom-domain SPF/DKIM/DMARC alignment. A DARA-branded invite template exists (supabase/templates/invite.html) but must be pasted into the hosted dashboard to take effect, and the other auth emails remain unbranded.',
-    impact: 'Unbranded mail from a shared sender is weaker against spoofing/phishing, harder for recipients to trust, and more likely to be spam-filtered; no control over sender-domain reputation.',
-    remediation: 'Interim: paste the branded invite template into Supabase + set the Site URL/redirect allow-list. Then move to code-owned branded emails (Resend or Custom SMTP) sent from a verified crucibleinsight.com domain (SPF/DKIM/DMARC) covering invite + confirm-signup, using auth.admin.generateLink for the action URLs.',
-    mapping: 'NIST SI-8 · SPF/DKIM/DMARC email authentication · product / brand',
-    window: 'Mid-term (31–90 days)'
+    component: 'Supabase Auth email · utils/dara/teams.ts (sendInvitationEmail) · (future) mailer',
+    evidence: 'Confirmed 2026-07-06: team invitations do not reliably send on Supabase’s built-in email. inviteUserByEmail fails with "email rate limit exceeded" (the shared sender caps at a few messages/hour) and with "A user with this email address has already been registered" when re-sending to an address that a prior invite already registered — so Resend cannot re-email an existing invitee. The link side is fixed (the token_hash /auth/confirm flow shipped), so once delivery works, invite links complete → onboarding. Auth emails are also unbranded and send from a shared sender (no custom-domain SPF/DKIM/DMARC).',
+    impact: 'Team invitations and resends often never reach the recipient, so onboarding cannot start. Workaround: the invitation row is the source of truth, so an invitee can still join by signing in. Unbranded shared-sender mail is also weaker against spoofing/phishing and spam-filtering.',
+    remediation: 'Implement code-owned email via Resend (or Custom SMTP): mint links with admin.generateLink (type=invite for new users, type=magiclink for existing) and send our own branded email — works for first-invites AND resends, no rate cap. Requires RESEND_API_KEY + a verified crucibleinsight.com from-domain (SPF/DKIM/DMARC). Interim stopgap: enable Custom SMTP in Supabase (raises the rate cap) — but it still can’t re-send to an already-registered address, so the generateLink path is the real fix. Cover invite + confirm-signup.',
+    mapping: 'NIST SI-8 · SPF/DKIM/DMARC email authentication · availability / product',
+    window: 'Short-term (8–30 days)'
   }
 ];
 
