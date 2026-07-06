@@ -30,6 +30,7 @@ import {
   completeOnboarding
 } from './actions';
 import { inviteUser } from '@/app/app/team/actions';
+import OnboardingTwoFactor from './OnboardingTwoFactor';
 
 type AiMode = 'platform' | 'byok';
 
@@ -44,6 +45,7 @@ const STEPS = [
   { key: 'org', label: 'Organization', icon: Building2 },
   { key: 'ai', label: 'AI', icon: Cpu },
   { key: 'team', label: 'Team', icon: UsersRound },
+  { key: 'security', label: 'Security', icon: ShieldCheck },
   { key: 'done', label: 'Done', icon: Check }
 ] as const;
 
@@ -77,6 +79,7 @@ export default function OnboardingWizard({
   const [invites, setInvites] = useState<InviteRow[]>([
     { email: '', role: 'reviewer' }
   ]);
+  const [mfaEnabled, setMfaEnabled] = useState(false);
 
   const firstName = (name || prefillName).split(' ')[0] || 'there';
   const initials = (name || email || '?').slice(0, 2).toUpperCase();
@@ -412,8 +415,40 @@ export default function OnboardingWizard({
             </div>
           )}
 
-          {/* Step 6 — Done */}
+          {/* Step 6 — Security (2FA, optional) */}
           {step === 5 && (
+            <div className="fade">
+              <StepHead
+                icon={ShieldCheck}
+                title="Two-factor authentication"
+                subtitle="Optional but recommended — add a second factor to protect access to CUI."
+              />
+              <OnboardingTwoFactor onEnabled={() => setMfaEnabled(true)} />
+              <div className="mt-7 flex items-center justify-between">
+                <button
+                  type="button"
+                  className={btnGhost}
+                  onClick={() => go(4)}
+                  disabled={pending}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className={mfaEnabled ? btnPrimary : btnGhost}
+                  onClick={() => go(6)}
+                  disabled={pending}
+                >
+                  {mfaEnabled ? 'Continue' : 'Skip for now'}
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 7 — Done */}
+          {step === 6 && (
             <div className="fade text-center">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#DCFCE7] text-[#166534]">
                 <Check className="h-8 w-8" />
@@ -437,7 +472,7 @@ export default function OnboardingWizard({
                 <button
                   type="button"
                   className={btnGhost}
-                  onClick={() => go(4)}
+                  onClick={() => go(5)}
                   disabled={pending}
                 >
                   <ArrowLeft className="h-4 w-4" />
