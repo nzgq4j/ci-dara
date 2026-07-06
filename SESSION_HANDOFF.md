@@ -1,10 +1,9 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-06 · HEAD `1754cf6` · branch `main` (clean) · last DEPLOYED commit `2e2e74c` · for: next session_
+_Prepared: 2026-07-06 (evening) · last DEPLOYED code `c282963` (`dpl_AgrHPtXNWN…`) · branch `main` · for: next session_
 
 Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless flagged
-otherwise. NOTE: HEAD `1754cf6` is one commit ahead of the last deploy — it's just the DARA-045 register
-text (`security-content.ts`); deploy it with the next change. **Top priority next: DARA-045 (team invites
+otherwise. Last deployed code commit is `c282963`; this handoff commit is docs-only (not deployed). **Top priority next: DARA-045 (team invites
 don't email — see §5/§8) and the rest of the security backlog** (`SECURITY_BACKLOG.md`, §5). Agent memory
 (load first): `security-reaudit-2026-07.md`, `mfa-totp.md`, `legal-tos.md`, `personas-review-lens.md`,
 `billing-and-backlog.md`. Deep decision log: `BUILD_STATUS.md`.
@@ -65,6 +64,30 @@ migrations applied this session** (`20260706000000_user_mfa`, `20260706010000_us
    (Auth → Email Templates → "Invite user"). NOTE: since `2e2e74c` its link uses the `/auth/confirm` token_hash
    format — re-paste the current version.
 
+### Evening batch (2026-07-06) — compliance-matrix reliability + New Solicitation path picker (`6b12d74` → `c282963`)
+
+8. **Shred timeout → empty matrix + infinite `_rsc` poll — FIXED** (`c282963`). The "Generate from solicitation"
+   shred made ONE AI call for up to **16000** output tokens; on a requirement-dense RFP that generation exceeded
+   the **240s** provider timeout, threw before writing any row, and left the JobQueue row stuck `running` — the
+   page then polled `/app/solicitations/<id>?_rsc=…` forever (hit on sol 18 + 19). Fix: `SHRED_MAX_TOKENS`
+   16000→8000 + the shred is now **resumable across worker ticks** (first tick extracts, later ticks only run
+   gap passes, reports `exhausted`, 800-req cap; worker requeues while `!exhausted`) so no single call nears
+   240s and a dense RFP finishes across ticks. Also `reapOrphanedJobs` wrapped in try/catch so a dead job always
+   surfaces as `failed` (releasing the poll) instead of pinning it. Files: `utils/dara/requirements.ts`,
+   `utils/dara/passes.ts`. **Diagnosis note:** output-bound (requirement density), NOT input size — input is
+   capped at 50k words; larger-but-sparser RFPs shredded fine. See BUILD_STATUS §0 "Later same day".
+9. **Compliance-check grading could loop forever — FIXED** (`6b12d74`). `mapDetermination` wrote any non-exact
+   AI determination back to `not_assessed`, so `runComplianceJob`'s `checked===0` guard never tripped and the
+   job requeued every tick. Now normalizes the determination + maps unknowns to `partial` (terminal), and the
+   job terminates on **net progress** (not-assessed count before vs after). Files: `evaluator.ts`, `passes.ts`.
+10. **New Solicitation review-path picker — SHIPPED** (`6b12d74`, `components/dara/UploadAndReview.tsx`). First
+    screen is two explanatory cards, **Direct AI** vs **Color Team**, chosen before the sol is created. Direct AI
+    uploads a response draft now; Color Team hides the proposal dropzone (per-review drafts later). Replaces the
+    buried "Advanced → Switch to Color Team" checkbox. (This was backlog §4.5 — now done.)
+11. **Signin footer copyright** (`2ceb0ce`) — now "© 2026 The Daniel Group LLC". **Open follow-up:** privacy
+    policy + TOS pages (`app/security/privacy-policy`, `app/security/tos`, `security-content.ts owner`) still say
+    "Crucible Insight LLC" — user asked to reconcile these to "The Daniel Group LLC"; not yet done.
+
 ---
 
 ## 3. ⚠️ Gotchas that WILL bite if forgotten
@@ -104,18 +127,8 @@ migrations applied this session** (`20260706000000_user_mfa`, `20260706010000_us
 3. **Annotated export follow-ups** — per-direct-review persona selector; annotate the *original* uploaded
    `.docx` in place (preserve formatting) instead of rebuilding from text; batch anchoring for huge finding sets.
 4. Nice-to-haves: rename/edit metadata from the solicitations LIST; richer built-in persona templates.
-5. **New Solicitation — review-mode path selection up front** — make the **first** modal after clicking
-   "New Solicitation" a **path picker** presented as **two cards** that explain each path, chosen *before*
-   the solicitation is built:
-   - **Color Team review** — process-mode gate reviews. In this path the creator does **not** upload response
-     (proposal) documents during creation; response drafts are attached per-review later (`ReviewDocument`).
-   - **Direct AI review** — the one-click unified review. In this path the creator **does** upload response
-     documents as part of creation (they feed the `direct_ai` review).
-   Each card = a short title + 2–3 line description of what the path does, so the user picks intentionally.
-   The choice sets `solicitation.mode` (`color_team` vs `direct_ai`) and branches the rest of the create
-   wizard (show/hide the response-doc upload step). Files: `app/app/solicitations/new/page.tsx` (+ its create
-   flow/components); mode field already exists on `Solicitation` and is read across the detail page
-   (`isDirect = solicitation.mode === 'direct_ai'`). Requested by user 2026-07-06.
+5. ~~**New Solicitation — review-mode path selection up front**~~ — **SHIPPED 2026-07-06** (`6b12d74`), see §2.10.
+   First screen is now two explanatory cards (Direct AI vs Color Team); Color Team hides the response-doc upload.
 
 ---
 

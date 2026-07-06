@@ -3,7 +3,7 @@
 _Last updated: 2026-07-06_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · HEAD `1754cf6` · last DEPLOYED `2e2e74c`
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `c282963` (`dpl_AgrHPtXNWN…`) · doc-only commits after it are not deployed
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
@@ -43,6 +43,38 @@ migrations applied** (`20260706000000_user_mfa`, `20260706010000_user_legal_acce
 - **⚠️ DARA-045 (deferred by user):** team invites don't reliably email on Supabase built-in email — "rate
   limit exceeded" + can't re-send to an already-registered address. Link side fixed; delivery is the blocker.
   Real fix = code-owned email via **Resend** + `admin.generateLink`. See SESSION_HANDOFF §8.
+
+### Later same day (2026-07-06, evening) — compliance-matrix reliability + New Solicitation path picker
+
+Commits `6b12d74` → `c282963`; deployed through `c282963` (`dpl_AgrHPtXNWN…`). **Code-only, no migrations.**
+
+- **Shred (compliance-matrix generation) timed out on dense RFPs → empty matrix + infinite poll** (`c282963`).
+  Observed on sol 18/19: the workspace hammered `/app/solicitations/<id>?_rsc=…` forever. Root cause = the shred
+  made **one** AI call requesting up to **16000** output tokens; on a requirement-dense RFP that generation ran
+  past the **240s** provider timeout (`utils/dara/providers.ts` `AI_TIMEOUT_MS`), was aborted, threw before any
+  row was written, and left the JobQueue row stuck `running` — so `isShredActive` stayed true and the page
+  polled endlessly (matched a prior manual clear of an "orphaned shred blocking the workspace poll"). **Not a
+  regression** — the shred path was unchanged since the last good shred; it's a latent single-call scaling
+  limit, output-bound (requirement density), NOT input-size (input is capped at 50k words). Fixes:
+  (1) `utils/dara/requirements.ts` — `SHRED_MAX_TOKENS` **16000→8000** so a call finishes under 240s; the shred
+  is now **resumable across worker ticks** (first tick full-extracts, later ticks skip it and only run gap
+  passes), returns `exhausted` (dry gap pass or the new **800-requirement** cap), and the worker requeues while
+  `!exhausted` so a dense RFP is fully mined across ticks instead of one mega-call.
+  (2) `utils/dara/passes.ts` — `reapOrphanedJobs` fully wrapped in try/catch (queue read, each per-job update,
+  trailing resets) so a transient DB error can't abort the reap/drain; for shred/compliance/reconcile jobs,
+  failing the JobQueue row is what releases the `isShredActive`/`isComplianceCheckActive` poll.
+- **Compliance-check (grading sweep) could loop forever** (`6b12d74`). `mapDetermination` wrote any AI
+  determination that wasn't an exact lowercase token back to `not_assessed`, so `runComplianceJob`'s
+  `res.checked===0` stall guard never tripped → the job requeued every tick. Now `mapDetermination` normalizes
+  case/whitespace/hyphens and maps unknowns to `partial` (terminal); `runComplianceJob` terminates on **actual
+  net progress** (not-assessed count before vs after the tick). Files: `utils/dara/evaluator.ts`, `passes.ts`.
+- **New Solicitation — review-path picker** (`6b12d74`, `components/dara/UploadAndReview.tsx`). The FIRST screen
+  is now two explanatory cards — **Direct AI** vs **Color Team** — chosen before the sol is created. Direct AI
+  uploads a response draft during creation; Color Team hides the proposal dropzone (drafts attach per-review
+  later). Replaces the buried "Advanced → Switch to Color Team" checkbox; `mode` still threads to `createSolShell`.
+- **Signin footer copyright** (`2ceb0ce`) — "© 2026 Crucible Insight LLC" → "© 2026 The Daniel Group LLC".
+  (Privacy/TOS pages still say "Crucible Insight LLC" — not yet reconciled; invite email uses "The Daniel Group
+  LLC d/b/a Crucible Insight".)
 
 ### Prior session (2026-07-05, late) — exports, trial fencing, personas, security re-audit
 
