@@ -295,7 +295,7 @@ export async function resendInvitation(
   if (!mail.ok) {
     return {
       ok: false,
-      error: 'Invitation refreshed, but the email could not be sent. They can still join by signing in.'
+      error: `Invitation refreshed, but the email couldn't be sent (${mail.error ?? 'unknown error'}). They can still join by signing in.`
     };
   }
   return { ok: true };

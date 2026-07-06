@@ -40,11 +40,17 @@ export async function sendInvitationEmail(
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || '';
   try {
     const { error } = await authAdmin().auth.admin.inviteUserByEmail(email, {
-      redirectTo: `${siteUrl}/auth/callback`,
+      redirectTo: `${siteUrl}/auth/confirm?type=invite`,
     });
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      // Surface the real reason server-side (Vercel logs). Common causes: the built-in
+      // email rate limit (a handful/hour), an already-registered address, or missing SMTP.
+      console.error('[teams] inviteUserByEmail failed:', error.status, error.code, error.message);
+      return { ok: false, error: error.message };
+    }
     return { ok: true };
   } catch (e) {
+    console.error('[teams] inviteUserByEmail threw:', e);
     return { ok: false, error: e instanceof Error ? e.message : 'invite email failed' };
   }
 }
