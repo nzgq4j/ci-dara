@@ -253,3 +253,50 @@ export async function revokeInvitation(inviteId: string) {
   });
   revalidatePath('/app/team');
 }
+
+// Re-send a pending (or expired) invitation: refresh its expiry, revive an expired one to
+// pending, and re-send the invite email. The invitation row remains the source of truth for
+// joining, so a failed email send still leaves a usable invite.
+export async function resendInvitation(
+  inviteId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireCompanyAdmin();
+  const id = BigInt(inviteId);
+  const invite = await withTenant(admin.companyId, (tx) =>
+    tx.invitation.findFirst({ where: { id, companyId: admin.companyId } })
+  );
+  if (!invite) return { ok: false, error: 'Invitation not found.' };
+  if (invite.status !== 'pending' && invite.status !== 'expired') {
+    return { ok: false, error: `This invitation was already ${invite.status}.` };
+  }
+
+  await withTenant(admin.companyId, (tx) =>
+    tx.invitation.update({
+      where: { id },
+      data: {
+        status: 'pending',
+        expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * 86400 * 1000)
+      }
+    })
+  );
+
+  const mail = await sendInvitationEmail(invite.email);
+  await recordAudit({
+    action: 'invitation.resend',
+    companyId: admin.companyId,
+    actorId: admin.id,
+    actorEmail: admin.email,
+    entityType: 'invitation',
+    entityId: id,
+    metadata: { email: invite.email, emailSent: mail.ok }
+  });
+  revalidatePath('/app/team');
+
+  if (!mail.ok) {
+    return {
+      ok: false,
+      error: 'Invitation refreshed, but the email could not be sent. They can still join by signing in.'
+    };
+  }
+  return { ok: true };
+}

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, MoreHorizontal, X, UserPlus, Mail, Check, Ban } from 'lucide-react';
+import { Plus, MoreHorizontal, X, UserPlus, Mail, Check, Ban, Send } from 'lucide-react';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, fieldClasses, labelClasses, btnPrimary, btnGhost } from '@/components/dara/theme';
 import {
@@ -12,7 +12,8 @@ import {
   setUserRole,
   setUserDepartment,
   setUserActive,
-  revokeInvitation
+  revokeInvitation,
+  resendInvitation
 } from './actions';
 
 export interface DeptItem {
@@ -107,8 +108,24 @@ export default function TeamView({
   const [deptOpen, setDeptOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resentId, setResentId] = useState<string | null>(null);
+  const [inviteErr, setInviteErr] = useState<string | null>(null);
 
   const shown = filter ? members.filter((m) => m.departmentId === filter) : members;
+
+  async function resend(id: string) {
+    setBusy(true);
+    setInviteErr(null);
+    const res = await resendInvitation(id);
+    setBusy(false);
+    if (res.ok) {
+      setResentId(id);
+      setTimeout(() => setResentId(null), 2500);
+    } else {
+      setInviteErr(res.error ?? 'Could not resend the invitation.');
+    }
+    router.refresh();
+  }
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -238,6 +255,9 @@ export default function TeamView({
           <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-t5">
             Pending invitations ({invites.length})
           </div>
+          {inviteErr && (
+            <p className="mb-2 text-[12px] text-[#991B1B]">{inviteErr}</p>
+          )}
           <div className={`${card} divide-y divide-line`}>
             {invites.map((inv) => (
               <div key={inv.id} className="flex items-center gap-3 px-5 py-3">
@@ -249,9 +269,27 @@ export default function TeamView({
                   </div>
                 </div>
                 <Badge role={inv.role} />
-                <button onClick={() => run(() => revokeInvitation(inv.id))} className={btnGhost} disabled={busy}>
-                  <X className="h-4 w-4" />Revoke
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => resend(inv.id)}
+                    className={btnGhost}
+                    disabled={busy}
+                    title="Re-send the invitation email and refresh its expiry"
+                  >
+                    {resentId === inv.id ? (
+                      <>
+                        <Check className="h-4 w-4" />Sent
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" />Resend
+                      </>
+                    )}
+                  </button>
+                  <button onClick={() => run(() => revokeInvitation(inv.id))} className={btnGhost} disabled={busy}>
+                    <X className="h-4 w-4" />Revoke
+                  </button>
+                </div>
               </div>
             ))}
           </div>
