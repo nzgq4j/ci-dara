@@ -8,14 +8,24 @@ import { buildShredPrompt, buildShredGapPrompt, parseShred } from '@/utils/dara/
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
-// The shred of a full RFP can return a long requirements list; give the JSON generous
-// headroom (8000 truncated mid-array on real solicitations → unparseable). parseShred
-// also salvages complete items from a truncated array as a backstop.
-const SHRED_MAX_TOKENS = 16000;
+// Output cap per shred call. Generation time scales with OUTPUT tokens, and a single call
+// must finish inside the provider's 240s hard timeout (utils/dara/providers.ts). A 16000-token
+// generation on a requirement-dense RFP ran past 240s → the call was aborted, threw, and wrote
+// ZERO requirements (the "matrix never builds, page polls forever" bug). 8000 tokens generates
+// well under the ceiling; parseShred salvages any mid-array truncation, and the shred is now
+// resumable (below) so a dense RFP is fully mined across worker ticks instead of one mega-call.
+const SHRED_MAX_TOKENS = 8000;
+
+// Safety ceiling on total requirements per solicitation, so a model that keeps hallucinating
+// "new" requirements on gap passes can't loop the resumable shred forever.
+const MAX_REQUIREMENTS = 800;
 
 export interface ShredSummary {
   ok: boolean;
   count: number;
+  // True when there is nothing left to mine (a gap pass came up dry, or the cap was hit). The
+  // worker requeues the shred job while this is false so a dense RFP finishes across ticks.
+  exhausted?: boolean;
   error?: string;
 }
 
@@ -92,34 +102,62 @@ export async function shredRequirements(
   const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
   if (!apiKey) return { ok: false, count: 0, error: `No API key configured for provider "${provider}".` };
 
-  // LLM call OUTSIDE any transaction — the slow network hop.
-  const { system, user } = buildShredPrompt(solText);
-  let ai;
-  try {
-    ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
-  } catch (e) {
-    return { ok: false, count: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
+  // Safety cap: never keep mining past a sane matrix size (a model that hallucinates endless
+  // "new" requirements on gap passes must not loop the resumable shred forever).
+  if (loaded.existingNames.size >= MAX_REQUIREMENTS) {
+    return { ok: true, count: 0, exhausted: true };
   }
 
-  const shredded = parseShred(ai.text);
-  if (shredded.length === 0) {
-    return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
-  }
-
-  // Coverage passes: hunt for requirements the first pass missed. Bounded (≤2 rounds) and
-  // stops early when a round comes up dry. Best-effort — a failed round just ends the loop.
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
   const seenNames = new Set<string>(Array.from(loaded.existingNames));
-  shredded.forEach((r) => seenNames.add(norm(r.name)));
+  const shredded: ReturnType<typeof parseShred> = [];
+  // A shred RESUMES across worker ticks: the first tick (no existing requirements) runs the
+  // full extraction; later ticks skip it and only run gap passes to find what's still missing.
+  // Each AI call is bounded (SHRED_MAX_TOKENS) so none approaches the 240s provider timeout.
+  const resuming = loaded.existingNames.size > 0;
+  // exhausted = nothing left to mine. Flipped true when a gap pass comes up dry or the cap is
+  // hit; stays false when we stop only because this tick ran out of budget (→ resume next tick).
+  let exhausted = false;
+
+  if (!resuming) {
+    // First tick: full extraction. LLM call OUTSIDE any transaction — the slow network hop.
+    const { system, user } = buildShredPrompt(solText);
+    let ai;
+    try {
+      ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
+    } catch (e) {
+      return { ok: false, count: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
+    }
+    const first = parseShred(ai.text);
+    if (first.length === 0) {
+      return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
+    }
+    for (const r of first) {
+      const k = norm(r.name);
+      if (!k || seenNames.has(k)) continue;
+      seenNames.add(k);
+      shredded.push(r);
+    }
+  }
+
+  // Coverage passes: hunt for requirements not yet captured. Bounded per tick (≤2 rounds) and
+  // time-boxed; the job resumes next tick if there's more to find. A round that comes up dry
+  // means the RFP is fully mined (exhausted); a round stopped by the budget is not.
   for (let round = 0; round < 2; round++) {
-    // Time-box: skip further coverage passes if this tick can't finish one — the initial shred
-    // is already saved below, and a re-run continues coverage rather than hanging the worker.
+    if (seenNames.size >= MAX_REQUIREMENTS) {
+      exhausted = true;
+      break;
+    }
+    // Not enough budget to finish another coverage call before the function is killed — stop
+    // and leave the job to resume next tick with a full budget (nothing is orphaned; what we
+    // have is saved below).
     if (deadlineMs - Date.now() < COVERAGE_BUDGET_MS) break;
     const gap = buildShredGapPrompt(solText, Array.from(seenNames));
     let gapAi;
     try {
       gapAi = await complete(provider, gap.system, gap.user, model, apiKey, SHRED_MAX_TOKENS);
     } catch {
+      // A failed gap call this tick isn't proof the RFP is exhausted — let it resume.
       break;
     }
     const more = parseShred(gapAi.text).filter((r) => {
@@ -128,7 +166,11 @@ export async function shredRequirements(
       seenNames.add(k);
       return true;
     });
-    if (more.length === 0) break;
+    if (more.length === 0) {
+      // A dry gap pass means nothing new remains — the shred is complete.
+      exhausted = true;
+      break;
+    }
     more.forEach((r) => shredded.push(r));
   }
 
@@ -142,7 +184,7 @@ export async function shredRequirements(
     return true;
   });
   if (fresh.length === 0) {
-    return { ok: true, count: 0 };
+    return { ok: true, count: 0, exhausted };
   }
 
   // Burst B: persist the new requirement rows.
@@ -167,5 +209,5 @@ export async function shredRequirements(
     })
   );
 
-  return { ok: true, count: fresh.length };
+  return { ok: true, count: fresh.length, exhausted };
 }

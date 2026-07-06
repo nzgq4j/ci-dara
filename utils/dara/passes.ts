@@ -572,61 +572,81 @@ export function triggerWorker(): void {
 async function reapOrphanedJobs(): Promise<void> {
   const staleBefore = new Date(Date.now() - STALE_MS);
 
-  const staleJobs = await prismaAdmin.jobQueue.findMany({
-    where: { status: 'running', startedAt: { lt: staleBefore } },
-    select: { id: true, attempts: true, maxAttempts: true, payload: true }
-  });
+  // Defensive: this sweep is the FIRST thing every worker tick does. If any single update here
+  // threw, it would abort the whole tick (no jobs drained). Isolate each step in try/catch so a
+  // transient DB blip on one row can never stop the reaper OR the drain — an orphaned job left
+  // `running` is exactly what pins the workspace poll (shred/compliance/reconcile jobs have no
+  // entity to reset; failing the JobQueue row is what releases `isComplianceCheckActive` /
+  // `isShredActive`, so the reap MUST run to completion every tick).
+  let staleJobs: { id: bigint; attempts: number; maxAttempts: number; payload: unknown }[] = [];
+  try {
+    staleJobs = await prismaAdmin.jobQueue.findMany({
+      where: { status: 'running', startedAt: { lt: staleBefore } },
+      select: { id: true, attempts: true, maxAttempts: true, payload: true }
+    });
+  } catch {
+    return; // can't read the queue this tick — let the drain proceed; next tick retries.
+  }
 
   for (const j of staleJobs) {
-    if (j.attempts < j.maxAttempts) {
-      // Retry: passes 1-2 are already complete, so the retry runs the stuck pass with a
-      // full budget. Its `running` row is reset below so it re-runs.
-      await prismaAdmin.jobQueue.update({
-        where: { id: j.id },
-        data: { status: 'pending', availableAt: new Date() }
-      });
-    } else {
-      // Out of attempts — give up and surface the failure instead of spinning forever.
-      await prismaAdmin.jobQueue.update({
-        where: { id: j.id },
-        data: { status: 'failed', finishedAt: new Date(), error: 'Worker timed out before the review finished.' }
-      });
-      const payload = (j.payload ?? {}) as { passId?: string; reviewId?: string; directReviewId?: string };
-      // A Direct AI review is a single call — out of attempts means surface the failure.
-      if (payload.directReviewId) {
-        await prismaAdmin.directReview.updateMany({
-          where: { id: BigInt(payload.directReviewId), status: { in: ['running'] } },
-          data: { status: 'error', progress: 0, progressLabel: '', errorMessage: 'Timed out — re-run the review.' }
+    try {
+      if (j.attempts < j.maxAttempts) {
+        // Retry: prior completed work (passes, already-graded rows, saved requirements) is
+        // preserved, so the retry resumes with a full budget. Its `running` row is reset below.
+        await prismaAdmin.jobQueue.update({
+          where: { id: j.id },
+          data: { status: 'pending', availableAt: new Date() }
         });
-      }
-      const where = payload.passId
-        ? { id: BigInt(payload.passId) }
-        : payload.reviewId
-          ? { reviewId: BigInt(payload.reviewId) }
-          : null;
-      if (where) {
-        await prismaAdmin.reviewPass.updateMany({
-          where: { ...where, status: { in: ['queued', 'running'] } },
-          data: { status: 'error', progress: 0, progressLabel: '', errorMessage: 'Timed out — retry this pass.' }
+      } else {
+        // Out of attempts — give up and surface the failure instead of spinning forever. For a
+        // shred/compliance/reconcile job this `failed` status alone stops the workspace poll.
+        await prismaAdmin.jobQueue.update({
+          where: { id: j.id },
+          data: { status: 'failed', finishedAt: new Date(), error: 'Worker timed out before the job finished.' }
         });
+        const payload = (j.payload ?? {}) as { passId?: string; reviewId?: string; directReviewId?: string };
+        // A Direct AI review is a single call — out of attempts means surface the failure.
+        if (payload.directReviewId) {
+          await prismaAdmin.directReview.updateMany({
+            where: { id: BigInt(payload.directReviewId), status: { in: ['running'] } },
+            data: { status: 'error', progress: 0, progressLabel: '', errorMessage: 'Timed out — re-run the review.' }
+          });
+        }
+        const where = payload.passId
+          ? { id: BigInt(payload.passId) }
+          : payload.reviewId
+            ? { reviewId: BigInt(payload.reviewId) }
+            : null;
+        if (where) {
+          await prismaAdmin.reviewPass.updateMany({
+            where: { ...where, status: { in: ['queued', 'running'] } },
+            data: { status: 'error', progress: 0, progressLabel: '', errorMessage: 'Timed out — retry this pass.' }
+          });
+        }
       }
+    } catch {
+      // One row's cleanup failed — keep reaping the rest; next tick retries this one.
+      continue;
     }
   }
 
   // Any remaining `running` pass whose job we requeued (or whose job is already gone) is
   // reset to `queued` so it re-runs and the UI shows a live status instead of a frozen bar.
-  await prismaAdmin.reviewPass.updateMany({
-    where: { status: 'running', startedAt: { lt: staleBefore } },
-    data: { status: 'queued', progress: 0, progressLabel: '' }
-  });
-
-  // A Direct AI review left `running` past the stale margin whose job was requeued (attempts
-  // remain) re-runs from scratch on the next tick — runDirectReview is idempotent and
-  // replaces findings, so just clear the stale progress so the UI shows a live status.
-  await prismaAdmin.directReview.updateMany({
-    where: { status: 'running', startedAt: { lt: staleBefore } },
-    data: { progress: 0, progressLabel: '' }
-  });
+  try {
+    await prismaAdmin.reviewPass.updateMany({
+      where: { status: 'running', startedAt: { lt: staleBefore } },
+      data: { status: 'queued', progress: 0, progressLabel: '' }
+    });
+    // A Direct AI review left `running` past the stale margin whose job was requeued (attempts
+    // remain) re-runs from scratch on the next tick — runDirectReview is idempotent and
+    // replaces findings, so just clear the stale progress so the UI shows a live status.
+    await prismaAdmin.directReview.updateMany({
+      where: { status: 'running', startedAt: { lt: staleBefore } },
+      data: { progress: 0, progressLabel: '' }
+    });
+  } catch {
+    /* best-effort progress reset — safe to skip this tick */
+  }
 }
 
 /**
@@ -691,12 +711,14 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
       } else if (payload.kind === 'shred' && payload.solicitationId) {
-        // Shred runs an initial pass + up to 2 coverage passes; the deadline lets it skip
-        // coverage rounds it can't finish this tick instead of overrunning the function budget.
-        // Surface a failed shred (e.g. AI timeout) instead of silently marking the job done with
-        // an empty matrix — throwing routes it through the retry/fail path below.
+        // Shred is resumable: each tick runs bounded AI calls (no single call approaches the
+        // 240s provider timeout) and reports `exhausted`. Requeue while there's more of the RFP
+        // to mine so a dense solicitation finishes across ticks; only mark the job done once the
+        // shred reports it's fully mined. Surface a hard failure (e.g. AI/API error) via throw so
+        // it routes through the retry/fail path instead of silently leaving an empty matrix.
         const shredRes = await shredRequirements(BigInt(payload.solicitationId), companyId, deadlineMs);
         if (!shredRes.ok) throw new Error(shredRes.error ?? 'Requirements shred failed.');
+        done = shredRes.exhausted ?? true;
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.reviewId) {
