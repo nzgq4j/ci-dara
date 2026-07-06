@@ -1,11 +1,13 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-05 (late) · HEAD `7fe23ab` · branch `main` (clean, **deployed to prod**) · for: next session_
+_Prepared: 2026-07-06 · HEAD `1754cf6` · branch `main` (clean) · last DEPLOYED commit `2e2e74c` · for: next session_
 
 Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless flagged
-otherwise. **Top priority next is the security backlog** (`SECURITY_BACKLOG.md`, §5). Agent memory
-(load first): `security-reaudit-2026-07.md`, `personas-review-lens.md`, `billing-and-backlog.md`,
-`direct-ai-review-mode.md`, `create-flow-body-size.md`. Deep decision log: `BUILD_STATUS.md`.
+otherwise. NOTE: HEAD `1754cf6` is one commit ahead of the last deploy — it's just the DARA-045 register
+text (`security-content.ts`); deploy it with the next change. **Top priority next: DARA-045 (team invites
+don't email — see §5/§8) and the rest of the security backlog** (`SECURITY_BACKLOG.md`, §5). Agent memory
+(load first): `security-reaudit-2026-07.md`, `mfa-totp.md`, `legal-tos.md`, `personas-review-lens.md`,
+`billing-and-backlog.md`. Deep decision log: `BUILD_STATUS.md`.
 
 ---
 
@@ -29,44 +31,39 @@ otherwise. **Top priority next is the security backlog** (`SECURITY_BACKLOG.md`,
 
 ---
 
-## 2. What shipped THIS session (2026-07-05 continuation)
+## 2. What shipped THIS session (2026-07-06) — security fixes, 2FA, legal/TOS, invites, auth
 
-All live on prod (deployed via CLI). Commits `bf72353` → `7fe23ab`.
+Commits `258a5eb` → `1754cf6`. All DEPLOYED through `2e2e74c` (last two are register-text only). **Two prod
+migrations applied this session** (`20260706000000_user_mfa`, `20260706010000_user_legal_acceptance`).
 
-1. **PDF export 500 fix** (`bf72353`) — multi-page Analysis Report PDFs crashed (`unsupported number`)
-   for large sols (sol 13, 127 findings → 33 pages). Root cause: a `fixed` react-pdf element with a
-   `render` callback and auto height compounds its box height each page until it overflows. Fixed with
-   an explicit height on the page-number element (+ hardened bordered blocks). `components/dara/ReportPdf.tsx`.
-2. **Trial enforcement wired** (`20fcccb`) — the trial-limit engine existed (`utils/dara/trial.ts`) but
-   nothing called it. Gated `createSolShell` (solicitation), `inviteUser` (seat, new invites only), and
-   `enqueueReviewRun`/`enqueueDirectReview` (review_run, **first run only** so re-runs aren't blocked);
-   Run button disabled at limit; dashboard trial status bar. Paid plans are a no-op (company 1 is
-   `starter`). See `billing-and-backlog.md`.
-3. **`CRON_SECRET`** — generated + set in all 3 Vercel envs; prod redeployed. `/api/cron/passes` now
-   returns 401 without the bearer (verified); legit Vercel Cron still 200s.
-4. **Real `.docx` compliance-matrix export** (`c39c1d1`) — replaced the HTML-as-`.doc` trick with a genuine
-   OOXML `.docx` via the `docx` lib. `utils/dara/matrix-docx.ts`; base64 through the export action →
-   `MatrixExport` decodes. `docx` added to `next.config` `serverComponentsExternalPackages`.
-5. **Per-review response upload + amendments drag-drop** (`e80fe0e`) — color-team reviews now take a
-   per-review response draft (drag-drop `DocUploader`, `uploadReviewDoc`/`deleteReviewDoc` → `ReviewDocument`),
-   replacing the single-upload + "Capture draft" snapshot model (removed). Sol-level proposal upload now
-   shows only in Direct AI mode. Amendments upload switched to the same `DocUploader`. Deleted `utils/dara/reviews.ts`.
-6. **Annotated response `.docx`** (`d25fcfd`, anchoring fix `4e231ec`) — export the proposal/response draft
-   with each finding as a **real inline Word comment**, anchored to the passage it's about. One AI call at
-   export time maps findings → verbatim quotes (no schema/re-run). `utils/dara/annotated-proposal.ts`,
-   route `app/app/solicitations/[id]/annotated/route.ts`, `components/dara/AnnotatedExportButton.tsx` (on the
-   report toolbar + each color-team review card). Anchoring fix: normalized (whitespace/smart-quote)
-   matching + 200k-char cap (was 0 inline; sol 13 now 13/15 anchored — user-confirmed).
-7. **Personas reintegrated as an AI review lens** (`f9f89c4`) — personas had fallen out of the review
-   process (engines built prompts with zero persona input). Now `renderPersonaGuidance` injects the
-   selected/active personas' `systemPrompt` into `buildPassPrompt` + `buildDirectReviewPrompt`
-   (`personaLensBlock`, augment-not-override, before the JSON tail). `runPass` uses the review's selected
-   personas (else all active); `runDirectReview` uses all active. **`Persona.systemPrompt` is the tweak knob**
-   (edit at `/app/personas`) — steers results without touching hardcoded prompts. See `personas-review-lens.md`.
-8. **CMMC L2 security re-audit** (§5) — 6-domain re-audit; prior hardening holds (26/26 RLS intact, no
-   regressions). Net-new gaps SEC-01..23 in **`SECURITY_BACKLOG.md`** (repo root, **untracked — do NOT
-   commit while open**). **SEC-04 fixed** (`7fe23ab`): the annotated-export CUI→LLM egress now records an
-   `annotated.export` audit entry (provider/mode) + fences the proposal with the shared injection guard.
+1. **Security quick-wins** (`258a5eb`) — DARA-026 (`getDaraUser` fail-closed on `isActive`; layout uses new
+   `findDaraUserRaw` so the disabled screen still renders), DARA-027 (sol delete now `removeStored`s all
+   CUI blobs), DARA-028 (CSV formula/DDE injection escaping), DARA-030 (audit `matrix.export`/`report.export`/
+   `review.pass.rerun`), DARA-034 (cron `CRON_SECRET` mandatory in prod). **Unified the findings register:**
+   the re-audit's `SEC-01..23` are now `DARA-021..045` in `security-content.ts` + `SECURITY_BACKLOG.md`.
+2. **TOTP 2FA — DARA-031** (`8fed6c3`, + onboarding step `a5e1d9e`) — Supabase-native MFA (AAL2), NOT a
+   custom system. Opt-in at `/app/account/security`, login challenge `/auth/2fa-challenge`, middleware gates
+   `/app` on AAL2, 10 bcrypt backup codes, signed httpOnly recovery marker for the backup path. Also an
+   optional step in the onboarding wizard. TOTP factor enabled in Supabase (operator, done). See `mfa-totp.md`.
+   **Still opt-in, not enforced** — tenant-wide enforcement is the remaining step.
+3. **Legal / TOS acceptance** (`9418c7e`) — required "Agreement" step in onboarding + `/app/account/legal`
+   viewer (sidebar "Legal"). Source `.docx` in `public/legal/`; `node scripts/gen-legal.mjs` regenerates
+   `utils/dara/legal-content.ts` (v1.0). Acceptance = typed name + checkbox → `acceptLegal()` writes
+   `dara_users.tos_*` + immutable `legal.accept` audit (version, name, IP). See `legal-tos.md`.
+4. **Team invitation Resend** (`18000bb`) — `resendInvitation` next to Revoke (refresh expiry + re-send).
+   **⚠️ but see §8 — invite emails don't reliably send on Supabase built-in email (DARA-045).**
+5. **ChromeGate fix** (`5e0aa4b`) — the marketing navbar/footer was bleeding onto full-screen auth/setup
+   pages (the `/auth/2fa-challenge` "Pricing/Account/Sign out" bar, plus `/onboarding` + `/welcome`). Now
+   bares `/app`, `/signin`, `/auth`, `/onboarding`, `/welcome`.
+6. **Auth email-link flow — `/auth/confirm`** (`2e2e74c`) — invite links failed (`otp_expired` → `/signin`)
+   because `/auth/callback` only does the PKCE `?code` exchange, which doesn't work for admin invites (no
+   browser verifier). Added `/auth/confirm` (`verifyOtp` token_hash) — works for invite links, no verifier /
+   allow-list dependency. Shared post-auth provisioning extracted to `utils/dara/auth-finalize.ts`. Invite
+   template link now points at `/auth/confirm`. Invite-send errors now logged + surfaced to the admin.
+7. **Branded invite email template** (`e2a9b11`) — `supabase/templates/invite.html` (navy/gold, table-based).
+   Committed + wired in `config.toml`; **must be pasted into the hosted Supabase dashboard** to take effect
+   (Auth → Email Templates → "Invite user"). NOTE: since `2e2e74c` its link uses the `/auth/confirm` token_hash
+   format — re-paste the current version.
 
 ---
 
@@ -82,7 +79,21 @@ All live on prod (deployed via CLI). Commits `bf72353` → `7fe23ab`.
 - **Personas now feed the review prompts.** Editing/activating a persona changes review output. No-persona
   companies get an unchanged prompt. The color-team Run gate ("≥1 active persona") is meaningful again.
 - **The `/annotated` route makes a live AI call** (`maxDuration=300`) and has **no rate limit / trial gate**
-  (SEC-01) — flagged in the backlog.
+  (DARA-021) — flagged in the backlog.
+- **`getDaraUser` is now fail-closed on `isActive`** (returns null → treated as unauthenticated). The **app
+  layout uses `findDaraUserRaw`** on purpose so a deactivated user still gets the AccountDisabled screen.
+  Don't switch the layout back to `getDaraUser` or you'll bounce disabled users to signin.
+- **Middleware gates `/app` on Supabase AAL2** (`getAuthenticatorAssuranceLevel`). A user with a verified
+  TOTP factor but an AAL1 session is redirected to `/auth/2fa-challenge`. The **backup-code path** sets a
+  signed httpOnly `dara-mfa` marker (HMAC of userId via APP_KEY, Web-Crypto so it's Edge-safe) that the
+  gate also accepts; cleared on sign-out/disable. `mfa-cookie.ts` must stay node:crypto-free (Edge bundle).
+- **2FA needs the Supabase project TOTP factor ON** (done). 2FA + TOS are **opt-in, not enforced** app-wide.
+- **Email links use TWO routes:** `/auth/callback` (PKCE `?code`, OAuth/magic-link) and `/auth/confirm`
+  (`verifyOtp` token_hash, invite/confirmation). Shared provisioning in `utils/dara/auth-finalize.ts`.
+- **Legal docs:** edit `.docx` in `public/legal/`, run `node scripts/gen-legal.mjs`, commit both. Bumping
+  the ToS "Version x.y" line auto-prompts users to re-accept on `/app/account/legal`.
+- **⚠️ Team invite emails don't reliably send (DARA-045, §8)** — Supabase built-in email rate-limits + can't
+  re-send to an already-registered address. Not yet fixed (user deferred).
 
 ---
 
@@ -98,62 +109,72 @@ All live on prod (deployed via CLI). Commits `bf72353` → `7fe23ab`.
 
 ## 5. SECURITY BACKLOG — top priority (`SECURITY_BACKLOG.md`)
 
-Full CMMC L2 / NIST 800-171 / OWASP re-audit ran 2026-07-05. **Prior hardening holds — no regressions**
+CMMC L2 / NIST 800-171 / OWASP re-audit (2026-07-05). **Prior hardening holds — no regressions**
 (26/26 `dara_*` tables RLS, `withTenant` everywhere, Stripe webhook verified, CUI encrypted, admin gating
-fail-closed, prompt-injection fencing, no LLM tool-calling). Net-new gaps, highest first (see the file for
-file:line evidence + fixes + control mappings; it's **untracked**, don't commit while open):
+fail-closed, prompt-injection fencing, no LLM tool-calling). Re-audit findings are now **unified into the
+DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-content.ts` (admin-gated
+`/app/security`) + the untracked `SECURITY_BACKLOG.md` (file:line evidence; don't commit while open).
 
-- **P1:** SEC-01 **no rate limiting / WAF / BotID** (SC-5; `/annotated` unbounded, re-runs + non-trial plans
-  unmetered). SEC-02 **`next@14.2.35` = 5 HIGH prod advisories** (SSRF, middleware bypass) — needs 14→15
-  migration. SEC-03 **CI gates don't block deploys** (no branch protection + Vercel deploys on push
-  independent of CI). ~~SEC-04 annotated egress unaudited+unfenced~~ **FIXED this session**.
-- **P2 (verified code gaps):** SEC-05 cross-department **BOLA** on child mutation/delete actions
-  (`updateRequirement`/`saveMatrixRow`/`deleteRequirement`/`deleteSolDoc` + run/rerun/regenerate/archive/
-  applyChange/enqueueReconcile — authorize child by `companyId` only, not the viewable parent sol). SEC-06
-  **deactivated users keep access** (`getDaraUser` ignores `isActive`). SEC-07 **solicitation delete orphans
-  CUI files** (`deleteSolicitationAction` no `removeStored`). SEC-08 **CSV formula/DDE injection** in matrix
-  CSV export. SEC-09 **no crypto key-rotation** path. SEC-10 pass-re-run + exports unaudited. SEC-11 **MFA not
-  enforced** (verify Supabase). SEC-12 decompression-bomb guard. SEC-13 CSP nonce (known-deferred).
-- **P3/best-practice:** SEC-14 cron fail-closed. SEC-15 CI RLS-drift check + isolation test. SEC-16 SHA-pin
-  GH Actions. SEC-17 scan SBOM + license gate. SEC-18 kill latent `dangerouslySetInnerHTML`. SEC-19 generic
-  client errors. SEC-20 password policy. SEC-21 audit retention policy. SEC-22 persona-injection residual.
-  SEC-23 tenant right-to-delete.
-- **Suggested quick code wins next:** SEC-08 (CSV escaping), SEC-06 (`isActive` fail-closed), SEC-07
-  (`removeStored` on sol delete), SEC-10 (export/re-run audit), SEC-14 (cron fail-closed). Then SEC-05 (BOLA
-  sweep) and SEC-01 (rate limiting). **Operator:** SEC-03 (branch protection + CI-gated deploy), SEC-02
-  (Next 15), SEC-11/SEC-20 (Supabase MFA/password).
+- **Fixed this session:** DARA-024 (annotated egress, prior), DARA-026 (isActive fail-closed), DARA-027
+  (sol-delete removeStored), DARA-028 (CSV escaping), DARA-030 (export/re-run audit), DARA-034 (cron fail-closed).
+- **In progress:** DARA-031 (MFA/2FA — opt-in shipped; **tenant-wide enforcement** is the remaining step).
+- **P1 open:** DARA-021 **no rate limiting / WAF** (SC-5). DARA-022 **`next@14.2.35` HIGH advisories** (SSRF,
+  middleware bypass) → 14→15 migration. DARA-023 **CI gates don't block deploys** (branch protection + CI-gated deploy).
+- **P2 open:** **DARA-025 cross-department BOLA** on child mutation/delete actions (authorize child by
+  `companyId` only, not the viewable parent sol) — the next code chunk. DARA-029 crypto key-rotation.
+  DARA-032 decompression-bomb guard. DARA-033 CSP nonce.
+- **P3 open:** DARA-035 CI RLS-drift + isolation test · DARA-036 SHA-pin Actions · DARA-037 scan SBOM ·
+  DARA-038 kill latent `dangerouslySetInnerHTML` · DARA-039 generic client errors · DARA-040 password policy ·
+  DARA-041 audit retention · DARA-042 persona-injection residual · DARA-043 tenant right-to-delete ·
+  DARA-044 company doc retention/archive limits · **DARA-045 (Moderate) invite email — see §8**.
+- **Suggested next:** DARA-045 (unblock invites) + DARA-025 (BOLA sweep) on code; **operator:** DARA-023
+  (branch protection), DARA-022 (Next 15), DARA-031/040 (enforce MFA / password policy).
 
 ---
 
 ## 6. Fast restart
 
 ```bash
-git status                       # expect clean main, HEAD 7fe23ab
+git status                       # expect clean main, HEAD 1754cf6 (1 ahead of deploy = register text)
 git log --oneline -14
-pnpm install                     # if needed (docx added this session)
+pnpm install
 pnpm exec tsc --noEmit
-pnpm build                       # must pass (27 routes; /annotated is the newest)
+pnpm build                       # must pass; newest routes: /auth/confirm, /app/account/{security,legal}, /auth/2fa-challenge
 # Deploy (prod = main, MANUAL): git push origin main && vercel deploy --prod --yes ; confirm via MCP list_deployments
+# Schema first: pnpm prisma migrate deploy (targets prod via .env.local) BEFORE the code deploy
 # Diagnose prod: Vercel MCP get_runtime_errors / get_runtime_logs
 #   (projectId prj_I6CLDhGJlbjro2Mc67i1AyyHpciP, teamId team_hluvXIDuWYVTRTyXnqxTbfWg)
-# Verify tenant DB flows: throwaway `npx tsx` with pg + DIRECT_URL (non-interactive).
 ```
 
 ## 7. Key files (this session)
 
-- **Trial:** `utils/dara/trial.ts` (`requireTrialCapacity`, `trialLimitMessage`), gates in
-  `app/app/solicitations/new/page.tsx` (createSolShell), `utils/dara/passes.ts` (enqueueReviewRun),
-  `utils/dara/direct-review.ts` (enqueueDirectReview), `app/app/team/actions.ts` (inviteUser); dashboard bar
-  in `app/app/dashboard/page.tsx`.
-- **Exports:** `utils/dara/matrix-docx.ts` (+ `exportMatrixAction`/`MatrixExport.tsx`),
-  `components/dara/ReportPdf.tsx` + `app/app/solicitations/[id]/report/pdf/route.ts`.
-- **Annotated:** `utils/dara/annotated-proposal.ts`, `app/app/solicitations/[id]/annotated/route.ts`,
-  `components/dara/AnnotatedExportButton.tsx`; fencing primitives now exported from `utils/dara/prompt.ts`.
-- **Per-review upload:** `uploadReviewDoc`/`deleteReviewDoc` + review card in
-  `app/app/solicitations/[id]/page.tsx`; `components/dara/DocUploader.tsx` (added `reviewId`).
-- **Personas lens:** `utils/dara/personas.ts` (`renderPersonaGuidance`), `utils/dara/prompt.ts`
-  (`personaLensBlock`, `buildPassPrompt`/`buildDirectReviewPrompt`), engines in `passes.ts`/`direct-review.ts`.
-- **Security:** `SECURITY_BACKLOG.md` (root, untracked), `utils/dara/audit.ts` (`recordAudit`),
-  `utils/prisma.ts` (`withTenant`), `prisma/security/*.sql` (RLS).
-- **Workspace** (2300+ lines, mode-branched): `app/app/solicitations/[id]/page.tsx`.
+- **2FA (DARA-031):** `app/api/auth/2fa/{setup,verify,challenge,disable}/route.ts`, `utils/dara/mfa.ts`
+  (bcrypt backup codes), `utils/dara/mfa-cookie.ts` (Edge-safe HMAC marker), `app/app/account/security/*`,
+  `app/auth/2fa-challenge/*`, `middleware.ts` (AAL2 gate), onboarding step `app/onboarding/OnboardingTwoFactor.tsx`.
+- **Legal/TOS:** `public/legal/*.docx` + `scripts/gen-legal.mjs` → `utils/dara/legal-content.ts`;
+  `components/dara/LegalDocument.tsx`; `app/onboarding/OnboardingAgreement.tsx`; `app/app/account/legal/*`;
+  `acceptLegal()` in `app/onboarding/actions.ts`; `dara_users.tos_*`.
+- **Auth email links:** `app/auth/callback/route.ts` (PKCE), `app/auth/confirm/route.ts` (token_hash),
+  shared `utils/dara/auth-finalize.ts`; `supabase/templates/invite.html`; invite send in `utils/dara/teams.ts`.
+- **Invites:** `resendInvitation`/`revokeInvitation`/`inviteUser` in `app/app/team/actions.ts`, UI `TeamView.tsx`.
+- **Security register:** `utils/dara/security-content.ts` (renders `/app/security` + `/plan`), `SECURITY_BACKLOG.md`
+  (untracked), `utils/dara/audit.ts`, `utils/prisma.ts` (`withTenant`), `utils/dara/provision.ts` (getDaraUser/findDaraUserRaw).
+- **Chrome:** `components/layout/ChromeGate.tsx` (bares /app, /signin, /auth, /onboarding, /welcome).
+
+---
+
+## 8. ⚠️ DARA-045 — team invite emails don't send (deferred by user 2026-07-06)
+
+Confirmed: Supabase's **built-in email** blocks invites — `inviteUserByEmail` fails with **"email rate limit
+exceeded"** (shared sender, a few/hour) and **"A user with this email address has already been registered"**
+when re-sending to an address a prior invite already registered. **The link side is FIXED** (`/auth/confirm`
+token_hash, so once an email lands the link completes → onboarding). **User deferred the fix.**
+
+**The real fix = code-owned email via Resend:** send our own branded email, minting links with
+`admin.generateLink` (`type=invite` for new users, `type=magiclink` for existing) — works for first-invites
+AND resends, no rate cap. Needs `RESEND_API_KEY` in Vercel + a verified `crucibleinsight.com` from-domain
+(SPF/DKIM/DMARC). Interim stopgap: Custom SMTP in Supabase raises the cap but still can't re-send to an
+existing address. **Workaround today:** the invitation ROW is source-of-truth, so an invitee can still join
+by signing in. Also: the branded `supabase/templates/invite.html` still needs pasting into the Supabase
+dashboard (its link now uses `/auth/confirm`).
 ```

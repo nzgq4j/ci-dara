@@ -1,18 +1,50 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-05 (late)_
+_Last updated: 2026-07-06_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` (committed & deployed) · HEAD `7fe23ab`
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · HEAD `1754cf6` · last DEPLOYED `2e2e74c`
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
-**Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage) · Stripe · Vercel
+**Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
 > **Start-here for the next session is `SESSION_HANDOFF.md`** (deploy model, gotchas, backlog, key files).
-> **Top priority next is the security backlog** — `SECURITY_BACKLOG.md` (untracked; SEC-01..23, prior hardening intact).
+> **Top priority next: DARA-045 (invites don't email) + the security backlog** — `SECURITY_BACKLOG.md`
+> (untracked; findings unified to `DARA-021..045`, prior hardening intact).
 
 ---
 
-## 0. Latest session (2026-07-05, late) — exports, trial fencing, personas, security re-audit
+## 0. Latest session (2026-07-06) — security fixes, 2FA, legal/TOS, invites, auth-link flow
+
+Commits `258a5eb` → `1754cf6`; deployed through `2e2e74c` (last two commits = register text only). **Two prod
+migrations applied** (`20260706000000_user_mfa`, `20260706010000_user_legal_acceptance` — both additive on
+`dara_users`, existing RLS/grants cover the new columns). Highlights:
+
+- **Security quick-wins** (`258a5eb`) — DARA-026 (`getDaraUser` fail-closed on `isActive` + `findDaraUserRaw`
+  for the layout's AccountDisabled screen), DARA-027 (sol-delete `removeStored`s all CUI blobs), DARA-028
+  (CSV formula/DDE injection escaping), DARA-030 (audit exports + pass re-runs), DARA-034 (cron `CRON_SECRET`
+  mandatory in prod). **Unified the findings register: `SEC-01..23` → `DARA-021..045`.**
+- **TOTP 2FA — DARA-031** (`8fed6c3` + onboarding `a5e1d9e`) — Supabase-native MFA (AAL2), chosen over a
+  hand-rolled parallel TOTP (which on Supabase would sit beside the real session and be bypassable). Opt-in
+  `/app/account/security`, challenge `/auth/2fa-challenge`, middleware AAL2 gate on `/app`, bcrypt backup
+  codes + signed httpOnly recovery marker, optional onboarding step. Supabase stores the secret (no secret
+  column, no crypto util, no new env). **Opt-in, not enforced.** See `mfa-totp.md`.
+- **Legal / TOS** (`9418c7e`) — required onboarding "Agreement" step + `/app/account/legal` viewer. Source
+  `.docx` in `public/legal/` → `node scripts/gen-legal.mjs` → `utils/dara/legal-content.ts` (v1.0). Acceptance
+  writes `dara_users.tos_*` + immutable `legal.accept` audit (version/name/IP). Plain-text render (no
+  innerHTML). See `legal-tos.md`.
+- **Team invite Resend** (`18000bb`) + **branded invite email** (`e2a9b11`) — but delivery is blocked
+  (DARA-045, below).
+- **ChromeGate fix** (`5e0aa4b`) — marketing navbar/footer no longer bleeds onto `/auth/*`, `/onboarding`,
+  `/welcome` (the `/auth/2fa-challenge` bar). Bares `/app`, `/signin`, `/auth`, `/onboarding`, `/welcome`.
+- **Auth email-link flow** (`2e2e74c`) — invites failed (`otp_expired`) because `/auth/callback` only does
+  the PKCE `?code` exchange, which doesn't work for admin invites (no browser verifier). Added `/auth/confirm`
+  (`verifyOtp` token_hash); shared provisioning in `utils/dara/auth-finalize.ts`; invite template link now
+  targets `/auth/confirm`; invite-send errors logged + surfaced.
+- **⚠️ DARA-045 (deferred by user):** team invites don't reliably email on Supabase built-in email — "rate
+  limit exceeded" + can't re-send to an already-registered address. Link side fixed; delivery is the blocker.
+  Real fix = code-owned email via **Resend** + `admin.generateLink`. See SESSION_HANDOFF §8.
+
+### Prior session (2026-07-05, late) — exports, trial fencing, personas, security re-audit
 
 Commits `bf72353` → `7fe23ab`, all deployed + verified on prod. Highlights:
 
