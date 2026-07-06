@@ -684,6 +684,18 @@ export const FINDINGS: Finding[] = [
     remediation: 'Add a per-company retention/archive setting (e.g. auto-delete documents + stored blobs older than N days/months, with an opt-in archive-then-purge window). Enforce via a scheduled job that removeStored()s expired files and audits each purge. Complements DARA-041 (audit retention) and DARA-043 (tenant right-to-delete).',
     mapping: 'NIST SI-12, MP-6, AU-11 · data minimization',
     window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-045',
+    title: 'Branded, code-owned transactional emails (deliverability + anti-spoofing)',
+    severity: 'Low',
+    status: 'Open',
+    component: 'Supabase Auth email templates · utils/dara/teams.ts · (future) mailer',
+    evidence: 'Auth emails (team invitations, sign-up confirmation, magic links) render from Supabase default templates and send from Supabase’s shared sender — no custom-domain SPF/DKIM/DMARC alignment. A DARA-branded invite template exists (supabase/templates/invite.html) but must be pasted into the hosted dashboard to take effect, and the other auth emails remain unbranded.',
+    impact: 'Unbranded mail from a shared sender is weaker against spoofing/phishing, harder for recipients to trust, and more likely to be spam-filtered; no control over sender-domain reputation.',
+    remediation: 'Interim: paste the branded invite template into Supabase + set the Site URL/redirect allow-list. Then move to code-owned branded emails (Resend or Custom SMTP) sent from a verified crucibleinsight.com domain (SPF/DKIM/DMARC) covering invite + confirm-signup, using auth.admin.generateLink for the action URLs.',
+    mapping: 'NIST SI-8 · SPF/DKIM/DMARC email authentication · product / brand',
+    window: 'Mid-term (31–90 days)'
   }
 ];
 
