@@ -3,8 +3,11 @@
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 
-// The marketing Navbar/Footer should not wrap the authenticated app shell or the
-// sign-in screen — those render full-screen. Everywhere else keeps the chrome.
+// The marketing Navbar/Footer should not wrap the authenticated app shell or any of
+// the full-screen auth / account-setup flows (sign-in, the 2FA challenge, the org
+// onboarding wizard, the invited-member welcome). Everywhere else keeps the chrome.
+const BARE_PREFIXES = ['/app', '/signin', '/auth', '/onboarding', '/welcome'];
+
 export default function ChromeGate({
   navbar,
   footer,
@@ -15,7 +18,9 @@ export default function ChromeGate({
   children: ReactNode;
 }) {
   const pathname = usePathname() || '';
-  const bare = pathname.startsWith('/app') || pathname.startsWith('/signin');
+  const bare = BARE_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
 
   if (bare) return <>{children}</>;
 
