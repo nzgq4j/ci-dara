@@ -5,13 +5,19 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/utils/supabase/server';
 import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
-import { userTeamIds, solAccessWhere, canViewSolicitation } from '@/utils/dara/sol-access';
+import {
+  userTeamIds,
+  solAccessWhere,
+  canViewSolicitation,
+  canManageDepartments
+} from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
 import { removeStored } from '@/utils/dara/documents';
 import PageHeader from '@/components/dara/PageHeader';
 import { card, cardDashed, btnPrimary } from '@/components/dara/theme';
 import { ModeChip, AiReviewStatus, AiReviewAction } from '@/components/dara/ReviewModeBits';
 import DeleteSolButton from '@/components/dara/DeleteSolButton';
+import DepartmentEditor from '@/components/dara/DepartmentEditor';
 
 // Delete a solicitation from the central list. Gated to users who can see it (RLS + the
 // department-access rule), audited, and done inside the tenant transaction.
@@ -72,6 +78,71 @@ async function deleteSolicitationAction(formData: FormData) {
   revalidatePath('/app/solicitations');
 }
 
+// Set the departments a solicitation is assigned to, from the central list (mirrors the
+// Overview tab's setSolicitationDepartments). Gated to company admins + the creator via
+// canManageDepartments; only company-owned teams are honored.
+async function setDepartmentsAction(formData: FormData) {
+  'use server';
+  const supabase = createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/signin');
+  const daraUser = await getDaraUser(user.id);
+  if (!daraUser) redirect('/signin');
+  const id = BigInt(String(formData.get('solId')));
+
+  const teamIds = formData
+    .getAll('dept')
+    .map((v) => String(v))
+    .filter((v) => /^\d+$/.test(v))
+    .map((v) => BigInt(v));
+
+  const changed = await withTenant(daraUser.companyId, async (tx) => {
+    const sol = await tx.solicitation.findFirst({
+      where: { id, companyId: daraUser.companyId },
+      select: { createdBy: true }
+    });
+    if (!sol) return false;
+    if (!canManageDepartments(daraUser.id, daraUser.role, sol.createdBy)) return false;
+
+    // Keep only departments that actually belong to this company.
+    const valid = teamIds.length
+      ? await tx.team.findMany({
+          where: { id: { in: teamIds }, companyId: daraUser.companyId },
+          select: { id: true }
+        })
+      : [];
+    const validIds = valid.map((t) => t.id);
+    await tx.solicitationDepartment.deleteMany({
+      where: { solicitationId: id, companyId: daraUser.companyId }
+    });
+    if (validIds.length) {
+      await tx.solicitationDepartment.createMany({
+        data: validIds.map((teamId) => ({
+          companyId: daraUser.companyId,
+          solicitationId: id,
+          teamId
+        }))
+      });
+    }
+    return true;
+  });
+
+  if (changed) {
+    await recordAudit({
+      action: 'solicitation.departments.set',
+      companyId: daraUser.companyId,
+      actorId: daraUser.id,
+      actorEmail: daraUser.email,
+      entityType: 'solicitation',
+      entityId: id,
+      metadata: { teamIds: teamIds.map((t) => t.toString()), source: 'list' }
+    });
+  }
+  revalidatePath('/app/solicitations');
+}
+
 export default async function SolicitationsPage() {
   const supabase = createClient();
   const {
@@ -83,24 +154,40 @@ export default async function SolicitationsPage() {
   const daraUser = await getDaraUser(user.id);
   if (!daraUser) redirect('/signin');
 
-  const solicitations = await withTenant(daraUser.companyId, async (tx) => {
-    // Department-scoped visibility: admins see all; others see their own + any
-    // assigned to a department they belong to (app-layer; company RLS is the DB
-    // backstop). companyId filter kept as defense-in-depth alongside RLS (DARA-004).
-    const teamIds = await userTeamIds(tx, daraUser.id);
-    return tx.solicitation.findMany({
-      where: {
-        companyId: daraUser.companyId,
-        ...solAccessWhere(daraUser.id, daraUser.role, teamIds)
-      },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        _count: { select: { requirements: true, reviews: true, evaluations: true } },
-        departments: { include: { team: { select: { name: true } } } },
-        directReviews: { select: { status: true, score: true } }
-      }
-    });
-  });
+  const { solicitations, allDepartments } = await withTenant(
+    daraUser.companyId,
+    async (tx) => {
+      // Department-scoped visibility: admins see all; others see their own + any
+      // assigned to a department they belong to (app-layer; company RLS is the DB
+      // backstop). companyId filter kept as defense-in-depth alongside RLS (DARA-004).
+      const teamIds = await userTeamIds(tx, daraUser.id);
+      const [sols, teams] = await Promise.all([
+        tx.solicitation.findMany({
+          where: {
+            companyId: daraUser.companyId,
+            ...solAccessWhere(daraUser.id, daraUser.role, teamIds)
+          },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            _count: { select: { requirements: true, reviews: true, evaluations: true } },
+            departments: { include: { team: { select: { name: true } } } },
+            directReviews: { select: { status: true, score: true } }
+          }
+        }),
+        tx.team.findMany({
+          where: { companyId: daraUser.companyId },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' }
+        })
+      ]);
+      return { solicitations: sols, allDepartments: teams };
+    }
+  );
+
+  const departmentOptions = allDepartments.map((d) => ({
+    id: d.id.toString(),
+    name: d.name
+  }));
 
   return (
     <div className="mx-auto max-w-6xl fade">
@@ -190,20 +277,29 @@ export default async function SolicitationsPage() {
                     {sol.agency || '—'}
                   </td>
                   <td className="px-3.5 py-3">
-                    {sol.departments.length === 0 ? (
-                      <span className="font-mono text-[11px] text-t5">—</span>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {sol.departments.map((d) => (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {sol.departments.length === 0 ? (
+                        <span className="font-mono text-[11px] text-t5">—</span>
+                      ) : (
+                        sol.departments.map((d) => (
                           <span
                             key={d.id.toString()}
                             className="inline-flex items-center rounded border border-line bg-bg px-1.5 py-0.5 text-[11px] text-t3"
                           >
                             {d.team.name}
                           </span>
-                        ))}
-                      </div>
-                    )}
+                        ))
+                      )}
+                      {canManageDepartments(daraUser.id, daraUser.role, sol.createdBy) && (
+                        <DepartmentEditor
+                          solId={sol.id.toString()}
+                          title={sol.title}
+                          allDepartments={departmentOptions}
+                          assignedIds={sol.departments.map((d) => d.teamId.toString())}
+                          action={setDepartmentsAction}
+                        />
+                      )}
+                    </div>
                   </td>
                   <td className="px-3.5 py-3 text-center text-[13px] font-semibold text-t3">
                     {sol._count.requirements}

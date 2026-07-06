@@ -59,7 +59,8 @@ export default async function AppLayout({
         user={{
           name: daraUser.name,
           email: daraUser.email,
-          role: daraUser.role
+          role: daraUser.role,
+          avatarUrl: daraUser.avatarUrl
         }}
       />
       <main className="flex-1 overflow-y-auto px-8 py-7">{children}</main>

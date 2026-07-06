@@ -285,6 +285,8 @@ model DaraUser {
   companyId   BigInt    @map("company_id")
   email       String    @unique @db.VarChar(255)
   name        String    @default("") @db.VarChar(255)
+  // Public URL of the user's uploaded avatar (dara-avatars bucket). Null = show initials.
+  avatarUrl   String?   @map("avatar_url") @db.VarChar(1024)
   role        UserRole  @default(company_admin)
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at")

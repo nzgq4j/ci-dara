@@ -14,6 +14,7 @@ import {
   KeyRound,
   ScrollText,
   CreditCard,
+  UserRound,
   LogOut,
   type LucideIcon
 } from 'lucide-react';
@@ -51,7 +52,7 @@ export default function Sidebar({
 }: {
   isAdmin?: boolean;
   company: { name: string; plan: string };
-  user: { name: string; email: string; role: string };
+  user: { name: string; email: string; role: string; avatarUrl?: string | null };
 }) {
   const pathname = usePathname() || '';
   const router = useRouter();
@@ -84,6 +85,7 @@ export default function Sidebar({
     {
       label: 'Account',
       items: [
+        { href: '/app/account/profile', label: 'Profile', icon: UserRound },
         { href: '/app/billing', label: 'Billing', icon: CreditCard },
         { href: '/app/settings', label: 'Settings', icon: Settings },
         { href: '/app/account/security', label: 'Two-Factor', icon: KeyRound },
@@ -154,9 +156,18 @@ export default function Sidebar({
 
       {/* User */}
       <div className="flex items-center gap-2.5 border-t border-white/10 px-3.5 py-3">
-        <div className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full bg-gold text-xs font-bold text-navy">
-          {initials}
-        </div>
+        {user.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={user.avatarUrl}
+            alt=""
+            className="h-[30px] w-[30px] flex-shrink-0 rounded-full object-cover"
+          />
+        ) : (
+          <div className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full bg-gold text-xs font-bold text-navy">
+            {initials}
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold text-white/90">
             {user.name || user.email}
