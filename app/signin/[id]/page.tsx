@@ -96,7 +96,7 @@ export default async function SignIn({
         </div>
 
         <div className="relative z-10 mt-10 text-[11px] text-white/50">
-          © 2026 Crucible Insight LLC · All rights reserved
+          © 2026 The Daniel Group LLC · All rights reserved
         </div>
       </div>
 
