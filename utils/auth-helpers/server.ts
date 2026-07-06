@@ -30,6 +30,13 @@ export async function SignOut(formData: FormData) {
   const supabase = createClient();
   const { error } = await supabase.auth.signOut();
 
+  // DARA-031: drop the MFA recovery marker so a backup-code session can't carry over.
+  try {
+    cookies().set('dara-mfa', '', { path: '/', maxAge: 0 });
+  } catch {
+    // ignore — best-effort cookie clear
+  }
+
   if (error) {
     return getErrorRedirect(
       pathName,

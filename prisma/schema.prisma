@@ -289,6 +289,12 @@ model DaraUser {
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at")
   onboardedAt DateTime? @map("onboarded_at")
+  // DARA-031 (MFA): the TOTP secret + factor live in Supabase Auth (auth.mfa_factors),
+  // NOT here — we never store it. mfaEnabled is a convenience mirror of "has a verified
+  // TOTP factor" (source of truth is Supabase / the session AAL); mfaBackupCodes holds
+  // bcrypt hashes of single-use recovery codes (plaintext shown once at setup).
+  mfaEnabled     Boolean  @default(false) @map("mfa_enabled")
+  mfaBackupCodes String[] @default([]) @map("mfa_backup_codes")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 

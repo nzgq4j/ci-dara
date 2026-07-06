@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldCheck,
   ShieldAlert,
+  KeyRound,
   CreditCard,
   LogOut,
   type LucideIcon
@@ -84,6 +85,7 @@ export default function Sidebar({
       items: [
         { href: '/app/billing', label: 'Billing', icon: CreditCard },
         { href: '/app/settings', label: 'Settings', icon: Settings },
+        { href: '/app/account/security', label: 'Two-Factor', icon: KeyRound },
         ...(isAdmin
           ? [{ href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
           : []),

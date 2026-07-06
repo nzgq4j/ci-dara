@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { updateSession } from '@/utils/supabase/middleware';
 import { createClient } from '@/utils/supabase/server';
 import { isPlatformAdmin } from '@/utils/dara/admin';
+import { MFA_COOKIE, isValidMfaMarker } from '@/utils/dara/mfa-cookie';
 
 export async function middleware(request: NextRequest) {
   // Forward a stray OAuth/magic-link `code` that landed on the root (Supabase's
@@ -26,6 +27,22 @@ export async function middleware(request: NextRequest) {
 
     if (!user) {
       return NextResponse.redirect(new URL('/signin', request.url));
+    }
+
+    // DARA-031: AAL2 gate. If the user has a verified TOTP factor but this session is
+    // still AAL1, force the 2FA challenge before any /app (CUI) route. A valid single-use
+    // backup recovery marker (set server-side after a backup-code challenge) also
+    // satisfies the gate. The challenge page lives at /auth/2fa-challenge (outside /app),
+    // so there is no redirect loop.
+    const { data: aal } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal && aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
+      const marker = request.cookies.get(MFA_COOKIE)?.value;
+      if (!(await isValidMfaMarker(user.id, marker))) {
+        return NextResponse.redirect(
+          new URL('/auth/2fa-challenge', request.url)
+        );
+      }
     }
 
     // Application admins are company-less: keep them inside the /app/admin console

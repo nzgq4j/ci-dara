@@ -519,15 +519,15 @@ export const FINDINGS: Finding[] = [
   },
   {
     id: 'DARA-031',
-    title: 'Multi-factor authentication not enforced',
+    title: 'Multi-factor authentication (TOTP 2FA)',
     severity: 'High',
-    status: 'Open',
-    component: 'Supabase Auth (project config) · /app session policy',
-    evidence: 'No MFA challenge or enrollment exists in the application; authentication is password + magic-link + OAuth only. MFA is a mandatory 800-171 r3 (03.05.03 / IA-2) requirement for FCI/CUI systems.',
-    impact: 'Accounts with access to CUI can authenticate with a single factor.',
-    remediation: 'Enforce MFA at the Supabase project level; if relied upon for authorization, add an app-side AAL2-session requirement on /app.',
+    status: 'In progress',
+    component: 'Supabase Auth MFA · /app/account/security · /auth/2fa-challenge · middleware',
+    evidence: 'TOTP two-factor is implemented on Supabase Auth native MFA (AAL2). Users opt in at /app/account/security (QR enrollment; works with Google/Microsoft Authenticator, Authy, etc.); a login-time challenge (/auth/2fa-challenge) elevates the session to AAL2, and middleware gates every /app (CUI) route on AAL2. Ten single-use backup codes are bcrypt-hashed at rest and shown once; a signed httpOnly recovery marker covers the backup-code path. Enroll/challenge/disable are audited (mfa.enable/challenge/disable). The TOTP secret is stored by Supabase — never by us.',
+    impact: 'Users can now protect CUI access with a second factor. Residual: MFA is opt-in, not yet mandatory tenant-wide, and turning on the Supabase project TOTP factor is an operator step.',
+    remediation: 'Done (this session): in-app opt-in TOTP + AAL2 gate on /app + bcrypt backup codes + audit. Remaining (operator/policy): enable the TOTP factor in the Supabase project, then move from opt-in to enforced (require enrollment for all CUI users; optional app-side “must enroll” gate).',
     mapping: 'NIST 800-171 03.05.03 · IA-2 · CMMC L2',
-    window: 'Short-term (8–30 days) — operator'
+    window: 'In progress — opt-in shipped; enforcement is operator/policy'
   },
   {
     id: 'DARA-032',
@@ -671,6 +671,18 @@ export const FINDINGS: Finding[] = [
     impact: 'A tenant data-deletion request cannot be fully honored today.',
     remediation: 'Build a company-scoped purge of all CUI across the database and storage.',
     mapping: 'NIST MP-6 · data minimization',
+    window: 'Mid-term (31–90 days)'
+  },
+  {
+    id: 'DARA-044',
+    title: 'Company-configurable document retention / archive limits',
+    severity: 'Low',
+    status: 'Open',
+    component: 'Company settings · dara_sol_documents / dara_review_documents · storage',
+    evidence: 'Uploaded solicitation/proposal/amendment documents and per-review response drafts (CUI) are retained indefinitely; there is no per-company policy to auto-archive or delete documents after a configurable age, so CUI accumulates well beyond its useful life.',
+    impact: 'CUI is retained longer than necessary (data-minimization gap): a larger blast radius on compromise and more to purge on a right-to-delete request.',
+    remediation: 'Add a per-company retention/archive setting (e.g. auto-delete documents + stored blobs older than N days/months, with an opt-in archive-then-purge window). Enforce via a scheduled job that removeStored()s expired files and audits each purge. Complements DARA-041 (audit retention) and DARA-043 (tenant right-to-delete).',
+    mapping: 'NIST SI-12, MP-6, AU-11 · data minimization',
     window: 'Mid-term (31–90 days)'
   }
 ];
