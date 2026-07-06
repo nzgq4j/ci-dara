@@ -104,6 +104,18 @@ migrations applied this session** (`20260706000000_user_mfa`, `20260706010000_us
 3. **Annotated export follow-ups** — per-direct-review persona selector; annotate the *original* uploaded
    `.docx` in place (preserve formatting) instead of rebuilding from text; batch anchoring for huge finding sets.
 4. Nice-to-haves: rename/edit metadata from the solicitations LIST; richer built-in persona templates.
+5. **New Solicitation — review-mode path selection up front** — make the **first** modal after clicking
+   "New Solicitation" a **path picker** presented as **two cards** that explain each path, chosen *before*
+   the solicitation is built:
+   - **Color Team review** — process-mode gate reviews. In this path the creator does **not** upload response
+     (proposal) documents during creation; response drafts are attached per-review later (`ReviewDocument`).
+   - **Direct AI review** — the one-click unified review. In this path the creator **does** upload response
+     documents as part of creation (they feed the `direct_ai` review).
+   Each card = a short title + 2–3 line description of what the path does, so the user picks intentionally.
+   The choice sets `solicitation.mode` (`color_team` vs `direct_ai`) and branches the rest of the create
+   wizard (show/hide the response-doc upload step). Files: `app/app/solicitations/new/page.tsx` (+ its create
+   flow/components); mode field already exists on `Solicitation` and is read across the detail page
+   (`isDirect = solicitation.mode === 'direct_ai'`). Requested by user 2026-07-06.
 
 ---
 

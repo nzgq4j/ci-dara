@@ -1,24 +1,27 @@
 'use client';
 
-// Screen 4 — Upload & Instant Review, as a genuine two-step flow:
-//   Step 1  Upload solicitation + proposal draft, metadata, Advanced (Color Team) toggle.
-//           → [Continue] advances; [Cancel] leaves.
-//   Step 2  Confirm what will be created, then [Run AI Review]/[Create Solicitation].
-//           While submitting, a processing panel shows ingestion → creation → review-start
-//           so it's clear work is happening. → [Back] returns to step 1.
+// Screen 4 — Upload & Instant Review. Now a genuine THREE-screen flow:
+//   Screen 0  Choose review type — two explanatory cards (Direct AI vs Color Team). This is
+//             the FIRST thing after "New Solicitation" and it branches the rest of the wizard:
+//             Direct AI uploads a response (proposal) draft now; Color Team does not.
+//   Step 1    Upload solicitation (+ proposal draft for Direct AI) + metadata.
+//             → [Continue] advances; [Cancel] leaves; [Change review type] returns to Screen 0.
+//   Step 2    Confirm what will be created, then [Run AI Review]/[Create Solicitation].
+//             While submitting, a processing panel shows ingestion → creation → review-start.
 //
 // It ALWAYS creates the solicitation (a Direct AI review auto-runs only when a proposal draft
 // is present). Files are held in client state (shared FileDropzone) and posted to the server
-// action as one FormData. Colors use the app's semantic tokens (D5).
+// action one file per request (Vercel ~4.5 MB body cap). Colors use the app's semantic tokens.
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ChevronDown, ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText, Sparkles, Users, Check } from 'lucide-react';
 import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
 import FileDropzone from '@/components/dara/FileDropzone';
 
 type ShellResult = { ok: boolean; error?: string; solId?: string };
 type StepResult = { ok: boolean; error?: string; redirect?: string };
+type Mode = 'direct_ai' | 'color_team';
 
 // A single Vercel Function request body is capped near 4.5 MB, so we upload one file per
 // request. Warn just under that so an oversized single file gets a clear message instead of a
@@ -34,6 +37,8 @@ export default function UploadAndReview({
   uploadDoc: (formData: FormData) => Promise<StepResult>;
   finalize: (formData: FormData) => Promise<StepResult>;
 }) {
+  // mode === null → the path-selection screen (shown first). Choosing a card advances to step 1.
+  const [mode, setMode] = useState<Mode | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [rfpFiles, setRfpFiles] = useState<File[]>([]);
   const [proposalFiles, setProposalFiles] = useState<File[]>([]);
@@ -41,17 +46,16 @@ export default function UploadAndReview({
   const [agency, setAgency] = useState('');
   const [naics, setNaics] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [colorTeam, setColorTeam] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Plain state (not useTransition): with an async op, useTransition's isPending flips back
   // to false after the synchronous part, which cleared the processing indicator and dropped
   // the post-await navigation. Real state stays true across the whole request.
   const [pending, setPending] = useState(false);
 
+  const colorTeam = mode === 'color_team';
   const hasProposal = proposalFiles.length > 0;
   const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
-  const willRun = !colorTeam && hasProposal;
+  const willRun = mode === 'direct_ai' && hasProposal;
 
   // Real progress across the three-step flow (create shell → upload each file → start review),
   // driven by actual completions rather than a timer. Total steps = 1 shell + N files + 1 start.
@@ -63,7 +67,17 @@ export default function UploadAndReview({
   // body is capped near 4.5 MB), so flag it up front instead of failing mid-flow.
   const oversized = [...rfpFiles, ...proposalFiles].filter((f) => f.size > MAX_FILE_BYTES);
 
+  // Pick a review path. Color Team doesn't take a response draft during creation, so drop any
+  // proposal files that were staged before a switch — they'd otherwise silently ride along.
+  const choosePath = (m: Mode) => {
+    setMode(m);
+    setStep(1);
+    setError(null);
+    if (m === 'color_team') setProposalFiles([]);
+  };
+
   const submit = async () => {
+    if (!mode) return;
     setError(null);
     setPending(true);
     setProgress({ label: 'Creating solicitation…', done: 0 });
@@ -71,7 +85,7 @@ export default function UploadAndReview({
     try {
       // 1) Create the solicitation shell (metadata only — a tiny request).
       const meta = new FormData();
-      meta.set('mode', colorTeam ? 'color_team' : 'direct_ai');
+      meta.set('mode', mode);
       meta.set('solNumber', solNumber);
       meta.set('agency', agency);
       meta.set('naics', naics);
@@ -127,13 +141,69 @@ export default function UploadAndReview({
     ...proposalFiles.map((f) => ({ f, kind: 'Proposal draft' }))
   ];
 
+  // ---------- Screen 0 — Choose review type ----------
+  if (mode === null) {
+    return (
+      <div>
+        <div className="mb-4">
+          <h2 className="text-[15px] font-semibold text-t1">How do you want this reviewed?</h2>
+          <p className="mt-0.5 text-[13px] text-t4">
+            Pick a path to start. You can change it before the solicitation is created.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <PathCard
+            icon={<Sparkles className="h-5 w-5" />}
+            title="Direct AI review"
+            tagline="A one-click, unified AI read of your proposal draft against the solicitation."
+            points={[
+              'Upload the solicitation and your proposal draft now',
+              'AI scores the draft, flags compliance gaps, and builds the matrix',
+              'Results ready in minutes — best for a fast first read'
+            ]}
+            footer="You’ll upload response documents"
+            onSelect={() => choosePath('direct_ai')}
+          />
+          <PathCard
+            icon={<Users className="h-5 w-5" />}
+            title="Color Team review"
+            tagline="Structured gate reviews (Pink · Red · Gold …) as your proposal matures."
+            points={[
+              'Upload just the solicitation now — no response documents yet',
+              'Set up review gates with your own personas in the workspace',
+              'Attach each gate’s draft later, per review'
+            ]}
+            footer="No response documents needed yet"
+            onSelect={() => choosePath('color_team')}
+          />
+        </div>
+
+        <div className="mt-6">
+          <Link href="/app/solicitations" className={`${btnGhost} h-11`}>Cancel</Link>
+        </div>
+      </div>
+    );
+  }
+
   // ---------- Step 1 — Upload ----------
   if (step === 1) {
     return (
       <div className={`${card} p-6`}>
-        <div className="mb-3 flex items-center gap-2">
-          <StepDot n={1} active />
-          <h2 className="text-[15px] font-semibold text-t1">Upload solicitation document(s)</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <StepDot n={1} active />
+            <h2 className="text-[15px] font-semibold text-t1">Upload solicitation document(s)</h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMode(null)}
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium text-t4 transition-colors hover:text-t1"
+          >
+            {colorTeam ? <Users className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {colorTeam ? 'Color Team review' : 'Direct AI review'}
+            <span className="text-t5">· Change</span>
+          </button>
         </div>
 
         <FileDropzone
@@ -143,23 +213,24 @@ export default function UploadAndReview({
           sub="PDF, Word, or text · Section L, M, and PWS auto-detected · max 20 MB"
         />
 
-        <div className="mt-5 border-t border-line pt-4">
-          <div className="mb-2">
-            <div className="text-[13px] font-semibold text-t2">Your proposal draft</div>
-            <div className="text-[12px] text-t5">
-              {colorTeam
-                ? 'The draft your color teams review (optional here — you can add it in the workspace).'
-                : 'The Direct AI review scores this draft against the solicitation.'}
+        {/* Response draft — Direct AI only. Color Team attaches per-review drafts later. */}
+        {mode === 'direct_ai' && (
+          <div className="mt-5 border-t border-line pt-4">
+            <div className="mb-2">
+              <div className="text-[13px] font-semibold text-t2">Your proposal draft</div>
+              <div className="text-[12px] text-t5">
+                The Direct AI review scores this draft against the solicitation.
+              </div>
             </div>
+            <FileDropzone
+              files={proposalFiles}
+              onChange={setProposalFiles}
+              label="Drop your proposal draft here"
+              sub="PDF, Word, or text · max 20 MB"
+              compact
+            />
           </div>
-          <FileDropzone
-            files={proposalFiles}
-            onChange={setProposalFiles}
-            label="Drop your proposal draft here"
-            sub="PDF, Word, or text · max 20 MB"
-            compact
-          />
-        </div>
+        )}
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -180,22 +251,6 @@ export default function UploadAndReview({
           </div>
         </div>
 
-        <div className="mt-5 border-t border-line pt-4">
-          <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="inline-flex items-center gap-1.5 text-[12px] font-medium text-t4 transition-colors hover:text-t1">
-            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
-            Advanced review options
-          </button>
-          {showAdvanced && (
-            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-line bg-bg p-3">
-              <input type="checkbox" checked={colorTeam} onChange={(e) => setColorTeam(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line bg-bg accent-navy" />
-              <span>
-                <span className="block text-[13px] font-semibold text-t2">Switch to Color Team review</span>
-                <span className="block text-[12px] text-t5">Runs the multi-pass Pink / Red / Gold gate workflow instead of a single unified AI review. You&apos;ll configure passes in the workspace.</span>
-              </span>
-            </label>
-          )}
-        </div>
-
         <div className="mt-6 flex items-center gap-3">
           <button
             type="button"
@@ -205,7 +260,9 @@ export default function UploadAndReview({
           >
             Continue <ArrowRight className="h-4 w-4" />
           </button>
-          <Link href="/app/solicitations" className={`${btnGhost} h-11`}>Cancel</Link>
+          <button type="button" onClick={() => setMode(null)} className={`${btnGhost} h-11`}>
+            <ArrowLeft className="h-4 w-4" /> Back
+          </button>
         </div>
         {!canSubmit && (
           <p className="mt-2 text-[12px] text-t5">Add a document or a solicitation number to continue.</p>
@@ -246,7 +303,7 @@ export default function UploadAndReview({
           {willRun
             ? 'We’ll create the solicitation and run a unified AI review of your proposal against it.'
             : colorTeam
-              ? 'We’ll create the solicitation and open the workspace to set up color-team passes.'
+              ? 'We’ll create the solicitation and open the workspace to set up color-team review gates.'
               : 'We’ll create the solicitation. Add a proposal draft in the workspace to run the AI review.'}
         </p>
       </div>
@@ -300,6 +357,51 @@ export default function UploadAndReview({
         </>
       )}
     </div>
+  );
+}
+
+// A selectable review-path card for Screen 0. The whole card is the button.
+function PathCard({
+  icon,
+  title,
+  tagline,
+  points,
+  footer,
+  onSelect
+}: {
+  icon: React.ReactNode;
+  title: string;
+  tagline: string;
+  points: string[];
+  footer: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="group flex h-full flex-col rounded-[10px] border border-line bg-surf p-5 text-left transition-all hover:border-navy/50 hover:bg-navy/[0.03] hover:shadow-sm focus:outline-none focus-visible:border-navy focus-visible:ring-2 focus-visible:ring-navy/30"
+    >
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-navy/10 text-navy">
+        {icon}
+      </div>
+      <h3 className="mt-3 text-[15px] font-semibold text-t1">{title}</h3>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-t4">{tagline}</p>
+      <ul className="mt-3 space-y-1.5">
+        {points.map((p, i) => (
+          <li key={i} className="flex items-start gap-2 text-[12.5px] leading-relaxed text-t3">
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-navy" />
+            <span>{p}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+        <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-t5">{footer}</span>
+        <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-navy">
+          Choose <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </div>
+    </button>
   );
 }
 

@@ -636,13 +636,22 @@ async function reapOrphanedJobs(): Promise<void> {
  * next tick resumes the remainder (runComplianceCheck grades only not-yet-assessed rows).
  */
 async function runComplianceJob(solicitationId: bigint, companyId: bigint, deadlineMs: number): Promise<boolean> {
-  const res = await runComplianceCheck(solicitationId, companyId, deadlineMs);
-  const remaining = await withTenant(companyId, (tx) =>
-    tx.requirement.count({
-      where: { solicitationId, companyId, removedAt: null, disposition: 'compliance', complianceStatus: 'not_assessed' }
-    })
-  );
-  return remaining === 0 || res.checked === 0;
+  const countNotAssessed = () =>
+    withTenant(companyId, (tx) =>
+      tx.requirement.count({
+        where: { solicitationId, companyId, removedAt: null, disposition: 'compliance', complianceStatus: 'not_assessed' }
+      })
+    );
+  // Gate termination on ACTUAL net progress (not-assessed rows that left the pool this tick),
+  // not on `res.checked`. A row the sweep "checks" but writes back as not_assessed (any AI
+  // determination that doesn't resolve to a terminal status) counts toward `checked` while
+  // never leaving the ungraded pool — so `res.checked === 0` never trips and the job requeues
+  // every cron tick forever (frozen progress bar + endless UI poll + recurring AI spend).
+  // Comparing before/after guarantees the job stops: each tick either shrinks the pool or ends.
+  const before = await countNotAssessed();
+  await runComplianceCheck(solicitationId, companyId, deadlineMs);
+  const after = await countNotAssessed();
+  return after === 0 || after >= before;
 }
 
 /**

@@ -295,10 +295,17 @@ const COMPLIANCE_SYSTEM =
   'determination for each. Respond only in the JSON format specified.';
 
 function mapDetermination(d: string | null): 'compliant' | 'partial' | 'non_compliant' | 'not_assessed' {
-  if (d === 'compliant') return 'compliant';
-  if (d === 'non_compliant') return 'non_compliant';
-  if (d === 'unable_to_determine') return 'partial';
-  return 'not_assessed';
+  // Normalize case/whitespace before matching — LLMs return "Compliant", "non-compliant",
+  // trailing spaces, etc., and an exact-token check would drop those to the fallback.
+  const v = (d ?? '').trim().toLowerCase().replace(/-/g, '_');
+  if (v === 'compliant') return 'compliant';
+  if (v === 'non_compliant') return 'non_compliant';
+  if (v === 'unable_to_determine') return 'partial';
+  // Any other/blank determination → 'partial' (a terminal, human-reviewable state), NEVER
+  // not_assessed: a row the sweep has graded must leave the ungraded pool. Writing it back to
+  // not_assessed left it permanently ungraded, which stalled the resumable sweep and spun the
+  // background compliance-check job forever (see runComplianceJob in passes.ts).
+  return 'partial';
 }
 
 /**

@@ -267,7 +267,7 @@ export default async function NewSolicitationPage() {
       </Link>
       <h1 className="text-2xl font-bold tracking-tight text-t1">New Solicitation</h1>
       <p className="mb-7 text-[13px] text-t4">
-        Upload a solicitation and your proposal draft to run an instant AI review.
+        Choose how you want to review it, then upload your documents.
       </p>
 
       <UploadAndReview
