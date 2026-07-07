@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/utils/supabase/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getURL, getErrorRedirect, getStatusRedirect } from 'utils/helpers';
@@ -110,14 +111,29 @@ export async function requestPasswordUpdate(formData: FormData) {
   let redirectPath: string;
 
   if (!isValidEmail(email)) {
-    redirectPath = getErrorRedirect(
+    // Return early — otherwise we'd fall through and fire a reset for a malformed
+    // address, overwriting this message with a bogus "success".
+    return getErrorRedirect(
       '/signin/forgot_password',
       'Invalid email address.',
       'Please try again.'
     );
   }
 
-  const supabase = createClient();
+  // DARA-046: fire the recovery email from an IMPLICIT-flow client, NOT the app's
+  // default SSR client (which is PKCE). With PKCE, the recovery email's
+  // `{{ .TokenHash }}` renders as a `pkce_…` code that /auth/confirm's verifyOtp
+  // cannot verify — it would need exchangeCodeForSession plus the code-verifier
+  // cookie from the originating browser, which is absent when the link is opened
+  // from an email scanner (Outlook SafeLinks) or another device. That broke
+  // password reset for everyone. The implicit flow makes `{{ .TokenHash }}` a plain
+  // OTP hash that verifyOtp validates server-side, cross-device. Still uses the anon
+  // key + Supabase's built-in (Resend-SMTP) email pipeline; no session is persisted.
+  const supabase = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { flowType: 'implicit', persistSession: false, autoRefreshToken: false } }
+  );
 
   const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: callbackURL

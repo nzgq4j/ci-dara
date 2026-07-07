@@ -36,12 +36,12 @@ Not yet committed or deployed. **No migrations** (code-only). Builds clean (`tsc
    stripped. ChromeGate still bars the full marketing nav on these routes; this is a dedicated light chrome.
 3. **/legal contact lines** changed to `admin@crucibleinsight.com` (no company name) on both the Terms and
    Privacy "Questions about…" lines.
-4. **DARA-046 (NEW, High, OPEN) — password reset is broken.** `resetPasswordForEmail` runs on the PKCE SSR
-   client, so the recovery email's `{{ .TokenHash }}` is a `pkce_…` code; `/auth/confirm`'s `verifyOtp`
-   can't verify it (needs `exchangeCodeForSession` + the verifier cookie) → redirect to `/signin`. Broken for
-   everyone (worse via Outlook SafeLinks / other device). Fix = non-PKCE recovery link via
-   `admin.generateLink({type:'recovery'})` + own email, or `flowType:'implicit'`. Same infra as DARA-045.
-   Filed in `security-content.ts` + `SECURITY_BACKLOG.md`; **not yet fixed** (small — offer to implement).
+4. **DARA-046 (NEW, High) — password reset was broken → FIXED.** `resetPasswordForEmail` ran on the PKCE SSR
+   client, so the recovery email's `{{ .TokenHash }}` was a `pkce_…` code `/auth/confirm`'s `verifyOtp` can't
+   verify → redirect to `/signin` (broken for everyone, worse via Outlook SafeLinks / other device). **Fixed**
+   by firing the reset from a `flowType:'implicit'` supabase-js client (anon key) so the token is a plain OTP
+   hash verifyOtp accepts cross-device (+ early-return on invalid email). See §9 for detail + a test recipe and
+   the likely-same confirm-signup follow-up. Register updated to Remediated.
 
 **Operator steps now DONE (user confirmed 2026-07-07):** Supabase Manual Linking enabled + all 12 email
 templates pasted.
@@ -248,20 +248,18 @@ DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-conte
 
 - **Fixed:** DARA-024 (annotated egress), DARA-026 (isActive fail-closed), DARA-027 (sol-delete removeStored),
   DARA-028 (CSV escaping), DARA-030 (export/re-run audit), DARA-034 (cron fail-closed), **DARA-025 (BOLA sweep,
-  2026-07-07)**.
+  2026-07-07)**, **DARA-046 (password reset, 2026-07-07)**.
 - **In progress:** DARA-031 (MFA/2FA — opt-in shipped; **tenant-wide enforcement** is the remaining step).
-- **P1 open:** **DARA-046 password reset BROKEN** (recovery link fails `verifyOtp` — see §0 part 2 + §9).
-  DARA-021 **no rate limiting / WAF** (SC-5). DARA-022 **`next@14.2.35` HIGH advisories** (SSRF,
+- **P1 open:** DARA-021 **no rate limiting / WAF** (SC-5). DARA-022 **`next@14.2.35` HIGH advisories** (SSRF,
   middleware bypass) → 14→15 migration. DARA-023 **CI gates don't block deploys** (branch protection + CI-gated deploy).
 - **P2 open:** DARA-029 crypto key-rotation. DARA-032 decompression-bomb guard. DARA-033 CSP nonce.
 - **P3 open:** DARA-035 CI RLS-drift + isolation test · DARA-036 SHA-pin Actions · DARA-037 scan SBOM ·
   DARA-038 kill latent `dangerouslySetInnerHTML` · DARA-039 generic client errors · DARA-040 password policy ·
   DARA-041 audit retention · DARA-042 persona-injection residual · DARA-043 tenant right-to-delete ·
   DARA-044 company doc retention/archive limits · **DARA-045 (Moderate) invite email — see §8**.
-- **Suggested next:** **DARA-046 (password reset — broken, small fix, see §9)** on code; then DARA-021
-  (rate limiting/WAF), DARA-029 (key rotation). **Operator:** DARA-023 (branch protection), DARA-022
-  (Next 15), DARA-031/040 (enforce MFA / password policy). _(DARA-025 BOLA fixed 2026-07-07; DARA-045 invites
-  work end-to-end — see §2.0/§8.)_
+- **Suggested next:** DARA-021 (rate limiting/WAF), DARA-029 (key rotation) on code. **Operator:** DARA-023
+  (branch protection), DARA-022 (Next 15), DARA-031/040 (enforce MFA / password policy). _(DARA-025 BOLA +
+  DARA-046 password reset both fixed 2026-07-07; DARA-045 invites work end-to-end — see §2.0/§8.)_
 
 ---
 
@@ -342,13 +340,21 @@ route redirects to `/signin?error=auth_link_invalid`. Opening from Outlook SafeL
 removes the verifier entirely. **Net: nobody can reset their password.** (This is the same PKCE-vs-token_hash
 class that bit invites — DARA-045 — but the recovery path was never switched to a non-PKCE token.)
 
-**Fix options (pick one — same infra as DARA-045):**
-1. **Preferred, cross-device:** mint the link server-side with `admin.generateLink({ type: 'recovery', email })`
-   (service role → non-PKCE `hashed_token`), build `/auth/confirm?token_hash=<hashed_token>&type=recovery&next=…`,
-   and send it via our own branded email (Resend). Works from any device/scanner. Needs `RESEND_API_KEY` +
-   verified `crucibleinsight.com` domain.
-2. **Minimal, keeps built-in email:** trigger `resetPasswordForEmail` from a Supabase client configured
-   `flowType: 'implicit'` so `{{ .TokenHash }}` is a plain OTP hash that `/auth/confirm`'s `verifyOtp` accepts
-   (no verifier needed). Verify the app's other flows still get PKCE where they need it.
+**FIXED 2026-07-07 (option 2).** `requestPasswordUpdate` (`utils/auth-helpers/server.ts`) now fires
+`resetPasswordForEmail` from a **supabase-js client configured `flowType:'implicit'`** (anon key,
+`persistSession:false`, `autoRefreshToken:false`) instead of the default PKCE SSR client, so
+`{{ .TokenHash }}` is a plain OTP hash that `/auth/confirm`'s `verifyOtp` validates server-side, cross-device
+(the exact token_hash path the invite flow already uses). Also added an early-return on invalid email (it
+previously fell through and sent anyway). No new env/infra; still uses Supabase's built-in Resend-SMTP email.
+`/auth/confirm` itself was already correct (verifyOtp needs no verifier).
 
-Not yet fixed — filed in `SECURITY_BACKLOG.md` (DARA-046) + `security-content.ts`. Small change; offer to implement.
+⚠️ **Recovery links minted before this deploy stay dead** — they carry the old `pkce_` token; just request a
+fresh reset. **To test:** request a reset, confirm the emailed link now shows `token_hash=` **without** the
+`pkce_` prefix, and that it lands you on `/app/account/profile` signed in.
+
+_Alternative (not taken): `admin.generateLink({type:'recovery'})` + own branded email — keep in pocket if you
+later want own-domain/branded recovery mail (needs `RESEND_API_KEY` + verified domain, same infra as DARA-045)._
+
+_Related, likely SAME bug on self-registration confirm-signup: `signUp` also runs on the PKCE SSR client, so
+the confirm-signup email's `{{ .TokenHash }}` is probably `pkce_` too. Not exercised this session — check if
+email confirmation is enabled + used before relying on it._

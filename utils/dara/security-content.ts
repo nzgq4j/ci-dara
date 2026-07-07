@@ -701,13 +701,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-046',
     title: 'Password reset is broken — recovery link fails to verify',
     severity: 'High',
-    status: 'Open',
+    status: 'Remediated',
     component: 'utils/auth-helpers/server.ts (requestPasswordUpdate) · app/auth/confirm/route.ts · supabase/templates/recovery.html',
-    evidence: 'Password reset is triggered by supabase.auth.resetPasswordForEmail from the PKCE SSR client, so the built-in recovery email’s {{ .TokenHash }} renders as a PKCE code (token_hash=pkce_…). The recovery template links to /auth/confirm?token_hash=pkce_…&type=recovery, and /auth/confirm calls verifyOtp({type, token_hash}) — but a pkce_ token is not a verifiable OTP hash; it is a code that needs exchangeCodeForSession plus the code-verifier cookie from the originating browser. So verifyOtp fails and the route redirects to /signin. Opening the link from an email scanner (e.g. Outlook SafeLinks) or a different device compounds it (no verifier at all). Net effect: users cannot reset their password.',
-    impact: 'Complete loss of the self-service password-reset flow: locked-out users (including OTP-invited users setting their first password) cannot regain access without operator intervention.',
-    remediation: 'Generate a NON-PKCE recovery link so the token_hash /auth/confirm flow verifies cross-device: mint it server-side with admin.generateLink({type:"recovery"}) (service role) and send our own branded email (Resend), OR trigger resetPasswordForEmail via a client configured with flowType:"implicit" so the built-in email’s {{ .TokenHash }} is a plain OTP hash. Same code-owned-email infrastructure as DARA-045 (RESEND_API_KEY + verified crucibleinsight.com domain).',
+    evidence: 'Password reset was triggered by supabase.auth.resetPasswordForEmail on the PKCE SSR client, so the built-in recovery email’s {{ .TokenHash }} rendered as a PKCE code (token_hash=pkce_…). The template links to /auth/confirm?token_hash=…&type=recovery, and /auth/confirm calls verifyOtp({type, token_hash}) — but a pkce_ token is not a verifiable OTP hash; it needs exchangeCodeForSession plus the code-verifier cookie from the originating browser (absent when opened from an email scanner like Outlook SafeLinks or another device), so verifyOtp failed and the route redirected to /signin. Nobody could reset their password.',
+    impact: 'Resolved. requestPasswordUpdate now fires the recovery email from an implicit-flow supabase-js client, so {{ .TokenHash }} is a plain OTP hash that /auth/confirm verifies server-side, cross-device — the same token_hash path the invite flow already uses successfully.',
+    remediation: 'Completed (this session): trigger resetPasswordForEmail from a supabase-js client configured flowType:"implicit" (anon key, no session persistence) instead of the default PKCE SSR client. No new env/infra; still uses Supabase’s built-in (Resend-SMTP) email. Note: recovery links generated before this fix remain dead — request a fresh reset.',
     mapping: 'NIST IA-5 (authenticator management) · availability',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   }
 ];
 
