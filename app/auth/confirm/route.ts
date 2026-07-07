@@ -2,6 +2,7 @@ import { type EmailOtpType } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { finalizeSignIn, safeRelativePath } from '@/utils/dara/auth-finalize';
+import { PW_RESET_COOKIE, PW_RESET_MAX_AGE } from '@/utils/dara/pw-reset';
 
 // Token-hash landing for email links (invite / signup confirmation / email change / password
 // recovery). verifyOtp works for admin-generated + implicit-flow links (no browser-side code
@@ -137,6 +138,23 @@ export async function POST(request: Request) {
     const supabase = createClient();
     const { error } = await supabase.auth.verifyOtp({ type, token_hash });
     if (!error) {
+      // DARA-046: a password RECOVERY must force the user to set a new password before
+      // they can use the app. verifyOtp necessarily establishes a session (that session
+      // is what authorizes updateUser({password})), so instead of dropping them into the
+      // app we set a marker cookie — the middleware routes every /app request to the
+      // set-password screen until updatePassword() clears it — and send them straight to
+      // that screen, ignoring the email's `next`.
+      if (type === 'recovery') {
+        const res = NextResponse.redirect(`${origin}/signin/update_password`, { status: 303 });
+        res.cookies.set(PW_RESET_COOKIE, '1', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          path: '/',
+          maxAge: PW_RESET_MAX_AGE
+        });
+        return res;
+      }
       const dest = await finalizeSignIn(supabase, origin, next);
       // 303 so the browser issues a GET to the destination after this POST.
       return NextResponse.redirect(dest, { status: 303 });

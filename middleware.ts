@@ -3,6 +3,7 @@ import { updateSession } from '@/utils/supabase/middleware';
 import { createClient } from '@/utils/supabase/server';
 import { isPlatformAdmin } from '@/utils/dara/admin';
 import { MFA_COOKIE, isValidMfaMarker } from '@/utils/dara/mfa-cookie';
+import { PW_RESET_COOKIE } from '@/utils/dara/pw-reset';
 
 export async function middleware(request: NextRequest) {
   // Forward a stray OAuth/magic-link `code` that landed on the root (Supabase's
@@ -18,6 +19,18 @@ export async function middleware(request: NextRequest) {
   }
 
   const response = await updateSession(request);
+
+  // DARA-046: a pending password reset must be completed before any /app (CUI) access.
+  // The recovery link sets this marker at /auth/confirm and updatePassword() clears it;
+  // until then, route every /app request to the set-password screen so the forced reset
+  // can't be skipped by navigating straight into the app. The set-password screen lives at
+  // /signin/update_password (outside /app), so there is no redirect loop.
+  if (
+    request.nextUrl.pathname.startsWith('/app') &&
+    request.cookies.get(PW_RESET_COOKIE)?.value
+  ) {
+    return NextResponse.redirect(new URL('/signin/update_password', request.url));
+  }
 
   if (request.nextUrl.pathname.startsWith('/app')) {
     const supabase = createClient();

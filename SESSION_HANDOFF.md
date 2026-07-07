@@ -365,6 +365,16 @@ verifyOtp → finalizeSignIn (303)**. Scanners don't submit the form, so they ca
 clicks "Continue" to verify. Verified locally (GET/HEAD → 200 interstitial, no Supabase call; POST → verify →
 redirect). This hardening covers ALL token_hash email links (invite/signup/recovery/email-change).
 
+**Forced password reset before app access (2026-07-07).** A recovery verify now sets a short-lived httpOnly
+marker cookie (`dara-pw-reset`, `utils/dara/pw-reset.ts`) and lands the user on **`/signin/update_password`**
+instead of the app (ignoring the email's `next`). The **middleware routes every `/app` request back to that
+screen until `updatePassword()` clears the marker**, so the reset can't be skipped by navigating in.
+`verifyOtp` necessarily creates a session (it's what authorizes `updateUser({password})`), so this
+marker-gate — not "no session" — is how the reset is forced. Verified locally: `/app` + marker → 307 →
+`/signin/update_password`; without marker → normal `/signin`. _Cosmetic follow-up: the `UpdatePassword`
+component inputs still use the old `bg-zinc-800` dark styling — off-brand on the light signin panel; restyle
+to navy/gold when convenient._
+
 **Confirm-signup FIXED too (same PKCE root cause, 2026-07-07):** email confirmation IS enabled;
 `confirmation.html` links to `/auth/confirm?token_hash=…&type=signup`, and `signUp` ran on the PKCE SSR
 client → `pkce_` token → same failure. Both `resetPasswordForEmail` and `signUp` now use a shared

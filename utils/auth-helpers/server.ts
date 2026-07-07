@@ -15,6 +15,7 @@ import {
   resolvePlatformAdmin,
   recordPlatformAdminLogin
 } from '@/utils/dara/platform';
+import { PW_RESET_COOKIE } from '@/utils/dara/pw-reset';
 
 // DARA-046: an IMPLICIT-flow auth client for the email flows whose branded templates use the
 // token_hash `/auth/confirm` link (password recovery, sign-up confirmation). The app's default
@@ -321,9 +322,10 @@ export async function updatePassword(formData: FormData) {
   const passwordConfirm = String(formData.get('passwordConfirm')).trim();
   let redirectPath: string;
 
-  // Check that the password and confirmation match
+  // Check that the password and confirmation match. Return early — otherwise we'd fall
+  // through and update the password anyway, overwriting this message.
   if (password !== passwordConfirm) {
-    redirectPath = getErrorRedirect(
+    return getErrorRedirect(
       '/signin/update_password',
       'Your password could not be updated.',
       'Passwords do not match.'
@@ -342,6 +344,9 @@ export async function updatePassword(formData: FormData) {
       error.message
     );
   } else if (data.user) {
+    // DARA-046: the new password is set — clear the forced-reset marker so the middleware
+    // stops gating /app, then let the user into the app.
+    cookies().set(PW_RESET_COOKIE, '', { path: '/', maxAge: 0 });
     redirectPath = getStatusRedirect(
       '/',
       'Success!',
