@@ -84,7 +84,6 @@ export default function OnboardingWizard({
   ]);
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [tosSigned, setTosSigned] = useState(false);
-  const [tosName, setTosName] = useState('');
 
   const firstName = (name || prefillName).split(' ')[0] || 'there';
   const initials = (name || email || '?').slice(0, 2).toUpperCase();
@@ -461,13 +460,8 @@ export default function OnboardingWizard({
                 subtitle="Review, download, and sign our Terms of Service and policies to continue."
               />
               <OnboardingAgreement
-                prefillName={name}
                 signed={tosSigned}
-                signedName={tosName}
-                onSigned={(n) => {
-                  setTosSigned(true);
-                  setTosName(n);
-                }}
+                onSigned={() => setTosSigned(true)}
               />
               <div className="mt-7 flex items-center justify-between">
                 <button

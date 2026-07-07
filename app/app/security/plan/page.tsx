@@ -45,7 +45,7 @@ export default async function SecurityPlanPage() {
   return (
     <div className="mx-auto max-w-5xl fade">
       <Link
-        href="/app/security"
+        href="/security"
         className="mb-4 inline-flex items-center gap-2 text-[13px] text-t4 transition-colors hover:text-t1"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -249,7 +249,7 @@ export default async function SecurityPlanPage() {
             {poam.length} open or in-progress item{poam.length === 1 ? '' : 's'} tracked.
             Detailed remediation plans are restricted to platform administrators; see
             the{' '}
-            <Link href="/app/security" className="text-navy underline">
+            <Link href="/security" className="text-navy underline">
               Security page
             </Link>
             .

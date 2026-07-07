@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import {
   getAuthTypes,
   getViewTypes,
@@ -97,6 +98,15 @@ export default async function SignIn({
 
         <div className="relative z-10 mt-10 text-[11px] text-white/50">
           © 2026 The Daniel Group LLC · All rights reserved
+          <div className="mt-1.5 flex items-center gap-3">
+            <Link href="/security" className="hover:text-white/80 hover:underline">
+              Security
+            </Link>
+            <span className="text-white/30">·</span>
+            <Link href="/legal" className="hover:text-white/80 hover:underline">
+              Terms &amp; Privacy
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -157,6 +167,18 @@ export default async function SignIn({
           {viewProp === 'signup' && (
             <SignUp allowEmail={allowEmail} redirectMethod={redirectMethod} />
           )}
+
+          {/* Desktop already shows these in the brand panel footer; this is the mobile
+              equivalent, since the brand panel is hidden below the md breakpoint. */}
+          <div className="mt-8 flex items-center justify-center gap-3 text-[11px] text-t5 md:hidden">
+            <Link href="/security" className="hover:text-t3 hover:underline">
+              Security
+            </Link>
+            <span className="text-t5/50">·</span>
+            <Link href="/legal" className="hover:text-t3 hover:underline">
+              Terms &amp; Privacy
+            </Link>
+          </div>
         </div>
       </div>
     </div>

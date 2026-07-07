@@ -26,7 +26,7 @@ export default function CuiBoundaryNotice({
         {isByok
           ? 'You are using your own API key (BYOK) — your provider account’s data-handling and retention terms apply. Ensure zero data retention is configured for CUI.'
           : 'The DARA platform key processes data under DARA’s commercial account. For CUI, use BYOK with a zero-retention agreement, or confirm a zero-retention agreement covers the platform keys.'}{' '}
-        <Link href="/app/security" className="underline hover:text-[#b45309]">
+        <Link href="/security" className="underline hover:text-[#b45309]">
           Details
         </Link>
         .

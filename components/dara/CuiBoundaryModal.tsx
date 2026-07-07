@@ -89,7 +89,7 @@ export default function CuiBoundaryModal({ provider, mode }: { provider: string;
 
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
               <Link
-                href="/app/security"
+                href="/security"
                 className="text-[12px] font-medium text-navy underline-offset-2 hover:underline"
               >
                 Details &amp; data-boundary policy →

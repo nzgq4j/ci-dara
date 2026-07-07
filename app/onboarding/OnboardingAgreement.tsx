@@ -1,53 +1,43 @@
 'use client';
 
 import { useState } from 'react';
-import { Download, Check, AlertTriangle, Loader2, PenLine } from 'lucide-react';
+import { Download, Check, AlertTriangle, Loader2 } from 'lucide-react';
 import { LEGAL_DOCS, LEGAL_VERSION, LEGAL_EFFECTIVE } from '@/utils/dara/legal-content';
 import LegalDocument from '@/components/dara/LegalDocument';
 import { acceptLegal } from './actions';
-import {
-  btnPrimary,
-  fieldClasses,
-  monoLabel,
-  checkboxClasses
-} from '@/components/dara/theme';
+import { checkboxClasses } from '@/components/dara/theme';
 
-// Onboarding Agreement step: view + download the legal docs, then digitally sign (typed
-// name + affirmative checkbox). Records acceptance via acceptLegal(); on success calls
-// onSigned so the wizard can enable "Continue". Signing is required to finish onboarding.
+// Onboarding Agreement step: view + download the legal docs, then accept via a single
+// checkbox. Checking it immediately records acceptance (acceptLegal()), so the recorded
+// date is the moment the box was checked. On success calls onSigned so the wizard can
+// enable "Continue" — signing is required to finish onboarding.
 export default function OnboardingAgreement({
-  prefillName,
   signed,
-  signedName,
   onSigned
 }: {
-  prefillName: string;
   signed: boolean;
-  signedName: string;
-  onSigned: (name: string) => void;
+  onSigned: () => void;
 }) {
-  const [name, setName] = useState(signedName || prefillName || '');
-  const [agree, setAgree] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [activeDoc, setActiveDoc] = useState(LEGAL_DOCS[0].id);
 
   const doc = LEGAL_DOCS.find((d) => d.id === activeDoc) ?? LEGAL_DOCS[0];
 
-  async function sign() {
+  async function onAgree(isChecked: boolean) {
     setError('');
-    if (!agree) {
-      setError('Please check the box to confirm you agree.');
-      return;
-    }
+    setChecked(isChecked);
+    if (!isChecked) return;
     setBusy(true);
-    const res = await acceptLegal(name);
+    const res = await acceptLegal();
     setBusy(false);
     if (!res.ok) {
+      setChecked(false);
       setError(res.error || 'Could not record your acceptance.');
       return;
     }
-    onSigned(name.trim());
+    onSigned();
   }
 
   if (signed) {
@@ -55,18 +45,11 @@ export default function OnboardingAgreement({
       <div className="rounded-[10px] border border-[#166534]/30 bg-[#DCFCE7]/40 p-4">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-[#166534]">
           <Check className="h-4 w-4" />
-          Agreement signed
+          Agreement accepted
         </div>
         <p className="mt-1 text-[12px] leading-relaxed text-t4">
-          You accepted the Terms of Service &amp; Supplemental Policy Addendum (v{LEGAL_VERSION})
-          {signedName ? (
-            <>
-              {' '}
-              as <span className="font-medium text-t3">{signedName}</span>
-            </>
-          ) : null}
-          . You can review these anytime under <span className="font-medium text-t3">Legal</span> in
-          the sidebar.
+          You accepted the Terms of Service &amp; Supplemental Policy Addendum (v{LEGAL_VERSION}).
+          You can review these anytime under <span className="font-medium text-t3">Settings → Legal</span>.
         </p>
       </div>
     );
@@ -111,28 +94,14 @@ export default function OnboardingAgreement({
         <LegalDocument body={doc.body} />
       </div>
 
-      {/* Signature */}
+      {/* Acceptance */}
       <div className="mt-4 rounded-[10px] border border-line bg-surf p-4">
-        <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-t2">
-          <PenLine className="h-4 w-4 text-navy" />
-          Sign to accept
-        </div>
-        <label className={monoLabel} htmlFor="sig-name">
-          Full legal name (your signature)
-        </label>
-        <input
-          id="sig-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className={`${fieldClasses} mt-1`}
-          placeholder="Jane Q. Contractor"
-          autoComplete="name"
-        />
-        <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-t3">
+        <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-t3">
           <input
             type="checkbox"
-            checked={agree}
-            onChange={(e) => setAgree(e.target.checked)}
+            checked={checked}
+            disabled={busy}
+            onChange={(e) => onAgree(e.target.checked)}
             className={`${checkboxClasses} mt-0.5`}
           />
           <span>
@@ -140,6 +109,7 @@ export default function OnboardingAgreement({
             (v{LEGAL_VERSION}), and I am authorized to accept them on behalf of my
             organization.
           </span>
+          {busy && <Loader2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 animate-spin text-t4" />}
         </label>
 
         {error && (
@@ -148,16 +118,6 @@ export default function OnboardingAgreement({
             <span>{error}</span>
           </div>
         )}
-
-        <button
-          type="button"
-          onClick={sign}
-          disabled={busy || !agree || name.trim().length < 2}
-          className={`${btnPrimary} mt-4`}
-        >
-          {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-          Agree &amp; sign
-        </button>
       </div>
     </div>
   );

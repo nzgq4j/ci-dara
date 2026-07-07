@@ -1,9 +1,9 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-07_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`)
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`) — **today's work (below) is in the working tree, NOT yet committed or deployed.**
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
@@ -13,6 +13,42 @@ _Last updated: 2026-07-06_
 > **Two operator dashboard steps pending:** enable Supabase Manual Linking + paste the 12 email templates.
 
 ---
+
+## -1. Latest session (2026-07-07) — Settings consolidation + public Security/Legal pages + checkbox-only agreement
+
+Code-only, **no migrations** (avatar/legal columns were already nullable). Not yet committed or deployed.
+
+- **`/app/settings` is now a tabbed hub** (Profile, Two-Factor, Legal always; Billing + AI
+  Configuration admin-only), reusing the existing panel components/actions unchanged —
+  `ProfilePanel`/`PasswordPanel`/`SignInMethodsPanel`, `TwoFactorPanel`, `LegalCenter`,
+  and a new `app/app/billing/{actions,BillingView}.tsx` split out of the old billing page.
+  `?tab=` selects the initial tab. The old routes (`/app/account/profile`,
+  `/app/account/security`, `/app/billing`, `/app/account/legal`) are now one-line redirects
+  to the matching tab — kept alive because the password-reset email template
+  (`supabase/templates/recovery.html`) hardcodes `/app/account/profile`, and the dashboard
+  trial banner links to `/app/billing`. Sidebar Account section collapsed to just
+  **Settings** (+ **Admin**).
+- **Security & Compliance moved to a public page — `/security`** (no sign-in required;
+  admin-only findings detail gate unchanged, now tolerant of an anonymous viewer). Old
+  `/app/security` redirects there; `CuiBoundaryNotice`/`CuiBoundaryModal` links updated.
+  The System Security Plan (`/app/security/plan`, POA&M) stays in-app/authenticated.
+- **New public `/legal` page** — Terms of Service + Privacy Policy tabs (plain-language
+  marketing copy, distinct from the binding v1.0 Legal Document Set signed at onboarding
+  and reviewable under Settings → Legal). Old `/security/tos` and `/security/privacy-policy`
+  redirect to `/legal?tab=tos`/`?tab=privacy`. Best-effort print-block via `@media print`
+  (a browser can never be fully stopped from printing/screenshotting).
+- **Onboarding agreement simplified** — dropped the "type your full legal name" signature
+  field entirely (`OnboardingAgreement.tsx`); checking the single checkbox immediately
+  calls `acceptLegal()` (no name arg), so `tosAcceptedAt` is stamped at the exact moment
+  the box is checked. `acceptLegal()` (`app/onboarding/actions.ts`) no longer takes/writes
+  a signed name (`tosSignedName` column stays in the schema, just unused going forward).
+  Same simplification applied to the Settings → Legal re-acceptance flow (`LegalCenter.tsx`).
+  The wizard's Continue button already blocked on `!tosSigned` — unchanged.
+- **Sign-in page footer** — added `Security` / `Terms & Privacy` links (desktop brand panel
+  + a mobile-only equivalent under the form, since the brand panel is `hidden md:flex`).
+- Verified via `tsc --noEmit` + `pnpm build` (both clean) and a `next start` smoke pass:
+  `/security` and `/legal` return 200 with expected content/print-CSS markers; all old
+  routes 307-redirect to their new targets; `/app/settings` still correctly requires auth.
 
 ## 0. Latest session (2026-07-06, night) — invites verified + account self-service + avatars + dept editor + email templates
 

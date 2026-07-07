@@ -6,38 +6,24 @@ import {
   Check,
   AlertTriangle,
   Loader2,
-  PenLine,
   ShieldCheck
 } from 'lucide-react';
 import { LEGAL_DOCS, LEGAL_VERSION, LEGAL_EFFECTIVE } from '@/utils/dara/legal-content';
 import LegalDocument from '@/components/dara/LegalDocument';
 import { acceptLegal } from '@/app/onboarding/actions';
-import {
-  card,
-  btnPrimary,
-  fieldClasses,
-  monoLabel,
-  checkboxClasses,
-  sectionTitle
-} from '@/components/dara/theme';
+import { card, checkboxClasses, sectionTitle } from '@/components/dara/theme';
 
 export default function LegalCenter({
   acceptedVersion,
-  acceptedAt,
-  signedName,
-  prefillName
+  acceptedAt
 }: {
   acceptedVersion: string | null;
   acceptedAt: string | null;
-  signedName: string | null;
-  prefillName: string;
 }) {
   const [ver, setVer] = useState(acceptedVersion);
   const [at, setAt] = useState(acceptedAt);
-  const [sigName, setSigName] = useState(signedName);
 
   const [activeDoc, setActiveDoc] = useState(LEGAL_DOCS[0].id);
-  const [name, setName] = useState(signedName || prefillName || '');
   const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -45,16 +31,15 @@ export default function LegalCenter({
   const doc = LEGAL_DOCS.find((d) => d.id === activeDoc) ?? LEGAL_DOCS[0];
   const upToDate = ver === LEGAL_VERSION;
 
-  async function sign() {
+  async function onAgree(checked: boolean) {
     setError('');
-    if (!agree) {
-      setError('Please check the box to confirm you agree.');
-      return;
-    }
+    setAgree(checked);
+    if (!checked) return;
     setBusy(true);
-    const res = await acceptLegal(name);
+    const res = await acceptLegal();
     setBusy(false);
     if (!res.ok) {
+      setAgree(false);
       setError(res.error || 'Could not record your acceptance.');
       return;
     }
@@ -62,8 +47,6 @@ export default function LegalCenter({
     setAt(
       new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
     );
-    setSigName(name.trim());
-    setAgree(false);
   }
 
   return (
@@ -78,12 +61,6 @@ export default function LegalCenter({
             </h2>
             <p className="text-[13px] leading-relaxed text-t4">
               You accepted v{ver} of the Terms of Service &amp; Supplemental Policy Addendum
-              {sigName ? (
-                <>
-                  {' '}
-                  as <span className="font-medium text-t2">{sigName}</span>
-                </>
-              ) : null}
               {at ? <> on {at}</> : null}.
             </p>
           </>
@@ -137,25 +114,15 @@ export default function LegalCenter({
       {!upToDate && (
         <section className={`${card} p-5`}>
           <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-t2">
-            <PenLine className="h-4 w-4 text-navy" />
-            Sign to accept v{LEGAL_VERSION}
+            <Check className="h-4 w-4 text-navy" />
+            Accept v{LEGAL_VERSION}
           </div>
-          <label className={monoLabel} htmlFor="legal-sig">
-            Full legal name (your signature)
-          </label>
-          <input
-            id="legal-sig"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={`${fieldClasses} mt-1`}
-            placeholder="Jane Q. Contractor"
-            autoComplete="name"
-          />
-          <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-t3">
+          <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-t3">
             <input
               type="checkbox"
               checked={agree}
-              onChange={(e) => setAgree(e.target.checked)}
+              disabled={busy}
+              onChange={(e) => onAgree(e.target.checked)}
               className={`${checkboxClasses} mt-0.5`}
             />
             <span>
@@ -163,6 +130,7 @@ export default function LegalCenter({
               (v{LEGAL_VERSION}), and I am authorized to accept them on behalf of my
               organization.
             </span>
+            {busy && <Loader2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 animate-spin text-t4" />}
           </label>
 
           {error && (
@@ -171,17 +139,6 @@ export default function LegalCenter({
               <span>{error}</span>
             </div>
           )}
-
-          <button
-            type="button"
-            onClick={sign}
-            disabled={busy || !agree || name.trim().length < 2}
-            className={`${btnPrimary} mt-4`}
-          >
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            <Check className="h-4 w-4" />
-            Agree &amp; sign
-          </button>
         </section>
       )}
     </div>

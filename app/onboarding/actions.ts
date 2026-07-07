@@ -74,26 +74,24 @@ export async function saveAiMode(
   return { ok: true };
 }
 
-// Record the user's acceptance ("digital signature") of the current Terms of Service +
-// Supplemental Policy Addendum. Stores current-state on the user and writes an immutable
-// signing event to the audit log (version, typed name, IP, user-agent). Used by both the
-// onboarding Agreement step and the account Legal page.
-export async function acceptLegal(
-  signedName: string
-): Promise<{ ok: boolean; error?: string; version?: string; acceptedAt?: string }> {
+// Record the user's acceptance of the current Terms of Service + Supplemental Policy
+// Addendum, stamped at the moment the agreement checkbox is checked. Stores current-state
+// on the user and writes an immutable acceptance event to the audit log (version, IP,
+// user-agent). Used by both the onboarding Agreement step and the Settings Legal tab.
+export async function acceptLegal(): Promise<{
+  ok: boolean;
+  error?: string;
+  version?: string;
+  acceptedAt?: string;
+}> {
   const daraUser = await requireOnboarder();
-  const name = signedName.trim().slice(0, 255);
-  if (name.length < 2) {
-    return { ok: false, error: 'Type your full legal name to sign.' };
-  }
   const now = new Date();
   await withTenant(daraUser.companyId, (tx) =>
     tx.daraUser.update({
       where: { id: daraUser.id },
       data: {
         tosAcceptedVersion: LEGAL_VERSION,
-        tosAcceptedAt: now,
-        tosSignedName: name
+        tosAcceptedAt: now
       }
     })
   );
@@ -106,8 +104,8 @@ export async function acceptLegal(
     actorEmail: daraUser.email,
     entityType: 'user',
     entityId: daraUser.id,
-    // The signing record: which version, the typed signature, and request provenance.
-    metadata: { version: LEGAL_VERSION, signedName: name, ip, userAgent: h.get('user-agent') || null }
+    // The acceptance record: which version, and request provenance.
+    metadata: { version: LEGAL_VERSION, ip, userAgent: h.get('user-agent') || null }
   });
   return { ok: true, version: LEGAL_VERSION, acceptedAt: now.toISOString() };
 }

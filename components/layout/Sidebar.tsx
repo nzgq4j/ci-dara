@@ -10,11 +10,6 @@ import {
   Building2,
   Settings,
   ShieldCheck,
-  ShieldAlert,
-  KeyRound,
-  ScrollText,
-  CreditCard,
-  UserRound,
   LogOut,
   type LucideIcon
 } from 'lucide-react';
@@ -85,15 +80,10 @@ export default function Sidebar({
     {
       label: 'Account',
       items: [
-        { href: '/app/account/profile', label: 'Profile', icon: UserRound },
-        { href: '/app/billing', label: 'Billing', icon: CreditCard },
         { href: '/app/settings', label: 'Settings', icon: Settings },
-        { href: '/app/account/security', label: 'Two-Factor', icon: KeyRound },
-        { href: '/app/account/legal', label: 'Legal', icon: ScrollText },
         ...(isAdmin
           ? [{ href: '/app/admin', label: 'Admin', icon: ShieldCheck }]
-          : []),
-        { href: '/app/security', label: 'Security', icon: ShieldAlert }
+          : [])
       ]
     }
   ].filter((section) => section.items.length > 0);

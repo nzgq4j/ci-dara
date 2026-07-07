@@ -1,18 +1,48 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-06 (night) · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`) · branch `main` · for: next session_
+_Prepared: 2026-07-07 · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`) · branch `main` · for: next session_
 
-Start-here doc. Everything below is **live on production** (`dara.crucibleinsight.com`) unless flagged
-otherwise. Last deployed code commit is `6eeb625`. **Invites now WORK** — the dead-link bug was config, fixed
-this session (Option A, see §2.0). **Top priority next: the security backlog** (`SECURITY_BACKLOG.md`, §5) —
-DARA-025 BOLA (code) + DARA-022/023 (operator). Agent memory (load first): `account-self-service.md`,
-`security-reaudit-2026-07.md`, `mfa-totp.md`, `legal-tos.md`, `personas-review-lens.md`,
-`billing-and-backlog.md`. Deep decision log: `BUILD_STATUS.md`.
+Start-here doc. **Everything in §0 below (2026-07-07) is in the working tree — committed? not yet; deployed?
+not yet.** Everything from §0b onward is **live on production** (`dara.crucibleinsight.com`). Last DEPLOYED
+code commit is still `6eeb625`. Deep decision log: `BUILD_STATUS.md` (see its `-1` section for today).
 
-> ⚠️ **Two operator steps pending in the Supabase dashboard** (from this session): (a) **enable Manual
-> Linking** so account "Connect Google" works (until then that button shows a friendly "not enabled yet"
-> message); (b) **paste the 12 branded email templates** (`supabase/templates/` → dashboard; `README.md` maps
-> each file to its slot).
+> ⚠️ **Before this session's changes go live:** they touch routing only (Settings consolidation, new public
+> `/security` + `/legal` pages, onboarding agreement simplification, sign-in footer links) — no migrations, so
+> the usual "migrate before deploy" step does not apply this time. Do run `git status`/review the diff, commit,
+> then the normal `git push` → `vercel deploy --prod --yes` (see §1).
+
+> ⚠️ **Two operator steps pending in the Supabase dashboard** (from the 2026-07-06 night session, both now
+> done per the user): (a) enable Manual Linking; (b) paste the 12 branded email templates. Confirmed complete.
+
+---
+
+## 0. Latest session (2026-07-07) — Settings consolidation, public Security/Legal pages, checkbox-only agreement
+
+Not yet committed or deployed. No migrations (avatar/legal columns already nullable). Full detail in
+`BUILD_STATUS.md` §-1; summary:
+
+1. **`/app/settings`** is now a tabbed hub — Profile, Two-Factor, Legal (everyone); Billing, AI Configuration
+   (company_admin only). `?tab=` selects the initial tab. Old routes (`/app/account/profile`,
+   `/app/account/security`, `/app/billing`, `/app/account/legal`) redirect to the matching tab — kept alive
+   deliberately since `supabase/templates/recovery.html` hardcodes `/app/account/profile` and the dashboard
+   trial banner links `/app/billing`. New files: `app/app/billing/{actions,BillingView}.tsx` (split out of the
+   old billing page so it composes as a tab). Sidebar Account section is now just **Settings** (+ **Admin**).
+2. **`/security`** — Security & Compliance is now a public page (no sign-in). Old `/app/security` redirects
+   there; `CuiBoundaryNotice`/`CuiBoundaryModal` links updated. `/app/security/plan` (SSP/POA&M) is unchanged,
+   still in-app/authenticated.
+3. **`/legal`** — new public page, Terms of Service + Privacy Policy tabs (plain-language copy, distinct from
+   the binding Legal Document Set signed at onboarding/reviewed under Settings → Legal). Old `/security/tos`
+   and `/security/privacy-policy` redirect here. Best-effort print-block (`@media print`) — not a hard
+   guarantee, browsers can't be fully stopped from printing/screenshotting.
+4. **Onboarding agreement** — removed the "type your full legal name" field. Checking the single agreement
+   checkbox immediately calls `acceptLegal()` (no name), so the recorded `tosAcceptedAt` is the exact moment
+   the box was checked. `acceptLegal()` no longer accepts/writes a signed name (`tosSignedName` column stays,
+   just unused). Same simplification in the Settings → Legal re-acceptance flow.
+5. **Sign-in page** — added Security / Terms & Privacy footer links (desktop brand panel + mobile-only
+   equivalent).
+6. Verified: `tsc --noEmit` + `pnpm build` clean; `next start` smoke pass confirmed `/security` and `/legal`
+   return 200 with expected content, all four+three old routes 307-redirect correctly, and `/app/settings`
+   still requires auth.
 
 ---
 
