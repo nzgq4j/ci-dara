@@ -356,7 +356,16 @@ fresh reset. **To test:** request a reset, confirm the emailed link now shows `t
 _Alternative (not taken): `admin.generateLink({type:'recovery'})` + own branded email — keep in pocket if you
 later want own-domain/branded recovery mail (needs `RESEND_API_KEY` + verified domain, same infra as DARA-045)._
 
-**Confirm-signup FIXED too (same root cause, 2026-07-07):** email confirmation IS enabled;
+**Second root cause found + fixed (2026-07-07) — email-scanner prefetch burned the token.** After the
+implicit-token fix, prod logs still showed reset failing: a `HEAD /auth/confirm` (Outlook Safe Links /
+Defender scanner) hit the link seconds before the user's `GET` and `verifyOtp` succeeded on that automated
+request — consuming the single-use token — so the user's click got "Email link is invalid or has expired".
+**Fix:** `app/auth/confirm/route.ts` is now **GET/HEAD = render a branded interstitial (NO verify); POST =
+verifyOtp → finalizeSignIn (303)**. Scanners don't submit the form, so they can't burn the token; the user
+clicks "Continue" to verify. Verified locally (GET/HEAD → 200 interstitial, no Supabase call; POST → verify →
+redirect). This hardening covers ALL token_hash email links (invite/signup/recovery/email-change).
+
+**Confirm-signup FIXED too (same PKCE root cause, 2026-07-07):** email confirmation IS enabled;
 `confirmation.html` links to `/auth/confirm?token_hash=…&type=signup`, and `signUp` ran on the PKCE SSR
 client → `pkce_` token → same failure. Both `resetPasswordForEmail` and `signUp` now use a shared
 **`newImplicitAuthClient()`** helper (implicit flow, anon key, no session persistence — correct because
