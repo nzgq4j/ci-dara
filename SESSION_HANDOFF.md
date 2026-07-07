@@ -236,6 +236,22 @@ migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_us
 4. Nice-to-haves: rename/edit metadata from the solicitations LIST; richer built-in persona templates.
 5. ~~**New Solicitation — review-mode path selection up front**~~ — **SHIPPED 2026-07-06** (`6b12d74`), see §2.10.
    First screen is now two explanatory cards (Direct AI vs Color Team); Color Team hides the response-doc upload.
+6. **Administrative/format requirements are over-escalated to technical findings (review classification).**
+   _Reported 2026-07-07 (user)._ The AI review flags pass/fail **administrative format** requirements as deep
+   **technical assessment** findings that demand a written declaration/rationale. Example: Amendment 0001 added
+   "12-point Times New Roman for all volumes"; the review surfaced it as a technical finding asking the offeror
+   to *declare* compliance. **Desired behavior:** keep DETECTING these requirements (don't stop scanning), but
+   route them to the **compliance matrix as pass/fail**, not the holistic technical review. For each such
+   admin/format item: (a) **auto-verify from extracted text where possible** (e.g. page/section presence, word
+   counts) → set compliant/non-compliant; (b) where automated verification is **not possible from extracted
+   text** (font, point size, margins, line spacing — not recoverable from our text extraction) → mark it
+   **"manual verification required"** with a concrete offeror action + citation (e.g. "Confirm all body text is
+   12-pt Times New Roman in each volume before converting to PDF — Amendment 0001, Addendum to 52.212-1"),
+   **not** a technical finding requiring a declaration. Likely touches: shred disposition classification
+   (`administrative` vs `scored`, `utils/dara/requirements.ts`), the compliance sweep
+   (`runComplianceSweep`/`evaluator.ts` → add a `manual_verification` status), and the pass prompts so format
+   requirements aren't pulled into the technical passes (`utils/dara/passes.ts`/`prompt.ts`). May need a new
+   `ComplianceStatus` enum value (`manual_verification`) + matrix UI affordance.
 
 ---
 
