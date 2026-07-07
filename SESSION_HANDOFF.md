@@ -387,9 +387,10 @@ instead of the app (ignoring the email's `next`). The **middleware routes every 
 screen until `updatePassword()` clears the marker**, so the reset can't be skipped by navigating in.
 `verifyOtp` necessarily creates a session (it's what authorizes `updateUser({password})`), so this
 marker-gate — not "no session" — is how the reset is forced. Verified locally: `/app` + marker → 307 →
-`/signin/update_password`; without marker → normal `/signin`. _Cosmetic follow-up: the `UpdatePassword`
-component inputs still use the old `bg-zinc-800` dark styling — off-brand on the light signin panel; restyle
-to navy/gold when convenient._
+`/signin/update_password`; without marker → normal `/signin`. **UpdatePassword screen restyled (2026-07-07):**
+inputs now use the branded `bg-surf2`/`border-line`/`focus:border-navy` style (matching PasswordSignIn) instead
+of the old `bg-zinc-800`, and each field has a **focus-gated reveal (eye) button** — it only toggles plain-text
+while the field is focused; on blur the value re-masks and the button goes inactive (`components/ui/AuthForms/UpdatePassword.tsx`).
 
 **Confirm-signup FIXED too (same PKCE root cause, 2026-07-07):** email confirmation IS enabled;
 `confirmation.html` links to `/auth/confirm?token_hash=…&type=signup`, and `signUp` ran on the PKCE SSR
