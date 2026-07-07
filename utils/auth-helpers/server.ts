@@ -16,6 +16,23 @@ import {
   recordPlatformAdminLogin
 } from '@/utils/dara/platform';
 
+// DARA-046: an IMPLICIT-flow auth client for the email flows whose branded templates use the
+// token_hash `/auth/confirm` link (password recovery, sign-up confirmation). The app's default
+// SSR client is PKCE, which makes the email's `{{ .TokenHash }}` a `pkce_…` code that
+// /auth/confirm's verifyOtp cannot verify — it would need exchangeCodeForSession plus the
+// code-verifier cookie from the originating browser, absent when the link is opened from an
+// email scanner (Outlook SafeLinks) or another device. The implicit flow makes `{{ .TokenHash }}`
+// a plain OTP hash that verifyOtp validates server-side, cross-device. Anon key, no session
+// persistence — these calls only trigger an email; the session is established later at
+// /auth/confirm. (Assumes "Confirm email" is ON, so sign-up returns no immediate session.)
+function newImplicitAuthClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { flowType: 'implicit', persistSession: false, autoRefreshToken: false } }
+  );
+}
+
 function isValidEmail(email: string) {
   var regex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
   return regex.test(email);
@@ -120,20 +137,9 @@ export async function requestPasswordUpdate(formData: FormData) {
     );
   }
 
-  // DARA-046: fire the recovery email from an IMPLICIT-flow client, NOT the app's
-  // default SSR client (which is PKCE). With PKCE, the recovery email's
-  // `{{ .TokenHash }}` renders as a `pkce_…` code that /auth/confirm's verifyOtp
-  // cannot verify — it would need exchangeCodeForSession plus the code-verifier
-  // cookie from the originating browser, which is absent when the link is opened
-  // from an email scanner (Outlook SafeLinks) or another device. That broke
-  // password reset for everyone. The implicit flow makes `{{ .TokenHash }}` a plain
-  // OTP hash that verifyOtp validates server-side, cross-device. Still uses the anon
-  // key + Supabase's built-in (Resend-SMTP) email pipeline; no session is persisted.
-  const supabase = createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { flowType: 'implicit', persistSession: false, autoRefreshToken: false } }
-  );
+  // DARA-046: fire the recovery email from an implicit-flow client so its token_hash
+  // link verifies cross-device (see newImplicitAuthClient).
+  const supabase = newImplicitAuthClient();
 
   const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: callbackURL
@@ -252,14 +258,21 @@ export async function signUp(formData: FormData) {
   let redirectPath: string;
 
   if (!isValidEmail(email)) {
-    redirectPath = getErrorRedirect(
+    // Return early — otherwise we'd fall through and attempt the sign-up with a
+    // malformed address, overwriting this message.
+    return getErrorRedirect(
       '/signin/signup',
       'Invalid email address.',
       'Please try again.'
     );
   }
 
-  const supabase = createClient();
+  // DARA-046: sign up via the implicit-flow client so the confirmation email's
+  // token_hash link (confirmation.html → /auth/confirm?...&type=signup) is a plain OTP
+  // hash verifyOtp can verify cross-device, not a `pkce_…` code (see newImplicitAuthClient).
+  // With "Confirm email" ON, signUp returns no session here — the session is established
+  // at /auth/confirm — so a non-cookie client is correct.
+  const supabase = newImplicitAuthClient();
   const { error, data } = await supabase.auth.signUp({
     email,
     password,

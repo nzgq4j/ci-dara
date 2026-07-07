@@ -40,8 +40,9 @@ Not yet committed or deployed. **No migrations** (code-only). Builds clean (`tsc
    client, so the recovery email's `{{ .TokenHash }}` was a `pkce_…` code `/auth/confirm`'s `verifyOtp` can't
    verify → redirect to `/signin` (broken for everyone, worse via Outlook SafeLinks / other device). **Fixed**
    by firing the reset from a `flowType:'implicit'` supabase-js client (anon key) so the token is a plain OTP
-   hash verifyOtp accepts cross-device (+ early-return on invalid email). See §9 for detail + a test recipe and
-   the likely-same confirm-signup follow-up. Register updated to Remediated.
+   hash verifyOtp accepts cross-device (+ early-return on invalid email). **Confirm-signup (`signUp`) had the
+   same PKCE bug and was fixed the same way** via a shared `newImplicitAuthClient()` helper. See §9 for detail,
+   a test recipe, and the remaining magic-link/email-change follow-ups. Register updated to Remediated.
 
 **Operator steps now DONE (user confirmed 2026-07-07):** Supabase Manual Linking enabled + all 12 email
 templates pasted.
@@ -355,6 +356,13 @@ fresh reset. **To test:** request a reset, confirm the emailed link now shows `t
 _Alternative (not taken): `admin.generateLink({type:'recovery'})` + own branded email — keep in pocket if you
 later want own-domain/branded recovery mail (needs `RESEND_API_KEY` + verified domain, same infra as DARA-045)._
 
-_Related, likely SAME bug on self-registration confirm-signup: `signUp` also runs on the PKCE SSR client, so
-the confirm-signup email's `{{ .TokenHash }}` is probably `pkce_` too. Not exercised this session — check if
-email confirmation is enabled + used before relying on it._
+**Confirm-signup FIXED too (same root cause, 2026-07-07):** email confirmation IS enabled;
+`confirmation.html` links to `/auth/confirm?token_hash=…&type=signup`, and `signUp` ran on the PKCE SSR
+client → `pkce_` token → same failure. Both `resetPasswordForEmail` and `signUp` now use a shared
+**`newImplicitAuthClient()`** helper (implicit flow, anon key, no session persistence — correct because
+confirm-on means signUp returns no immediate session). Test: register a new account, confirm the email link
+shows `token_hash=` without `pkce_`, and that it lands signed in → onboarding.
+
+⚠️ **Still on the PKCE SSR client (same latent defect if enabled + token_hash templates):** magic-link
+(`signInWithEmail`) and email-change (`updateEmail`). One-line fix each — swap `createClient()` →
+`newImplicitAuthClient()` — but not exercised/changed this session. Do it if/when those flows are used.
