@@ -186,6 +186,48 @@ async function requireViewableSolicitation(
   return owned;
 }
 
+// DARA-025 (cross-department BOLA): a viewable solId is necessary but NOT sufficient to act
+// on a CHILD entity. The child id is supplied separately and is sequential/guessable, so a
+// user who can see solicitation A must not be able to mutate solicitation B's child by pairing
+// A's (viewable) id with B's child id — both are same-tenant, so the company-level RLS + the
+// requireViewableSolicitation(A) gate both pass. Resolve the child up to its parent
+// solicitation and reject unless it chains to `solId`. Redirects (like the gate above) on
+// failure. Used by the actions that delegate to a helper on a separately-supplied child id;
+// the actions that fetch the child locally instead tie that fetch to `solicitationId: solId`.
+async function requireChildInSol(
+  solId: bigint,
+  daraUser: { id: string; companyId: bigint; role: string },
+  kind: 'review' | 'reviewPass' | 'amendment' | 'amendmentChange' | 'result',
+  childId: bigint
+) {
+  await requireViewableSolicitation(solId, daraUser);
+  const companyId = daraUser.companyId;
+  const found = await withTenant(companyId, async (tx) => {
+    switch (kind) {
+      case 'review':
+        return tx.review.findFirst({ where: { id: childId, companyId, solicitationId: solId }, select: { id: true } });
+      case 'reviewPass':
+        return tx.reviewPass.findFirst({
+          where: { id: childId, companyId, review: { solicitationId: solId } },
+          select: { id: true }
+        });
+      case 'amendment':
+        return tx.amendment.findFirst({ where: { id: childId, companyId, solicitationId: solId }, select: { id: true } });
+      case 'amendmentChange':
+        return tx.amendmentChange.findFirst({
+          where: { id: childId, companyId, amendment: { solicitationId: solId } },
+          select: { id: true }
+        });
+      case 'result':
+        return tx.result.findFirst({
+          where: { id: childId, companyId, evaluation: { solicitationId: solId } },
+          select: { id: true }
+        });
+    }
+  });
+  if (!found) redirect('/app/solicitations');
+}
+
 // ---- Solicitation actions ----
 async function updateSolicitation(formData: FormData) {
   'use server';
@@ -363,11 +405,13 @@ async function updateRequirement(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('requirementId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
   const source = String(formData.get('source') ?? '');
   const status = String(formData.get('complianceStatus') ?? '');
   const dispIn = String(formData.get('disposition') ?? '');
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
+    // DARA-025: the requirement must belong to the gated solicitation, not just the company.
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } });
     if (!owned) return false;
     const disposition = VALID_DISPOSITIONS.has(dispIn) ? dispIn : owned.disposition;
     await tx.requirement.update({
@@ -399,9 +443,11 @@ async function saveMatrixRow(formData: FormData): Promise<{ ok: boolean }> {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('requirementId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
   const status = String(formData.get('complianceStatus') ?? '');
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
+    // DARA-025: scope the requirement to the gated solicitation, not just the company.
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } });
     if (!owned) return false;
     await tx.requirement.update({
       where: { id },
@@ -423,8 +469,10 @@ async function deleteRequirement(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('requirementId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId } });
+    // DARA-025: the requirement must belong to the gated solicitation, not just the company.
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } });
     if (!owned) return false;
     await tx.requirement.delete({ where: { id } });
     return true;
@@ -598,6 +646,7 @@ async function updateReview(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('reviewId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
   const color = String(formData.get('colorTeam') ?? '');
   const personaIds = formData
     .getAll('persona')
@@ -605,7 +654,8 @@ async function updateReview(formData: FormData) {
     .filter((v) => /^\d+$/.test(v))
     .map((v) => BigInt(v));
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.review.findFirst({ where: { id, companyId: daraUser.companyId } });
+    // DARA-025: the review must belong to the gated solicitation, not just the company.
+    const owned = await tx.review.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } });
     if (!owned) return false;
     await tx.review.update({
       where: { id },
@@ -639,11 +689,13 @@ async function deleteReview(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('reviewId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
   // Snapshots reference the proposal's shared stored files (owned by SolDocument), so
   // deleting a review must NOT remove the blobs — just drop the rows (cascades docs +
   // personas + evaluations).
   const ok = await withTenant(daraUser.companyId, async (tx) => {
-    const owned = await tx.review.findFirst({ where: { id, companyId: daraUser.companyId } });
+    // DARA-025: the review must belong to the gated solicitation, not just the company.
+    const owned = await tx.review.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } });
     if (!owned) return false;
     await tx.review.delete({ where: { id } });
     return true;
@@ -721,8 +773,10 @@ async function deleteSolDoc(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('docId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: the document must belong to the gated solicitation, not just the company.
   const owned = await withTenant(daraUser.companyId, (tx) =>
-    tx.solDocument.findFirst({ where: { id, companyId: daraUser.companyId } })
+    tx.solDocument.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } })
   );
   if (!owned) return;
   await removeStored([owned.storedFilename]);
@@ -792,8 +846,12 @@ async function deleteReviewDoc(formData: FormData) {
   const id = BigInt(String(formData.get('docId')));
   const reviewId = BigInt(String(formData.get('reviewId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: the review document must belong to a review under the gated solicitation.
   const owned = await withTenant(daraUser.companyId, (tx) =>
-    tx.reviewDocument.findFirst({ where: { id, companyId: daraUser.companyId, reviewId } })
+    tx.reviewDocument.findFirst({
+      where: { id, companyId: daraUser.companyId, reviewId, review: { solicitationId: solId } }
+    })
   );
   if (!owned) return;
   await removeStored([owned.storedFilename]);
@@ -855,11 +913,13 @@ async function deleteAmendment(formData: FormData) {
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('amendmentId')));
   const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
   // Amendment cascade removes its changes + attributed documents. Remove the stored
   // blobs for those documents (Storage I/O outside any transaction).
+  // DARA-025: the amendment must belong to the gated solicitation, not just the company.
   const owned = await withTenant(daraUser.companyId, (tx) =>
     tx.amendment.findFirst({
-      where: { id, companyId: daraUser.companyId },
+      where: { id, companyId: daraUser.companyId, solicitationId: solId },
       include: { documents: true }
     })
   );
@@ -883,7 +943,8 @@ async function enqueueReconcileAction(formData: FormData): Promise<{ ok: boolean
   const daraUser = await authedUser();
   const id = BigInt(String(formData.get('amendmentId')));
   const solId = BigInt(String(formData.get('solId')));
-  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: gate the sol AND confirm the amendment belongs to it before the AI run.
+  await requireChildInSol(solId, daraUser, 'amendment', id);
   // Reconcile in the background worker (AI diff + coverage pass) instead of synchronously.
   const res = await enqueueReconcile(id, daraUser.companyId);
   if (res.ok) triggerWorker();
@@ -911,7 +972,8 @@ async function applyChangeAction(formData: FormData) {
   const changeId = BigInt(String(formData.get('changeId')));
   const solId = BigInt(String(formData.get('solId')));
   const accept = String(formData.get('accept') ?? '') === '1';
-  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: gate the sol AND confirm the change's amendment belongs to it.
+  await requireChildInSol(solId, daraUser, 'amendmentChange', changeId);
   const res = await applyAmendmentChange(changeId, daraUser.companyId, accept);
   await recordAudit({
     action: accept ? 'amendment.change.accept' : 'amendment.change.reject',
@@ -934,7 +996,8 @@ async function runReviewAction(formData: FormData): Promise<{ ok: boolean; error
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const reviewId = BigInt(String(formData.get('reviewId')));
-  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: gate the sol AND confirm the review belongs to it before the AI run.
+  await requireChildInSol(solId, daraUser, 'review', reviewId);
 
   try {
     await enqueueReviewRun(reviewId, daraUser.companyId);
@@ -1049,7 +1112,8 @@ async function rerunPassAction(formData: FormData): Promise<{ ok: boolean }> {
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const passId = BigInt(String(formData.get('passId')));
-  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: gate the sol AND confirm the pass's review belongs to it before the AI run.
+  await requireChildInSol(solId, daraUser, 'reviewPass', passId);
   await enqueuePassRun(passId, daraUser.companyId);
   // SEC-10 (NIST AU-2/AU-3): a pass re-run is a full CUI→LLM egress; record it like the
   // initial run so every AI pass over CUI has a provider-independent audit trail.
@@ -1073,7 +1137,8 @@ async function regenerateResultAction(formData: FormData) {
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   const resultId = BigInt(String(formData.get('resultId')));
-  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: gate the sol AND confirm the result belongs to it before the AI regenerate.
+  await requireChildInSol(solId, daraUser, 'result', resultId);
   const res = await regenerateResult(resultId, daraUser.companyId);
   await recordAudit({
     action: 'evaluation.result.regenerate',
@@ -1093,7 +1158,8 @@ async function archiveResultAction(formData: FormData) {
   const solId = BigInt(String(formData.get('solId')));
   const resultId = BigInt(String(formData.get('resultId')));
   const archived = String(formData.get('archived') ?? '') === '1';
-  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: gate the sol AND confirm the result belongs to it.
+  await requireChildInSol(solId, daraUser, 'result', resultId);
   await setResultArchived(resultId, daraUser.companyId, archived);
   await recordAudit({
     action: archived ? 'evaluation.result.archive' : 'evaluation.result.restore',

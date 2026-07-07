@@ -16,7 +16,37 @@ code commit is still `6eeb625`. Deep decision log: `BUILD_STATUS.md` (see its `-
 
 ---
 
-## 0. Latest session (2026-07-07) — Settings consolidation, public Security/Legal pages, checkbox-only agreement
+## 0. Latest session (2026-07-07, part 2) — DARA-025 BOLA sweep + public-page branding + password-reset finding
+
+Not yet committed or deployed. **No migrations** (code-only). Builds clean (`tsc --noEmit` + `pnpm build`).
+
+1. **DARA-025 (cross-department BOLA) — FIXED.** Every child mutation/delete server action in
+   `app/app/solicitations/[id]/page.tsx` now gates the parent sol as viewable AND ties the child to that
+   `solId`. Local-fetch actions (`updateRequirement`, `saveMatrixRow`, `deleteRequirement`, `updateReview`,
+   `deleteReview`, `deleteSolDoc`, `deleteReviewDoc`, `deleteAmendment`) scope their `findFirst` by
+   `solicitationId: solId` (or `review: { solicitationId: solId }`); the six delegating actions
+   (`runReviewAction`, `rerunPassAction`, `regenerateResultAction`, `archiveResultAction`,
+   `applyChangeAction`, `enqueueReconcileAction`) call a new shared **`requireChildInSol(solId, user, kind,
+   childId)`** helper that resolves review/pass/result/amendment/change up to `solId` first. The `/annotated`
+   route + the list-page delete/dept actions were already safe. Register updated (`security-content.ts`
+   DARA-025 → Remediated; `SECURITY_BACKLOG.md`).
+2. **Public /security + /legal branding.** New `components/dara/PublicChrome.tsx` wraps both pages with a
+   branded header (dara-logo.png + "DARA" / gold "Crucible Insight", home link, Sign in) and footer
+   (© The Daniel Group LLC + Security · Terms & Privacy) — they were bare after the marketing chrome was
+   stripped. ChromeGate still bars the full marketing nav on these routes; this is a dedicated light chrome.
+3. **/legal contact lines** changed to `admin@crucibleinsight.com` (no company name) on both the Terms and
+   Privacy "Questions about…" lines.
+4. **DARA-046 (NEW, High, OPEN) — password reset is broken.** `resetPasswordForEmail` runs on the PKCE SSR
+   client, so the recovery email's `{{ .TokenHash }}` is a `pkce_…` code; `/auth/confirm`'s `verifyOtp`
+   can't verify it (needs `exchangeCodeForSession` + the verifier cookie) → redirect to `/signin`. Broken for
+   everyone (worse via Outlook SafeLinks / other device). Fix = non-PKCE recovery link via
+   `admin.generateLink({type:'recovery'})` + own email, or `flowType:'implicit'`. Same infra as DARA-045.
+   Filed in `security-content.ts` + `SECURITY_BACKLOG.md`; **not yet fixed** (small — offer to implement).
+
+**Operator steps now DONE (user confirmed 2026-07-07):** Supabase Manual Linking enabled + all 12 email
+templates pasted.
+
+## 0 (part 1). Earlier 2026-07-07 — Settings consolidation, public Security/Legal pages, checkbox-only agreement
 
 Not yet committed or deployed. No migrations (avatar/legal columns already nullable). Full detail in
 `BUILD_STATUS.md` §-1; summary:
@@ -216,20 +246,22 @@ fail-closed, prompt-injection fencing, no LLM tool-calling). Re-audit findings a
 DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-content.ts` (admin-gated
 `/app/security`) + the untracked `SECURITY_BACKLOG.md` (file:line evidence; don't commit while open).
 
-- **Fixed this session:** DARA-024 (annotated egress, prior), DARA-026 (isActive fail-closed), DARA-027
-  (sol-delete removeStored), DARA-028 (CSV escaping), DARA-030 (export/re-run audit), DARA-034 (cron fail-closed).
+- **Fixed:** DARA-024 (annotated egress), DARA-026 (isActive fail-closed), DARA-027 (sol-delete removeStored),
+  DARA-028 (CSV escaping), DARA-030 (export/re-run audit), DARA-034 (cron fail-closed), **DARA-025 (BOLA sweep,
+  2026-07-07)**.
 - **In progress:** DARA-031 (MFA/2FA — opt-in shipped; **tenant-wide enforcement** is the remaining step).
-- **P1 open:** DARA-021 **no rate limiting / WAF** (SC-5). DARA-022 **`next@14.2.35` HIGH advisories** (SSRF,
+- **P1 open:** **DARA-046 password reset BROKEN** (recovery link fails `verifyOtp` — see §0 part 2 + §9).
+  DARA-021 **no rate limiting / WAF** (SC-5). DARA-022 **`next@14.2.35` HIGH advisories** (SSRF,
   middleware bypass) → 14→15 migration. DARA-023 **CI gates don't block deploys** (branch protection + CI-gated deploy).
-- **P2 open:** **DARA-025 cross-department BOLA** on child mutation/delete actions (authorize child by
-  `companyId` only, not the viewable parent sol) — the next code chunk. DARA-029 crypto key-rotation.
-  DARA-032 decompression-bomb guard. DARA-033 CSP nonce.
+- **P2 open:** DARA-029 crypto key-rotation. DARA-032 decompression-bomb guard. DARA-033 CSP nonce.
 - **P3 open:** DARA-035 CI RLS-drift + isolation test · DARA-036 SHA-pin Actions · DARA-037 scan SBOM ·
   DARA-038 kill latent `dangerouslySetInnerHTML` · DARA-039 generic client errors · DARA-040 password policy ·
   DARA-041 audit retention · DARA-042 persona-injection residual · DARA-043 tenant right-to-delete ·
   DARA-044 company doc retention/archive limits · **DARA-045 (Moderate) invite email — see §8**.
-- **Suggested next:** DARA-025 (BOLA sweep) on code; **operator:** DARA-023 (branch protection), DARA-022
-  (Next 15), DARA-031/040 (enforce MFA / password policy). _(DARA-045 invites now work end-to-end — see §2.0/§8.)_
+- **Suggested next:** **DARA-046 (password reset — broken, small fix, see §9)** on code; then DARA-021
+  (rate limiting/WAF), DARA-029 (key rotation). **Operator:** DARA-023 (branch protection), DARA-022
+  (Next 15), DARA-031/040 (enforce MFA / password policy). _(DARA-025 BOLA fixed 2026-07-07; DARA-045 invites
+  work end-to-end — see §2.0/§8.)_
 
 ---
 
@@ -291,3 +323,32 @@ is `admin.generateLink` (`type=invite` for new / `type=magiclink` for existing) 
 `RESEND_API_KEY` + a verified `crucibleinsight.com` from-domain. Not built (not needed for the normal flow).
 Remember to **paste the other 11 branded templates** too (§2.0) so all auth emails match.
 ```
+
+---
+
+## 9. DARA-046 — password reset is broken (NEW 2026-07-07, OPEN)
+
+**Symptom (user-reported):** the reset-password email link lands on the plain sign-in screen, not the
+set-a-new-password page. Example link:
+`https://dara.crucibleinsight.com/auth/confirm?token_hash=pkce_254b687c…&type=recovery&next=/app/account/profile`
+
+**Root cause:** `requestPasswordUpdate` (`utils/auth-helpers/server.ts`) calls
+`supabase.auth.resetPasswordForEmail` on the **PKCE** SSR client, so the built-in recovery email's
+`{{ .TokenHash }}` (`supabase/templates/recovery.html`) renders as a **PKCE code** (`pkce_…`). The template
+points at `/auth/confirm?token_hash=pkce_…&type=recovery`, and `/auth/confirm` calls
+`verifyOtp({type, token_hash})` — but a `pkce_` token is **not** a verifiable OTP hash; it needs
+`exchangeCodeForSession` + the code-verifier cookie from the originating browser. So `verifyOtp` fails and the
+route redirects to `/signin?error=auth_link_invalid`. Opening from Outlook SafeLinks / a different device
+removes the verifier entirely. **Net: nobody can reset their password.** (This is the same PKCE-vs-token_hash
+class that bit invites — DARA-045 — but the recovery path was never switched to a non-PKCE token.)
+
+**Fix options (pick one — same infra as DARA-045):**
+1. **Preferred, cross-device:** mint the link server-side with `admin.generateLink({ type: 'recovery', email })`
+   (service role → non-PKCE `hashed_token`), build `/auth/confirm?token_hash=<hashed_token>&type=recovery&next=…`,
+   and send it via our own branded email (Resend). Works from any device/scanner. Needs `RESEND_API_KEY` +
+   verified `crucibleinsight.com` domain.
+2. **Minimal, keeps built-in email:** trigger `resetPasswordForEmail` from a Supabase client configured
+   `flowType: 'implicit'` so `{{ .TokenHash }}` is a plain OTP hash that `/auth/confirm`'s `verifyOtp` accepts
+   (no verifier needed). Verify the app's other flows still get PKCE where they need it.
+
+Not yet fixed — filed in `SECURITY_BACKLOG.md` (DARA-046) + `security-content.ts`. Small change; offer to implement.

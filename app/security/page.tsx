@@ -3,6 +3,7 @@ import { ShieldCheck, FileText, Lock, CheckCircle2, AlertTriangle } from 'lucide
 import { createClient } from '@/utils/supabase/server';
 import { isPlatformAdmin } from '@/utils/dara/admin';
 import PageHeader from '@/components/dara/PageHeader';
+import PublicChrome from '@/components/dara/PublicChrome';
 import { card, sectionTitle, badgeBase } from '@/components/dara/theme';
 import {
   ASSESSMENT,
@@ -69,6 +70,7 @@ export default async function SecurityPage() {
   })).filter((c) => c.n > 0);
 
   return (
+    <PublicChrome>
     <div className="mx-auto max-w-5xl px-6 py-16 fade">
       <PageHeader
         eyebrow="Trust & Compliance"
@@ -276,5 +278,6 @@ export default async function SecurityPage() {
         from the codebase are treated as unverified rather than compliant.
       </p>
     </div>
+    </PublicChrome>
   );
 }

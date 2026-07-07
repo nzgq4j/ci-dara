@@ -1,5 +1,6 @@
 import { Metadata } from 'next';
 import Tabs, { type TabDef } from '@/components/dara/Tabs';
+import PublicChrome from '@/components/dara/PublicChrome';
 
 export const metadata: Metadata = {
   title: 'Legal — DARA',
@@ -119,7 +120,7 @@ function TermsOfService() {
       </Section>
 
       <Section title="12. Contact">
-        <p>Questions about these Terms: islanista@gmail.com (The Daniel Group LLC d/b/a Crucible Insight).</p>
+        <p>Questions about these Terms: admin@crucibleinsight.com.</p>
       </Section>
     </div>
   );
@@ -215,7 +216,7 @@ function PrivacyPolicy() {
       </Section>
 
       <Section title="9. Contact">
-        <p>Questions about this policy or your data: islanista@gmail.com (The Daniel Group LLC d/b/a Crucible Insight).</p>
+        <p>Questions about this policy or your data: admin@crucibleinsight.com.</p>
       </Section>
     </div>
   );
@@ -233,6 +234,7 @@ export default function LegalPage({
   const initial = tabs.some((t) => t.id === searchParams?.tab) ? searchParams!.tab : 'tos';
 
   return (
+    <PublicChrome>
     <div className="mx-auto max-w-3xl px-6 py-16">
       {/* Best-effort print block — a browser can never be fully stopped from printing or
           screenshotting, but this keeps the page from rendering in the print preview. */}
@@ -257,5 +259,6 @@ export default function LegalPage({
         </div>
       </div>
     </div>
+    </PublicChrome>
   );
 }

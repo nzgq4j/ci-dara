@@ -449,13 +449,13 @@ export const FINDINGS: Finding[] = [
     id: 'DARA-025',
     title: 'Cross-department authorization gap on child mutation/delete actions',
     severity: 'High',
-    status: 'Open',
+    status: 'Remediated',
     component: 'app/app/solicitations/[id] server actions',
-    evidence: 'Department-scoped access (app-layer; DB RLS is company-level) is enforced on the solicitation-detail gate, but several child mutate/delete actions authorize the child by companyId only, not by the viewable parent solicitation — e.g. requirement update/save/delete, sol-document delete, and run/re-run/regenerate/archive/apply-change/reconcile actions that accept a separately-supplied child id.',
-    impact: 'Same-tenant only (no cross-company leak): a reviewer or out-of-department member could tamper with or delete another department’s data, or trigger AI runs (cost + CUI egress) on it, using a guessable sequential id.',
-    remediation: 'Resolve each child through its parent solicitation and run requireViewableSolicitation before mutating (the uploadReviewDoc pattern); tie reviewId/passId to the checked solId.',
+    evidence: 'Department-scoped access (app-layer; DB RLS is company-level) is enforced on the solicitation-detail gate, but several child mutate/delete actions authorized the child by companyId only. Every such action now (a) runs requireViewableSolicitation on the parent solId and (b) ties the child to that solId — the local-fetch actions (requirement update/save/delete, sol-document/review/review-document/amendment delete, review update) scope their findFirst by solicitationId; the delegating actions (run/re-run/regenerate/archive/apply-change/reconcile) call a shared requireChildInSol that resolves review/pass/result/amendment/change up to solId before the helper runs.',
+    impact: 'Resolved. A reviewer or out-of-department member can no longer tamper with, delete, or trigger AI runs on another department’s data by pairing a viewable solId with a guessable sibling child id.',
+    remediation: 'Completed (this session): requireViewableSolicitation + solId-scoped child resolution on all child mutation/delete actions; requireChildInSol helper for the delegating (run/regenerate/reconcile) actions.',
     mapping: 'NIST AC-3, AC-6 · OWASP API1/A01 (BOLA)',
-    window: 'Short-term (8–30 days)'
+    window: 'Closed'
   },
   {
     id: 'DARA-026',
@@ -695,6 +695,18 @@ export const FINDINGS: Finding[] = [
     impact: 'Team invitations and resends often never reach the recipient, so onboarding cannot start. Workaround: the invitation row is the source of truth, so an invitee can still join by signing in. Unbranded shared-sender mail is also weaker against spoofing/phishing and spam-filtering.',
     remediation: 'Implement code-owned email via Resend (or Custom SMTP): mint links with admin.generateLink (type=invite for new users, type=magiclink for existing) and send our own branded email — works for first-invites AND resends, no rate cap. Requires RESEND_API_KEY + a verified crucibleinsight.com from-domain (SPF/DKIM/DMARC). Interim stopgap: enable Custom SMTP in Supabase (raises the rate cap) — but it still can’t re-send to an already-registered address, so the generateLink path is the real fix. Cover invite + confirm-signup.',
     mapping: 'NIST SI-8 · SPF/DKIM/DMARC email authentication · availability / product',
+    window: 'Short-term (8–30 days)'
+  },
+  {
+    id: 'DARA-046',
+    title: 'Password reset is broken — recovery link fails to verify',
+    severity: 'High',
+    status: 'Open',
+    component: 'utils/auth-helpers/server.ts (requestPasswordUpdate) · app/auth/confirm/route.ts · supabase/templates/recovery.html',
+    evidence: 'Password reset is triggered by supabase.auth.resetPasswordForEmail from the PKCE SSR client, so the built-in recovery email’s {{ .TokenHash }} renders as a PKCE code (token_hash=pkce_…). The recovery template links to /auth/confirm?token_hash=pkce_…&type=recovery, and /auth/confirm calls verifyOtp({type, token_hash}) — but a pkce_ token is not a verifiable OTP hash; it is a code that needs exchangeCodeForSession plus the code-verifier cookie from the originating browser. So verifyOtp fails and the route redirects to /signin. Opening the link from an email scanner (e.g. Outlook SafeLinks) or a different device compounds it (no verifier at all). Net effect: users cannot reset their password.',
+    impact: 'Complete loss of the self-service password-reset flow: locked-out users (including OTP-invited users setting their first password) cannot regain access without operator intervention.',
+    remediation: 'Generate a NON-PKCE recovery link so the token_hash /auth/confirm flow verifies cross-device: mint it server-side with admin.generateLink({type:"recovery"}) (service role) and send our own branded email (Resend), OR trigger resetPasswordForEmail via a client configured with flowType:"implicit" so the built-in email’s {{ .TokenHash }} is a plain OTP hash. Same code-owned-email infrastructure as DARA-045 (RESEND_API_KEY + verified crucibleinsight.com domain).',
+    mapping: 'NIST IA-5 (authenticator management) · availability',
     window: 'Short-term (8–30 days)'
   }
 ];
