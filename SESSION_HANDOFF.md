@@ -1,18 +1,16 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-07 · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`) · branch `main` · for: next session_
+_Prepared: 2026-07-07 · last DEPLOYED code `5d3d008` (`dpl_7X6MQ9mhvejv4rxaF5zbvrDAphZd`) · branch `main` · for: next session_
 
-Start-here doc. **Everything in §0 below (2026-07-07) is in the working tree — committed? not yet; deployed?
-not yet.** Everything from §0b onward is **live on production** (`dara.crucibleinsight.com`). Last DEPLOYED
-code commit is still `6eeb625`. Deep decision log: `BUILD_STATUS.md` (see its `-1` section for today).
+Start-here doc. **Everything below is committed + live on production** (`dara.crucibleinsight.com`) as of
+`5d3d008`. Working tree is clean except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`. Deep
+decision log: `BUILD_STATUS.md` (see its `-2`/`-1` sections for today).
 
-> ⚠️ **Before this session's changes go live:** they touch routing only (Settings consolidation, new public
-> `/security` + `/legal` pages, onboarding agreement simplification, sign-in footer links) — no migrations, so
-> the usual "migrate before deploy" step does not apply this time. Do run `git status`/review the diff, commit,
-> then the normal `git push` → `vercel deploy --prod --yes` (see §1).
-
-> ⚠️ **Two operator steps pending in the Supabase dashboard** (from the 2026-07-06 night session, both now
-> done per the user): (a) enable Manual Linking; (b) paste the 12 branded email templates. Confirmed complete.
+> ✅ **Operator steps DONE** (user confirmed 2026-07-07): Supabase Manual Linking enabled + 12 branded email
+> templates pasted.
+> ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header (file:line
+> exploit detail for open findings). Edits to it were left uncommitted this session — decide whether to untrack
+> it (`git rm --cached SECURITY_BACKLOG.md` + add to `.gitignore`; scrub history if the repo is public) or accept.
 
 ---
 
@@ -49,8 +47,8 @@ templates pasted.
 
 ## 0 (part 1). Earlier 2026-07-07 — Settings consolidation, public Security/Legal pages, checkbox-only agreement
 
-Not yet committed or deployed. No migrations (avatar/legal columns already nullable). Full detail in
-`BUILD_STATUS.md` §-1; summary:
+Committed (`b3428d3` → `a15ffd5`) + deployed. No migrations (avatar/legal columns already nullable). Full
+detail in `BUILD_STATUS.md` §-1; summary:
 
 1. **`/app/settings`** is now a tabbed hub — Profile, Two-Factor, Legal (everyone); Billing, AI Configuration
    (company_admin only). `?tab=` selects the initial tab. Old routes (`/app/account/profile`,
@@ -283,11 +281,11 @@ DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-conte
 ## 6. Fast restart
 
 ```bash
-git status                       # expect clean main, HEAD 6eeb625 (== last deployed)
+git status                       # clean main except untracked SECURITY_BACKLOG.md + tsconfig.tsbuildinfo; HEAD 5d3d008 (== last deployed)
 git log --oneline -14
 pnpm install
 pnpm exec tsc --noEmit
-pnpm build                       # must pass; newest route: /app/account/profile (name/avatar/password/link Google)
+pnpm build                       # must pass; recent: /auth/confirm interstitial (GET renders, POST verifies)
 # Deploy (prod = main, MANUAL): git push origin main && vercel deploy --prod --yes ; confirm via MCP list_deployments
 # Schema first: pnpm prisma migrate deploy (targets prod via .env.local) BEFORE the code deploy
 # Diagnose prod: Vercel MCP get_runtime_errors / get_runtime_logs

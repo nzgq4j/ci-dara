@@ -3,20 +3,59 @@
 _Last updated: 2026-07-07_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `6eeb625` (`dpl_DcLvK6wz4VAzSjguZydca3dcXTCU`) — **today's work (below) is in the working tree, NOT yet committed or deployed.**
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `5d3d008` (`dpl_7X6MQ9mhvejv4rxaF5zbvrDAphZd`) — **working tree clean** (except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`; everything below is committed + deployed).
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
 > **Start-here for the next session is `SESSION_HANDOFF.md`** (deploy model, gotchas, backlog, key files).
 > **Top priority next: the security backlog** — `SECURITY_BACKLOG.md` (untracked; findings unified to
-> `DARA-021..045`, prior hardening intact). DARA-025 BOLA (code) + DARA-022/023 (operator). Invites now WORK.
-> **Two operator dashboard steps pending:** enable Supabase Manual Linking + paste the 12 email templates.
+> `DARA-021..046`, prior hardening intact). **DARA-025 (BOLA) + DARA-046 (password reset) both DONE
+> 2026-07-07.** Top open now: DARA-021 rate limiting (code) + DARA-022/023 (operator: Next 15, branch protection).
+> **Operator dashboard steps DONE** (user confirmed 2026-07-07): Supabase Manual Linking enabled + 12 email templates pasted.
+> ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header — decide: untrack (`git rm --cached` + gitignore) or accept. Left uncommitted this session.
 
 ---
 
-## -1. Latest session (2026-07-07) — Settings consolidation + public Security/Legal pages + checkbox-only agreement
+## -2. Latest session (2026-07-07, part 2) — DARA-025 BOLA + full password-reset fix + public-page branding
 
-Code-only, **no migrations** (avatar/legal columns were already nullable). Not yet committed or deployed.
+All committed + **deployed to prod** (commits `4bcb01b` → `5d3d008`). **Code-only, no migrations.**
+
+- **DARA-025 (cross-department BOLA) — FIXED** (`4bcb01b`). Every child mutation/delete server action in
+  `app/app/solicitations/[id]/page.tsx` now gates the parent sol viewable AND ties the child to that `solId`.
+  Local-fetch actions (`updateRequirement`, `saveMatrixRow`, `deleteRequirement`, `updateReview`,
+  `deleteReview`, `deleteSolDoc`, `deleteReviewDoc`, `deleteAmendment`) scope their `findFirst` by
+  `solicitationId`; the six delegating actions (`runReviewAction`, `rerunPassAction`, `regenerateResultAction`,
+  `archiveResultAction`, `applyChangeAction`, `enqueueReconcileAction`) use a new `requireChildInSol` helper.
+  `/annotated` + the list-page actions were already safe. Register → Remediated.
+- **Public `/security` + `/legal` branding** (`4bcb01b`) — new `components/dara/PublicChrome.tsx` wraps both
+  with a branded header (logo + gold "Crucible Insight", home link, Sign in) + footer; they were bare after the
+  marketing chrome was stripped. `/legal` contact lines → `admin@crucibleinsight.com` (no company name).
+- **DARA-046 — password reset was fully broken → FIXED end-to-end** (4 commits):
+  1. `e8c1893` — recovery fired from the **PKCE SSR client**, so the email token was a `pkce_…` code
+     `/auth/confirm`'s `verifyOtp` can't verify. Now uses a shared **`newImplicitAuthClient()`**
+     (`flowType:'implicit'`) → plain OTP hash.
+  2. `61cdf10` — **confirm-signup had the same PKCE bug** (email confirmation IS enabled); `signUp` moved to
+     the same helper.
+  3. `6f6229b` — even with a plain token, prod logs showed **email-scanner prefetch** (Outlook Safe Links
+     HEAD/GET) consuming the single-use token before the user clicked. `app/auth/confirm/route.ts` split:
+     **GET/HEAD render a branded interstitial (no verify); POST runs `verifyOtp` → 303.** Scanners don't POST.
+  4. `c3acf12` — **forced reset before app access**: a recovery verify sets a short-lived httpOnly marker
+     (`dara-pw-reset`, `utils/dara/pw-reset.ts`) + lands on `/signin/update_password`; the middleware routes
+     every `/app` request back there until `updatePassword()` clears the marker.
+  Register (DARA-046) → Remediated. **Links minted before the fix are dead — request a fresh one.**
+  _Still on the PKCE SSR client (same latent defect if enabled): magic-link (`signInWithEmail`) + email-change
+  (`updateEmail`) — one-line swap to `newImplicitAuthClient()` each._
+- **Update-password screen restyled** (`5d3d008`) — branded inputs (`bg-surf2`/`border-line`/`focus:border-navy`
+  matching PasswordSignIn) replacing the old `bg-zinc-800`; each field gets a **focus-gated reveal (eye)** button
+  (toggles plain-text only while focused; re-masks + disables on blur). `components/ui/AuthForms/UpdatePassword.tsx`.
+- **Backlog added** (`d193bee`, doc-only) — admin/format requirements (e.g. Amendment font specs) are
+  over-escalated to technical findings; should route to the compliance matrix as pass/fail + a
+  **"manual verification required"** disposition where text extraction can't verify (font/margins). SESSION_HANDOFF §4.6.
+
+## -1. Prior 2026-07-07 (part 1) — Settings consolidation + public Security/Legal pages + checkbox-only agreement
+
+Code-only, **no migrations** (avatar/legal columns were already nullable). **Committed (`b3428d3` →
+`a15ffd5`) + deployed** (this section predates those commits and originally said "not yet committed").
 
 - **`/app/settings` is now a tabbed hub** (Profile, Two-Factor, Legal always; Billing + AI
   Configuration admin-only), reusing the existing panel components/actions unchanged —
