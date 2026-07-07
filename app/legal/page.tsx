@@ -22,12 +22,6 @@ function TermsOfService() {
     <div>
       <p className="text-[12px] text-t5">Last updated: {UPDATED}</p>
 
-      <div className="mt-5 rounded-lg border border-[#92400E]/25 bg-[#FEF3C7] px-4 py-3 text-[12px] leading-relaxed text-[#92400E]">
-        This page is a plain-language summary provided for transparency. The binding
-        agreement you accept when creating an account is the full Terms of Service &amp;
-        Legal Document Set, reviewable in-app under Settings → Legal.
-      </div>
-
       <Section title="1. Acceptance">
         <p>
           By accessing or using DARA (the “Service”), operated by The Daniel Group LLC
@@ -135,10 +129,6 @@ function PrivacyPolicy() {
   return (
     <div>
       <p className="text-[12px] text-t5">Last updated: {UPDATED}</p>
-
-      <div className="mt-5 rounded-lg border border-[#92400E]/25 bg-[#FEF3C7] px-4 py-3 text-[12px] leading-relaxed text-[#92400E]">
-        This page is a plain-language summary provided for transparency.
-      </div>
 
       <Section title="1. Who we are">
         <p>

@@ -3,10 +3,12 @@
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 
-// The marketing Navbar/Footer should not wrap the authenticated app shell or any of
-// the full-screen auth / account-setup flows (sign-in, the 2FA challenge, the org
-// onboarding wizard, the invited-member welcome). Everywhere else keeps the chrome.
-const BARE_PREFIXES = ['/app', '/signin', '/auth', '/onboarding', '/welcome'];
+// The marketing Navbar/Footer should not wrap the authenticated app shell, the
+// full-screen auth / account-setup flows (sign-in, the 2FA challenge, the org
+// onboarding wizard, the invited-member welcome), or the standalone public
+// Security/Legal pages (linked from the sign-in footer as plain informational
+// pages, not marketing pages). Everywhere else keeps the chrome.
+const BARE_PREFIXES = ['/app', '/signin', '/auth', '/onboarding', '/welcome', '/legal', '/security'];
 
 export default function ChromeGate({
   navbar,
