@@ -1,20 +1,76 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-07 · last DEPLOYED code `5d3d008` (`dpl_7X6MQ9mhvejv4rxaF5zbvrDAphZd`) · branch `main` · for: next session_
+_Prepared: 2026-07-08 · last DEPLOYED code `5728f07` (`dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`, `ci-dara-4rteq5dyn`) · branch `main` · for: next session_
 
-Start-here doc. **Everything below is committed + live on production** (`dara.crucibleinsight.com`) as of
-`5d3d008`. Working tree is clean except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`. Deep
-decision log: `BUILD_STATUS.md` (see its `-2`/`-1` sections for today).
+Start-here doc. **Everything below is committed, pushed, + live on production** (`dara.crucibleinsight.com`).
+`main` == `5728f07` == last deployed (git is back in sync — this session pushed the CLI-only commits up too).
+Working tree clean except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`. Deep decision log:
+`BUILD_STATUS.md`. **Start with §0 below (2026-07-08).**
 
 > ✅ **Operator steps DONE** (user confirmed 2026-07-07): Supabase Manual Linking enabled + 12 branded email
 > templates pasted.
 > ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header (file:line
-> exploit detail for open findings). Edits to it were left uncommitted this session — decide whether to untrack
-> it (`git rm --cached SECURITY_BACKLOG.md` + add to `.gitignore`; scrub history if the repo is public) or accept.
+> exploit detail for open findings). Decide whether to untrack it (`git rm --cached SECURITY_BACKLOG.md` +
+> `.gitignore`; scrub history if the repo is public) or accept. **The security backlog remains the top
+> priority** — this session was admin-console/observability work, not security (see §5).
 
 ---
 
-## 0. Latest session (2026-07-07, part 2) — DARA-025 BOLA sweep + public-page branding + password-reset finding
+## 0. Latest session (2026-07-08) — Admin AI cost dashboard + per-run cost + sidebar nav + usage-ledger fix
+
+All committed + **pushed + deployed to prod** (commits `1207e27` → `5728f07`; last deploy
+`dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`). Builds clean (`tsc --noEmit --skipLibCheck`). Context: this session
+built on the **admin AI foundation** shipped just before it (`a23d747` "usage ledger + per-capability model
+overrides + admin split", migration `20260708130000_ai_usage_and_capability`).
+
+**ONE prod migration this session** — `20260708200000_ai_pricing_and_run_id` (additive: `run_id` on
+`dara_ai_usage_log` + new `dara_ai_model_price` table) — applied as owner (`prisma migrate deploy`) **+** its
+RLS `prisma/security/2026-07-08_ai_model_price_rls.sql` (`apply-sql.ts`) BEFORE the code deploy. Verified in
+prod: table + `run_id` exist, `dara_admin` full CRUD, `dara_app` no grant (fail-closed), `dara_admin_all` policy.
+
+1. **Usage ledger was empty → root cause fixed (`1207e27`).** The AI usage ledger recorded **zero** rows because
+   **`utils/dara/direct-review.ts` (the one-click Direct AI Review engine) never called `logUsage()`** — it was
+   the only `complete()` call site missed when the ledger was wired in `a23d747` (every other capability — shred,
+   compliance_sweep, review_pass, evaluation, amendment_diff, annotated_export — was wired). Now logs
+   `direct_review` on success + failure. (Diagnosis: table/RLS/grants/`prismaAdmin` env were all healthy; the
+   write simply never happened, so there was no `[usage] failed to record` error either.)
+2. **AI run cost estimation (`3732e4b`).** Estimates the USD cost of each AI run from the ledger.
+   - **Pricing** lives in `dara_ai_model_price` (USD **per 1M tokens**), refreshed weekly by a new cron
+     **`/api/cron/pricing`** (Mon 06:00 UTC, `vercel.json`, CRON_SECRET-gated) from the **LiteLLM community feed**
+     (`utils/dara/pricing.ts`; feed URL overridable via env `AI_PRICING_FEED_URL`). Its bare model keys match
+     what we send/record, so cost is an exact `(provider, model)` lookup. **No provider has an official pricing
+     API** — the feed is the pollable substitute (user chose "community feed + operator override"). Seeded **224
+     rows** at launch (23 anthropic / 54 google / 147 openai; `claude-sonnet-4-6` $3/$15, `claude-opus-4-8`
+     $5/$25, `claude-haiku-4-5` $1/$5). Operator **`source='override'`** rows are **immune** to the weekly refresh.
+   - **Per-run attribution:** new `run_id` on the ledger, set via **AsyncLocalStorage** (`utils/dara/run-context.ts`)
+     — `withRunContext('job:<id>')` wraps the worker dispatch in `passes.ts:processReviewJobs`, so every
+     `logUsage()` deep in the engines is tagged with **no signature threading**. Only runs recorded **after this
+     deploy** have a `run_id` (older rows null → excluded from the per-run view).
+   - **Cost is NOT stored on the ledger** — it's computed at read time from the price table
+     (`costOf()`/`getPricingMap()`), same as the usage report. `getUsageReport()` now returns est. cost per
+     capability/model, a **top-25 cost-per-run** breakdown, and `unpricedModels` (usage with no price → surfaced
+     for overrides).
+   - Admin **`/app/admin/usage`** gained cost cards/columns, a cost-per-run table, and a **Model pricing manager**
+     (`app/app/admin/ModelPricing.tsx` + `pricing-actions.ts`): edit overrides, delete, manual "Refresh from
+     feed", and prompts for unpriced models. Memory: `ai-usage-cost.md`.
+3. **Admin console nav moved into the sidebar (`8682097`).** Deleted the horizontal `app/app/admin/AdminNav.tsx`
+   tab bar; `components/layout/PlatformAdminSidebar.tsx` now carries route-aware links in two sections —
+   **Operations** (Overview / Background jobs / AI usage) and **Configuration & accounts** (Platform AI / Gating /
+   Accounts / Users / Administrators) — with active-state highlighting (`exact` match for Overview + the in-page
+   section links, prefix match for the sub-pages). **Gating/Users/Administrators keep their `#gating`/`#users`/
+   `#admins` anchors** (Accounts is hashless — its section has no `id`). `app/app/admin/layout.tsx` is now a plain
+   `requirePlatformAdmin()` guard + max-width wrapper (no nav).
+4. **Admin dashboard (`5728f07`).** `/app/admin` (`app/app/admin/page.tsx`) now **opens with a dashboard**: 4 stat
+   cards (Active jobs · Tokens today · Est. cost today · Companies), a **Live jobs** panel (inline `killJob` server
+   action — defined in this file, revalidates `/app/admin` — plus a "Kill all →" **link** to `/app/admin/jobs`),
+   an **AI usage — today** panel (per-company tokens + cost, priced from `getPricingMap`), and a **read-only**
+   per-capability **AI keys & models** panel (links to `/app/admin/ai` to edit). The existing **Default gating /
+   Accounts / Users / Administrators** sections + all their server actions are **preserved verbatim below** the
+   dashboard (still targeted by the sidebar hash links). `estimatedCostUsd` does **not** exist on the ledger — the
+   dashboard prices today's usage via `getPricingMap`/`costOf`, not a stored column.
+5. **Housekeeping (`3132bd4`).** `.gitignore` now excludes `_*.mjs` (scratch scripts) + `.claude/worktrees/`.
+
+## 0 (prior). 2026-07-07, part 2 — DARA-025 BOLA sweep + public-page branding + password-reset finding
 
 Not yet committed or deployed. **No migrations** (code-only). Builds clean (`tsc --noEmit` + `pnpm build`).
 
@@ -85,7 +141,11 @@ detail in `BUILD_STATUS.md` §-1; summary:
   only because of the untracked `tsconfig.tsbuildinfo` — source still == the commit.
 - **Schema changes: migrate BEFORE the code deploy.** `pnpm prisma migrate deploy` → new `dara_*` table
   also needs its RLS applied via `npx tsx prisma/security/apply-sql.ts <file>` → then deploy.
-  **No new migrations this session — every change was code-only** (21 migrations still the latest).
+  **This session applied one migration** (`20260708200000_ai_pricing_and_run_id`) + its RLS
+  (`2026-07-08_ai_model_price_rls.sql`) to prod as owner, in that order, before the code deploy — the
+  established two-step. `prisma migrate status` showed a clean single-pending before applying (26 applied +
+  1 pending); after deploy all are applied. The prior `20260708130000_ai_usage_and_capability` (from the
+  admin AI foundation `a23d747`) was already applied.
 - **`.env.local` points at the REMOTE (prod) Supabase.** No local DB. `withTenant` interactive
   transactions can throw **P2028** from this dev machine (pooler latency) — verify tenant DB flows on
   prod, or with a throwaway non-interactive `pg` script on `DIRECT_URL`. `.env.local` also has the
@@ -222,6 +282,19 @@ migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_us
   URL with a `?v=` cache-bust. Shared render via `components/dara/Avatar.tsx`.
 - **"Connect Google" needs Manual Linking ON** in Supabase (operator). Until then the button fails gracefully
   with a "not enabled yet" message — the rest of `/app/account/profile` works regardless.
+- **AI cost is an ESTIMATE computed at read time**, never stored on the ledger. `getUsageReport` / the admin
+  dashboard join `dara_ai_usage_log` tokens against `dara_ai_model_price` via `costOf()`. A model with usage
+  but **no price row** contributes $0 and is surfaced under "unpriced models" on `/app/admin/usage` — add an
+  operator **override** there to price it. Don't expect a `estimatedCostUsd` column; there isn't one.
+- **Weekly pricing cron** `/api/cron/pricing` (Mon 06:00 UTC) is **CRON_SECRET-gated** exactly like
+  `/api/cron/passes`; it refreshes only `source='feed'` rows (operator `override` rows are never touched).
+  Feed = LiteLLM JSON (override via `AI_PRICING_FEED_URL`). Runs on prod only.
+- **`run_id` is forward-only.** It's set from an AsyncLocalStorage context wrapped around the worker dispatch
+  (`passes.ts:processReviewJobs` → `withRunContext('job:<id>')`); rows written before the 2026-07-08 deploy
+  have `run_id=null` and don't appear in the per-run cost view. Inline (non-worker) AI paths also get null.
+- **Admin nav lives ONLY in `PlatformAdminSidebar`** now (AdminNav.tsx is deleted). Adding an admin sub-page
+  means adding an `ITEMS` entry there; the in-page Overview sections (Gating/Users/Admins) are `#hash` links
+  back to `/app/admin`, so keep those section `id`s intact on `app/app/admin/page.tsx`.
 
 ---
 
@@ -250,6 +323,15 @@ migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_us
    (`runComplianceSweep`/`evaluator.ts` → add a `manual_verification` status), and the pass prompts so format
    requirements aren't pulled into the technical passes (`utils/dara/passes.ts`/`prompt.ts`). May need a new
    `ComplianceStatus` enum value (`manual_verification`) + matrix UI affordance.
+7. **AI cost/observability follow-ups (new 2026-07-08, all optional polish).**
+   - **Verify the weekly pricing cron fires** — first run is Mon 06:00 UTC; until then the 224 seed rows stand.
+     Sanity-check on prod after the first fire (Vercel cron logs / `dara_ai_model_price.updated_at`).
+   - **Per-run labels are `job:<id>`** — readable but opaque. Could resolve to the solicitation/company for the
+     cost-per-run table (needs a join from job id → payload entity). Inline paths (regenerate, annotated export)
+     have **no** run context yet — wrap them in `withRunContext` if you want their cost attributed to a run.
+   - **Pricing accuracy** — LiteLLM is community-maintained; spot-check the seeded Anthropic rates against
+     Anthropic's page, and add operator overrides on `/app/admin/usage` for anything the feed lags or omits.
+   - **`getPricingMap()` runs per usage/dashboard render** (small table, fine now) — cache if it grows.
 
 ---
 
@@ -281,8 +363,8 @@ DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-conte
 ## 6. Fast restart
 
 ```bash
-git status                       # clean main except untracked SECURITY_BACKLOG.md + tsconfig.tsbuildinfo; HEAD 5d3d008 (== last deployed)
-git log --oneline -14
+git status                       # clean main except untracked SECURITY_BACKLOG.md + tsconfig.tsbuildinfo; HEAD 5728f07 (== last deployed, pushed)
+git log --oneline -14            # 5728f07 dashboard · 8682097 sidebar nav · 3732e4b cost estimation · 1207e27 direct_review ledger fix
 pnpm install
 pnpm exec tsc --noEmit
 pnpm build                       # must pass; recent: /auth/confirm interstitial (GET renders, POST verifies)
@@ -294,6 +376,17 @@ pnpm build                       # must pass; recent: /auth/confirm interstitial
 
 ## 7. Key files
 
+- **AI cost + usage ledger (2026-07-08, §0):** ledger + report `utils/dara/usage.ts` (`logUsage`, `getUsageReport`,
+  `run_id`); pricing `utils/dara/pricing.ts` (`getPricingMap`/`costOf`/`refreshPricing`/`listPricing`/
+  `setPriceOverride`); run context `utils/dara/run-context.ts` (`withRunContext`/`currentRunId`); weekly cron
+  `app/api/cron/pricing/route.ts` + `vercel.json`; admin UI `app/app/admin/usage/page.tsx` +
+  `app/app/admin/ModelPricing.tsx` + `app/app/admin/pricing-actions.ts`; worker wiring
+  `utils/dara/passes.ts:processReviewJobs`; Direct-review logging `utils/dara/direct-review.ts`. Migration
+  `prisma/migrations/20260708200000_ai_pricing_and_run_id` + RLS `prisma/security/2026-07-08_ai_model_price_rls.sql`.
+  Schema: `AiUsageLog.runId`, new `AiModelPrice`. Memory: `ai-usage-cost.md`.
+- **Admin console shell (2026-07-08, §0):** `components/layout/PlatformAdminSidebar.tsx` (all admin nav),
+  `app/app/admin/layout.tsx` (guard+wrapper only), `app/app/admin/page.tsx` (dashboard + gating/accounts/users/
+  admins sections + `killJob`), sub-pages `app/app/admin/{jobs,usage,ai}/page.tsx`. (`AdminNav.tsx` deleted.)
 - **Account self-service (2.0):** `app/app/account/profile/{page,ProfilePanel,PasswordPanel,SignInMethodsPanel,actions}.tsx|ts`;
   avatar storage `utils/dara/avatar.ts` (public `dara-avatars` bucket) + `scripts/create-avatars-bucket.mjs`;
   shared `components/dara/Avatar.tsx`; `dara_users.avatar_url` migration `20260707000000_user_avatar`.

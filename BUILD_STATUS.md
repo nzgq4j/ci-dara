@@ -1,20 +1,70 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-07_
+_Last updated: 2026-07-08_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `5d3d008` (`dpl_7X6MQ9mhvejv4rxaF5zbvrDAphZd`) — **working tree clean** (except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`; everything below is committed + deployed).
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `5728f07` (`dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`, `ci-dara-4rteq5dyn`) — **working tree clean** (except untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`; everything below is committed + pushed + deployed, `main`==`5728f07`==last deployed).
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
-> **Start-here for the next session is `SESSION_HANDOFF.md`** (deploy model, gotchas, backlog, key files).
-> **Top priority next: the security backlog** — `SECURITY_BACKLOG.md` (untracked; findings unified to
-> `DARA-021..046`, prior hardening intact). **DARA-025 (BOLA) + DARA-046 (password reset) both DONE
-> 2026-07-07.** Top open now: DARA-021 rate limiting (code) + DARA-022/023 (operator: Next 15, branch protection).
-> **Operator dashboard steps DONE** (user confirmed 2026-07-07): Supabase Manual Linking enabled + 12 email templates pasted.
-> ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header — decide: untrack (`git rm --cached` + gitignore) or accept. Left uncommitted this session.
+> **Start-here for the next session is `SESSION_HANDOFF.md` §0 (2026-07-08)** (deploy model, gotchas, backlog, key files).
+> **This session (2026-07-08):** admin **AI cost dashboard + per-run cost tracking** + admin **sidebar nav** +
+> fixed the **usage ledger never recording Direct AI Reviews** — see §-3 below. One prod migration
+> (`20260708200000_ai_pricing_and_run_id`) + RLS applied.
+> **Top priority next remains the security backlog** — `SECURITY_BACKLOG.md` (untracked; `DARA-021..046`, prior
+> hardening intact). **DARA-025 (BOLA) + DARA-046 (password reset) DONE 2026-07-07.** Top open: DARA-021 rate
+> limiting (code) + DARA-022/023 (operator: Next 15, branch protection).
+> **Operator dashboard steps DONE** (2026-07-07): Supabase Manual Linking + 12 email templates pasted.
+> ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header — decide: untrack (`git rm --cached` + gitignore) or accept.
 
 ---
+
+## -3. Latest session (2026-07-08) — Admin AI cost dashboard + per-run cost + sidebar nav + usage-ledger fix
+
+Commits `1207e27` → `5728f07`, all **pushed + deployed** (`dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`). Built on the
+**admin AI foundation** shipped immediately before (`a23d747` — usage ledger + per-capability model overrides +
+admin split; migration `20260708130000_ai_usage_and_capability`). **One prod migration this session**
+(`20260708200000_ai_pricing_and_run_id`, additive) + its RLS (`2026-07-08_ai_model_price_rls.sql`) applied as
+owner before the code deploy.
+
+- **Usage ledger recorded ZERO rows → root-caused + fixed** (`1207e27`). `utils/dara/direct-review.ts` (the
+  one-click Direct AI Review engine) called `complete()` but **never `logUsage()`** — the only AI call site missed
+  when the ledger was wired in `a23d747`. Because `logUsage` is best-effort (swallows errors) there was no error
+  either. Now logs `direct_review` on success + failure. Table/RLS/grants/`prismaAdmin` env were all verified
+  healthy — the write simply never happened.
+- **AI run cost estimation** (`3732e4b`) — decision: **community pricing feed + operator override** (no provider
+  publishes a pricing API) and **add a run id to the ledger** for exact per-run cost (user's two choices).
+  - `dara_ai_model_price` (USD **per 1M tokens**) refreshed weekly by **`/api/cron/pricing`** (Mon 06:00 UTC,
+    CRON_SECRET-gated) from the **LiteLLM** feed (`utils/dara/pricing.ts`; `AI_PRICING_FEED_URL` overridable).
+    Bare model keys match what we send/record → exact `(provider, model)` cost lookup. `source='override'` rows
+    are immune to the refresh (refresh = deleteMany feed → createMany). Admin-only RLS like the ledger. **Seeded
+    224 rows** (`claude-sonnet-4-6` $3/$15, `claude-opus-4-8` $5/$25, `claude-haiku-4-5` $1/$5).
+  - **`dara_ai_usage_log.run_id`** groups a run's N calls, set via **AsyncLocalStorage** (`utils/dara/run-context.ts`)
+    wrapped around the worker dispatch (`passes.ts:processReviewJobs` → `withRunContext('job:<id>')`) — no
+    signature threading. **Forward-only** (old rows null).
+  - **Cost is not stored** — `getUsageReport()` (`utils/dara/usage.ts`) computes it at read time via
+    `getPricingMap`/`costOf`, returning est. cost per capability/model, top-25 **cost per run**, and
+    `unpricedModels`. Admin `/app/admin/usage` gained cost cards/columns + cost-per-run table + a **Model pricing
+    manager** (`ModelPricing.tsx` + `pricing-actions.ts`: edit/delete overrides, manual refresh, unpriced prompts).
+    Memory: `ai-usage-cost.md`.
+- **Admin console nav → sidebar** (`8682097`). Deleted `app/app/admin/AdminNav.tsx` (horizontal tab bar);
+  `components/layout/PlatformAdminSidebar.tsx` now holds route-aware links in two groups — **Operations**
+  (Overview / Background jobs / AI usage) and **Configuration & accounts** (Platform AI / Gating / Accounts /
+  Users / Administrators) — with active-state (`exact` for Overview + section links, prefix for sub-pages).
+  Gating/Users/Administrators keep `#gating`/`#users`/`#admins` anchors (Accounts hashless). `layout.tsx` is now
+  a bare guard + wrapper.
+- **Admin dashboard** (`5728f07`). `/app/admin` (`app/app/admin/page.tsx`) opens with 4 stat cards (Active jobs ·
+  Tokens today · Est. cost today · Companies), a **Live jobs** panel (inline `killJob` + "Kill all →" link to
+  `/app/admin/jobs`), an **AI usage — today** panel (per-company tokens+cost via `getPricingMap`), and a
+  **read-only** per-capability **AI keys & models** panel. The existing gating/accounts/users/administrators
+  sections + server actions are preserved verbatim below (targeted by the sidebar hash links). Note: no
+  `estimatedCostUsd` column exists — the dashboard prices usage at read time.
+- **Housekeeping** (`3132bd4`): `.gitignore` excludes `_*.mjs` + `.claude/worktrees/`.
+
+**Where to next:** security backlog stays #1 (DARA-021 rate limiting, DARA-022 Next 15, DARA-023 branch
+protection). Cost-feature polish (all optional): confirm the weekly cron's first Monday fire; resolve `job:<id>`
+run labels to solicitation/company; wrap inline AI paths (regenerate, annotated export) in `withRunContext` if
+their cost should be attributed; spot-check LiteLLM rates and override as needed.
 
 ## -2. Latest session (2026-07-07, part 2) — DARA-025 BOLA + full password-reset fix + public-page branding
 
