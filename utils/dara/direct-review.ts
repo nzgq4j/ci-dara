@@ -16,6 +16,7 @@ import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { buildDirectReviewPrompt, parseDirectReviewResult } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
+import { logUsage } from '@/utils/dara/usage';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { requireTrialCapacity } from '@/utils/dara/trial';
 import { renderPersonaGuidance } from '@/utils/dara/personas';
@@ -205,9 +206,11 @@ export async function runDirectReview(
   try {
     ai = await complete(provider, system, user, model, apiKey, DIRECT_MAX_TOKENS);
   } catch (e) {
+    await logUsage({ capability: 'direct_review', provider, model, companyId, ok: false });
     await failDirectReview(directReviewId, companyId, e instanceof Error ? e.message.slice(0, 480) : 'AI request failed.');
     return { ok: false, error: 'AI request failed.' };
   }
+  await logUsage({ capability: 'direct_review', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
   const parsed = parseDirectReviewResult(ai.text);
   const recommendedSubmitAt = submitDateFromDays(loaded.solicitation?.dueDate ?? null, parsed.recommendedSubmitDays);
