@@ -2,11 +2,26 @@
 // list of Requirement rows via the configured AI provider. Mirrors the evaluator's
 // burst pattern — the slow LLM call runs OUTSIDE any tenant transaction.
 
-import { withTenant } from '@/utils/prisma';
+import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { buildShredPrompt, buildShredGapPrompt, parseShred } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+
+// Write a progress label to the owning JobQueue row so the UI
+// can show which phase the shred is in. Fire-and-forget —
+// a failed label write must never abort the shred itself.
+async function setShredLabel(jobId: bigint | undefined, label: string): Promise<void> {
+  if (!jobId) return;
+  try {
+    await prismaAdmin.jobQueue.update({
+      where: { id: jobId },
+      data: { progressLabel: label },
+    });
+  } catch {
+    // Non-fatal — the shred continues even if the label write fails.
+  }
+}
 
 // Output cap per shred call. Generation time scales with OUTPUT tokens, and a single call
 // must finish inside the provider's 240s hard timeout (utils/dara/providers.ts). A 16000-token
@@ -56,7 +71,8 @@ const COVERAGE_BUDGET_MS = 130_000;
 export async function shredRequirements(
   solicitationId: bigint,
   companyId: bigint,
-  deadlineMs = Infinity
+  deadlineMs = Infinity,
+  jobId?: bigint,          // ← new optional param
 ): Promise<ShredSummary> {
   // Burst A: load the solicitation docs, company AI config, and current ordering.
   const loaded = await withTenant(companyId, async (tx) => {
@@ -122,6 +138,7 @@ export async function shredRequirements(
   if (!resuming) {
     // First tick: full extraction. LLM call OUTSIDE any transaction — the slow network hop.
     const { system, user } = buildShredPrompt(solText);
+    await setShredLabel(jobId, 'Reading the solicitation — initial extraction pass…');
     let ai;
     try {
       ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
@@ -138,6 +155,7 @@ export async function shredRequirements(
       seenNames.add(k);
       shredded.push(r);
     }
+    await setShredLabel(jobId, `Initial pass complete — ${shredded.length} requirements found. Running coverage check…`);
   }
 
   // Coverage passes: hunt for requirements not yet captured. Bounded per tick (≤2 rounds) and
@@ -151,6 +169,7 @@ export async function shredRequirements(
     // Not enough budget to finish another coverage call before the function is killed — stop
     // and leave the job to resume next tick with a full budget (nothing is orphaned; what we
     // have is saved below).
+    await setShredLabel(jobId, `Coverage pass ${round + 1} — checking for missed requirements…`);
     if (deadlineMs - Date.now() < COVERAGE_BUDGET_MS) break;
     const gap = buildShredGapPrompt(solText, Array.from(seenNames));
     let gapAi;
@@ -172,6 +191,7 @@ export async function shredRequirements(
       break;
     }
     more.forEach((r) => shredded.push(r));
+    await setShredLabel(jobId, `Coverage pass ${round + 1} complete — ${seenNames.size} requirements found. Checking for more…`);
   }
 
   // Dedupe: skip anything whose name already exists (so re-running does not duplicate),
@@ -187,6 +207,7 @@ export async function shredRequirements(
     return { ok: true, count: 0, exhausted };
   }
 
+  await setShredLabel(jobId, `Writing ${fresh.length} new requirements to the matrix…`);
   // Burst B: persist the new requirement rows.
   await withTenant(companyId, (tx) =>
     tx.requirement.createMany({

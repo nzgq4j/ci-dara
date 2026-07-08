@@ -197,6 +197,26 @@ export async function isShredActive(solicitationId: bigint, companyId: bigint): 
   return jobs.some((j) => jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId));
 }
 
+/** Returns whether a shred is active AND its current progress label. */
+export async function getShredStatus(
+  solicitationId: bigint,
+  companyId: bigint,
+): Promise<{ active: boolean; progressLabel: string | null }> {
+  const jobs = await withTenant(companyId, (tx) =>
+    tx.jobQueue.findMany({
+      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
+      select: { payload: true, progressLabel: true },
+    })
+  );
+  const match = jobs.find((j) =>
+    jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId)
+  );
+  return {
+    active: !!match,
+    progressLabel: match?.progressLabel ?? null,
+  };
+}
+
 /** Enqueue an async amendment reconcile ("Reconcile with AI") for an amendment. */
 export function enqueueReconcile(amendmentId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
   return enqueueUniqueJob(companyId, 'reconcile', 'amendmentId', amendmentId);
@@ -716,7 +736,12 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
         // to mine so a dense solicitation finishes across ticks; only mark the job done once the
         // shred reports it's fully mined. Surface a hard failure (e.g. AI/API error) via throw so
         // it routes through the retry/fail path instead of silently leaving an empty matrix.
-        const shredRes = await shredRequirements(BigInt(payload.solicitationId), companyId, deadlineMs);
+        const shredRes = await shredRequirements(
+          BigInt(payload.solicitationId),
+          companyId,
+          deadlineMs,
+          pending.id,          // ← pass job id so shredRequirements can write progress labels
+        );
         if (!shredRes.ok) throw new Error(shredRes.error ?? 'Requirements shred failed.');
         done = shredRes.exhausted ?? true;
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {

@@ -887,6 +887,8 @@ model JobQueue {
   startedAt   DateTime? @map("started_at")
   finishedAt  DateTime? @map("finished_at")
   createdAt   DateTime  @default(now()) @map("created_at")
+  progress      Int     @default(0)
+  progressLabel String? @map("progress_label") @db.VarChar(200)
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 

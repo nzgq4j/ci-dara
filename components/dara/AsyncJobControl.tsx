@@ -15,6 +15,7 @@ export default function AsyncJobControl({
   activeLabel,
   idleIcon,
   active,
+  progressLabel,
   count,
   countNoun,
   action,
@@ -26,6 +27,7 @@ export default function AsyncJobControl({
   activeLabel: string;
   idleIcon?: ReactNode;
   active: boolean;
+  progressLabel?: string;    // ← live phase label from the DB; falls back to activeLabel
   count?: number;
   countNoun?: string;
   action: (fd: FormData) => Promise<{ ok: boolean; error?: string }>;
@@ -63,7 +65,7 @@ export default function AsyncJobControl({
       {active && (
         <div>
           <div className="mb-1 flex items-center justify-between text-[11px] text-t4">
-            <span>{activeLabel}</span>
+            <span>{progressLabel ?? activeLabel}</span>
             {showCount && (
               <span className="font-mono text-t5">
                 {count} {countNoun}

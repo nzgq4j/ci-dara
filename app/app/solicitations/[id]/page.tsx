@@ -21,7 +21,7 @@ import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, isShredActive, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, getShredStatus, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { getTrialUsage, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
 import { buildMatrixDocx } from '@/utils/dara/matrix-docx';
@@ -1215,7 +1215,7 @@ export default async function SolicitationDetailPage({
   });
   if (!gate || !gate.viewable) notFound();
 
-  const [meta, reviewGroup, amendEval, complianceActive, shredActive, reconcileActiveIds] =
+  const [meta, reviewGroup, amendEval, complianceActive, shredStatus, reconcileActiveIds] =
     await Promise.all([
       withTenant(companyId, async (tx) => ({
         requirements: await tx.requirement.findMany({
@@ -1266,9 +1266,11 @@ export default async function SolicitationDetailPage({
         })
       })),
       isComplianceCheckActive(solId, companyId),
-      isShredActive(solId, companyId),
+      getShredStatus(solId, companyId),
       activeReconcileAmendmentIds(companyId).then((ids) => new Set(ids))
     ]);
+  const shredActive = shredStatus.active;
+  const shredProgressLabel = shredStatus.progressLabel;
 
   const solicitation = {
     ...gate.sol,
@@ -1541,7 +1543,8 @@ export default async function SolicitationDetailPage({
               fields={{ solId: sid }}
               idleIcon={<Sparkles className="h-4 w-4" />}
               idleLabel={requirements.length ? 'Generate more' : 'Generate from solicitation'}
-              activeLabel="Reading the solicitation & extracting requirements…"
+              activeLabel="Extracting requirements — running in background, updates every few seconds…"
+              progressLabel={shredProgressLabel ?? undefined}
               active={shredActive}
               count={requirements.length}
               countNoun="requirement"
