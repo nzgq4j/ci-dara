@@ -19,7 +19,7 @@ jobs:
       - uses: pnpm/action-setup@v4 # reads packageManager from package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24 # pnpm 11 requires Node >= 22.13 (uses node:sqlite)
           cache: pnpm
       # DARA-016: a drifted/edited lockfile fails the build here.
       - name: Install (frozen lockfile)

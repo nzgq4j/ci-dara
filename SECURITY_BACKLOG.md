@@ -14,8 +14,10 @@ These findings are now folded into the **single DARA-xxx register** used in-app 
 Summary-level entries for every item below are mirrored in the committed, admin-gated
 `utils/dara/security-content.ts`; the **file:line exploit detail lives only here** (untracked).
 
-**Fixed since the re-audit (6):** DARA-024 (SEC-04, `7fe23ab`) · DARA-026 (SEC-06) · DARA-027 (SEC-07)
-· DARA-028 (SEC-08) · DARA-030 (SEC-10) · DARA-034 (SEC-14) — the last five this session.
+**Fixed since the re-audit (7):** DARA-024 (SEC-04, `7fe23ab`) · DARA-026 (SEC-06) · DARA-027 (SEC-07)
+· DARA-028 (SEC-08) · DARA-030 (SEC-10) · DARA-034 (SEC-14) · **DARA-025 (SEC-05, BOLA — 2026-07-07)**.
+
+**New this session (2026-07-07):** DARA-046 — password reset broken (recovery link fails verifyOtp). See P1.
 
 ## Baseline: prior hardening still holds
 The June 2026 remediations (DARA-001…019) are **intact — no regressions found**. Notably:
@@ -65,24 +67,57 @@ red, per DARA-022) does not stop a production deploy. The gates are informationa
 at the egress records provider/mode/reviewId; (b) the proposal is wrapped with the shared
 `fenceUntrusted()` + `INJECTION_GUARD` like every other builder.
 
+### DARA-046 · Password reset broken — recovery link fails to verify — NIST IA-5, availability — ✅ FIXED (2026-07-07)
+Reported 2026-07-07 (user hit it). `requestPasswordUpdate` (`utils/auth-helpers/server.ts`) calls
+`supabase.auth.resetPasswordForEmail` on the **PKCE** SSR client, so the built-in recovery email's
+`{{ .TokenHash }}` (`supabase/templates/recovery.html`) renders as a **PKCE code**
+(`token_hash=pkce_…`). The template links to `/auth/confirm?token_hash=pkce_…&type=recovery`, and
+`/auth/confirm` calls `verifyOtp({type, token_hash})` — but a `pkce_` token is **not** a verifiable OTP
+hash; it needs `exchangeCodeForSession` **plus** the code-verifier cookie from the originating browser.
+So `verifyOtp` fails → redirect to `/signin`. Opening from an email scanner (Outlook SafeLinks) or a
+different device removes the verifier entirely. **Net effect: nobody can reset their password.**
+Example dead link: `…/auth/confirm?token_hash=pkce_254b687c…&type=recovery&next=/app/account/profile`.
+- **Fix shipped (2026-07-07) — two parts:**
+  1. **PKCE→implicit token:** a shared **`newImplicitAuthClient()`** (anon key, `flowType:'implicit'`,
+     `persistSession:false`) now backs both **`resetPasswordForEmail`** and **`signUp`**, so `{{ .TokenHash }}`
+     is a plain OTP hash (not `pkce_…`).
+  2. **Scanner-prefetch consumption:** prod logs showed the single-use token being burned by an email-scanner
+     **HEAD/GET prefetch** (Outlook Safe Links) before the user clicked — because `/auth/confirm` verified on
+     GET. **`app/auth/confirm/route.ts` is now split: GET/HEAD render a branded interstitial (no verify); POST
+     runs `verifyOtp` → 303.** Scanners don't submit forms, so they can't consume the token.
+     Verified locally: GET/HEAD → 200 interstitial (no Supabase call); POST → verify attempt → redirect.
+  3. **Forced reset before app access:** a RECOVERY verify now sets a short-lived httpOnly marker cookie
+     (`dara-pw-reset`, `utils/dara/pw-reset.ts`) and lands the user on `/signin/update_password` instead of the
+     app; the middleware routes every `/app` request back to that screen until `updatePassword()` clears the
+     marker — so the reset can't be skipped by navigating into the app. Verified locally: `/app` + marker →
+     307 → `/signin/update_password`; without marker → normal `/signin`.
+  No new env/infra; keeps Supabase’s built-in Resend-SMTP email. **Links minted before the fix stay dead —
+  request a fresh one.** _magic-link (`signInWithEmail`) + email-change (`updateEmail`) still use the PKCE SSR
+  client; they benefit from the interstitial but should also move to `newImplicitAuthClient()` if enabled._
+
 ---
 
 ## P2 — Medium (net-new code gaps; straightforward fixes)
 
-### DARA-025 (SEC-05) · Cross-department BOLA on child mutation/delete actions — NIST AC-3/AC-6, OWASP API1/A01
+### DARA-025 (SEC-05) · Cross-department BOLA on child mutation/delete actions — NIST AC-3/AC-6, OWASP API1/A01 — ✅ FIXED (2026-07-07)
 Department scoping (`sol-access.ts`, app-layer; DB RLS is company-level only) is enforced on *create*
-via `requireViewableSolicitation`, but several *mutate/delete* actions authorize the child by
+via `requireViewableSolicitation`, but several *mutate/delete* actions authorized the child by
 **`companyId` only**, not by the viewable parent solicitation. A `reviewer` or out-of-department member
-can act on a sibling department's data with a guessable sequential ID:
-- No viewability gate at all: `updateRequirement`, `saveMatrixRow`, `deleteRequirement` (page.tsx:361/397/421),
-  `deleteSolDoc` (:698). — _verified: only `requirement.findFirst({id, companyId})`._
+could act on a sibling department's data with a guessable sequential ID:
+- No viewability gate at all: `updateRequirement`, `saveMatrixRow`, `deleteRequirement`,
+  `deleteSolDoc` — plus the same-class `deleteReview`, `updateReview`, `deleteReviewDoc`, `deleteAmendment`
+  (all resolved the child by `{id, companyId}` only).
 - Gate `solId` but act on a separately-supplied child id: `runReviewAction`, `rerunPassAction`,
   `regenerateResultAction`, `archiveResultAction`, `applyChangeAction`, `enqueueReconcileAction`.
 - **Impact:** same-tenant only (no cross-company leak), but unauthorized **tamper/delete** + **triggering
   AI runs (cost + CUI egress)** on another department's data.
-- **Fix:** resolve each child through its parent solicitation and run `requireViewableSolicitation` on
-  that sol before mutating (the `uploadReviewDoc` pattern). Also tie `reviewId`/`passId` to the checked `solId`.
-- _Note: line numbers above predate this session's edits to `page.tsx` — re-locate the actions by name._
+- **Fix shipped** (`app/app/solicitations/[id]/page.tsx`): every child mutation/delete action now
+  (a) runs `requireViewableSolicitation(solId)` and (b) ties the child to that `solId`. Local-fetch
+  actions scope their `findFirst` by `solicitationId: solId` (or `review: { solicitationId: solId }` for
+  review-documents); the six delegating actions call a new shared **`requireChildInSol(solId, user, kind,
+  childId)`** helper that resolves review / reviewPass / result / amendment / amendmentChange up to `solId`
+  before invoking the enqueue/regenerate/apply helper. The `/annotated` route was already safe
+  (`loadSource` gates the sol + ties `reviewId` to it). Register: `security-content.ts` DARA-025 → Remediated.
 
 ### DARA-026 (SEC-06) · Deactivated / banned users retain application access — NIST AC-2, IA-4 — ✅ FIXED (this session)
 `getDaraUser` (`provision.ts`) did not filter `isActive`, and only the app-shell layout checked it, so
@@ -204,10 +239,11 @@ defense-in-depth against a future injection. This is the previously-deferred non
 - **Branch protection** on `main` (DARA-023).
 
 ## Suggested sequence
-1. ~~Quick code wins~~ — **DONE this session:** DARA-026 (isActive fail-closed), DARA-027 (removeStored on
+1. ~~Quick code wins~~ — **DONE (2026-07-06):** DARA-026 (isActive fail-closed), DARA-027 (removeStored on
    sol delete), DARA-028 (CSV escaping), DARA-030 (export/re-run audit), DARA-034 (cron fail-closed).
    (DARA-024 was fixed in `7fe23ab`.)
-2. Bigger code: **DARA-025** (BOLA sweep), **DARA-021** (rate limiting/WAF), **DARA-029** (key rotation),
-   **DARA-032**, **DARA-033**.
+2. ~~**DARA-025** (BOLA sweep)~~ — **DONE (2026-07-07).** Remaining bigger code: **DARA-046** (password
+   reset — broken, needs the code-owned recovery link), **DARA-021** (rate limiting/WAF),
+   **DARA-029** (key rotation), **DARA-032**, **DARA-033**.
 3. Operator/process: **DARA-023** (branch protection + CI-gated deploy), **DARA-022** (Next 15 migration),
    **DARA-031/DARA-040** (Supabase MFA/password), **DARA-036/DARA-037** (CI hardening).
