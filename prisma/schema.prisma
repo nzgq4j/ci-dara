@@ -949,10 +949,34 @@ model AiUsageLog {
   tokenIn    Int          @default(0) @map("token_in")
   tokenOut   Int          @default(0) @map("token_out")
   ok         Boolean      @default(true)
+  // Groups the N LLM calls of a single run (a job, a Direct Review, a shred) so cost can be
+  // attributed per run. Set from the AsyncLocalStorage run context (utils/dara/run-context.ts)
+  // established by the worker dispatch; null for one-off calls with no run scope.
+  runId      String?      @map("run_id") @db.VarChar(120)
   createdAt  DateTime     @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@index([companyId, createdAt])
   @@index([capability])
+  @@index([runId])
   @@map("dara_ai_usage_log")
+}
+
+// Per-model token pricing (USD per 1,000,000 tokens) used to estimate the cost of AI runs
+// from the usage ledger. Rows are refreshed weekly from a community pricing feed (LiteLLM),
+// keyed by the same bare provider/model strings the ledger records, so cost is an exact
+// (provider, model) lookup. An operator can override any row (or add a model the feed lacks):
+// source='override' rows are never touched by the weekly refresh. Admin-only, like the ledger.
+model AiModelPrice {
+  id            BigInt   @id @default(autoincrement())
+  provider      String   @db.VarChar(50)
+  model         String   @db.VarChar(100)
+  inputPerMtok  Float    @map("input_per_mtok")
+  outputPerMtok Float    @map("output_per_mtok")
+  // 'feed' = populated by the weekly refresh; 'override' = operator-set, refresh-immune.
+  source        String   @default("feed") @db.VarChar(20)
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([provider, model])
+  @@map("dara_ai_model_price")
 }

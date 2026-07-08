@@ -23,6 +23,7 @@ import {
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { logUsage } from '@/utils/dara/usage';
+import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
@@ -733,6 +734,10 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
 
     try {
       let done = true;
+      // Tag every LLM call this job makes with a stable run id so the usage ledger can attribute
+      // cost per run. AsyncLocalStorage carries it down to logUsage() without threading a param
+      // through each engine.
+      await withRunContext(`job:${pending.id}`, async () => {
       if (payload.kind === 'direct_review' && payload.directReviewId) {
         // Single unified LLM call — always finishes within one tick (no time-boxing needed).
         await runDirectReview(BigInt(payload.directReviewId), companyId);
@@ -759,6 +764,7 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.reviewId) {
         ({ done } = await runReviewPasses(BigInt(payload.reviewId), companyId, deadlineMs));
       }
+      });
 
       if (done) {
         await prismaAdmin.jobQueue.update({
