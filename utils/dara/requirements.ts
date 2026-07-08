@@ -5,8 +5,7 @@
 import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { buildShredPrompt, buildShredGapPrompt, parseShred } from '@/utils/dara/prompt';
-import { completeWithGate, resolveCompanyAI } from '@/utils/dara/providers';
-import { validateShreddedRequirement } from '@/utils/dara/shreds/validate-output';
+import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 
 // Output cap per shred call. Generation time scales with OUTPUT tokens, and a single call
@@ -125,18 +124,9 @@ export async function shredRequirements(
     const { system, user } = buildShredPrompt(solText);
     let ai;
     try {
-      ai = await completeWithGate(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
+      ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
     } catch (e) {
       return { ok: false, count: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
-    }
-    if (!ai.gatePass) {
-      return {
-        ok: false,
-        count: 0,
-        error:
-          `Shred parse gate failed after ${ai.parseAttempts} attempt(s): ` +
-          (ai.failureReason ?? 'no parseable JSON returned.'),
-      };
     }
     const first = parseShred(ai.text);
     if (first.length === 0) {
@@ -165,15 +155,7 @@ export async function shredRequirements(
     const gap = buildShredGapPrompt(solText, Array.from(seenNames));
     let gapAi;
     try {
-      gapAi = await completeWithGate(provider, gap.system, gap.user, model, apiKey, SHRED_MAX_TOKENS);
-      if (!gapAi.gatePass) {
-        // A failed parse on a gap pass is not proof the RFP is exhausted —
-        // let the job resume next tick rather than marking exhausted.
-        console.warn(
-          `[shred] gap-pass gate failed (round ${round}): ${gapAi.failureReason}`,
-        );
-        break;
-      }
+      gapAi = await complete(provider, gap.system, gap.user, model, apiKey, SHRED_MAX_TOKENS);
     } catch {
       // A failed gap call this tick isn't proof the RFP is exhausted — let it resume.
       break;
@@ -205,24 +187,10 @@ export async function shredRequirements(
     return { ok: true, count: 0, exhausted };
   }
 
-  // Inline quality check: block requirements that are likely hallucinations
-  // or truncated parses before they enter the compliance matrix.
-  const validated = fresh.filter((r) => {
-    const qv = validateShreddedRequirement(r);
-    if (qv.warnings.length > 0) {
-      console.warn('[shred]', qv.warnings.join(' | '));
-    }
-    return !qv.blocked;
-  });
-
-  if (validated.length === 0) {
-    return { ok: true, count: 0, exhausted };
-  }
-
   // Burst B: persist the new requirement rows.
   await withTenant(companyId, (tx) =>
     tx.requirement.createMany({
-      data: validated.map((r, i) => ({
+      data: fresh.map((r, i) => ({
         companyId,
         solicitationId,
         name: r.name,

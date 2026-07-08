@@ -10,10 +10,8 @@ import {
   type ParsedResult,
   type PromptCriterion
 } from '@/utils/dara/prompt';
-import { complete, completeWithGate, resolveCompanyAI } from '@/utils/dara/providers';
+import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
-import { prefilterCompliance } from '@/utils/dara/shreds/compliance-prefilter';
-import { validateComplianceDetermination } from '@/utils/dara/shreds/validate-output';
 
 // Output-token budget for a single evaluation factor's structured result. Enough for a
 // full holistic assessment (review summary + rationale + strengths/weaknesses/compliance/
@@ -399,25 +397,12 @@ async function sweepRequirements(
   let checked = 0;
   let lastError: string | undefined;
 
-  // Phase 1 optimization: classify administrative requirements deterministically
-  // before sending anything to the LLM. Requirements resolved here consume no
-  // LLM tokens; the returned count is added to `checked` so progress is accurate.
-  const { needsLLM, determinedCount } = await prefilterCompliance(
-    companyId,
-    requirements,
-  );
-  checked += determinedCount;
-
   // Slice into 30-item batches once, then grade COMPLIANCE_CONCURRENCY batches per round with
   // their LLM calls in flight together (the slow part). Results are persisted after each round.
-  const batches: (typeof needsLLM)[] = [];
-  for (let i = 0; i < needsLLM.length; i += BATCH_SIZE_COMPLIANCE) {
-    batches.push(needsLLM.slice(i, i + BATCH_SIZE_COMPLIANCE));
+  const batches: (typeof requirements)[] = [];
+  for (let i = 0; i < requirements.length; i += BATCH_SIZE_COMPLIANCE) {
+    batches.push(requirements.slice(i, i + BATCH_SIZE_COMPLIANCE));
   }
-
-  // Replace the remaining reference to `requirements` in the round loop.
-  // The round loop iterates `batches` (already updated above) so no further
-  // changes are needed inside the loop body.
 
   for (let i = 0; i < batches.length; i += COMPLIANCE_CONCURRENCY) {
     // Only start a round if a batch can finish before the function is killed. Otherwise stop
@@ -435,17 +420,7 @@ async function sweepRequirements(
           true
         );
         try {
-          const ai = await completeWithGate(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
-          if (!ai.gatePass) {
-            return {
-              batch,
-              items: [],
-              error:
-                `Parse gate failed after ${ai.parseAttempts} attempt(s): ` +
-                (ai.failureReason ?? 'no parseable JSON returned.') +
-                ' The model may be truncating output — try a stronger platform model (e.g. Sonnet).',
-            };
-          }
+          const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
           const { items } = parseBatchResults(ai.text);
           if (items.length === 0) {
             return { batch, items: [], error: 'The AI returned no parseable determinations — the model may be truncating output. Try a stronger platform model (e.g. Sonnet).' };
@@ -466,18 +441,6 @@ async function sweepRequirements(
         for (const r of g.batch) {
           const it = byId.get(r.id.toString());
           if (!it) continue;
-
-          // Inline quality check before writing.
-          const qv = validateComplianceDetermination(
-            r.id.toString(),
-            it.aiDetermination,
-            it.aiRationale,
-          );
-          if (qv.warnings.length > 0) {
-            console.warn('[sweep]', qv.warnings.join(' | '));
-          }
-          if (qv.blocked) continue; // skip write; item stays not_assessed for next run
-
           await tx.requirement.update({
             where: { id: r.id },
             data: {
