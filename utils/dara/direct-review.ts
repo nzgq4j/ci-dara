@@ -19,8 +19,17 @@ import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { requireTrialCapacity } from '@/utils/dara/trial';
 import { renderPersonaGuidance } from '@/utils/dara/personas';
+import { selectEvidenceContext } from '@/utils/dara/evidence-context';
 
 const DIRECT_MAX_TOKENS = 10000;
+
+// The direct review is intentionally broad, but it should not resend an entire large proposal
+// and solicitation on every run. Build a deterministic, requirement-driven evidence package
+// first. These caps are conservative enough to preserve broad coverage while materially reducing
+// prompt size on large pursuits. The future semantic retrieval layer can replace this selector
+// without changing the GenAI contract.
+const DIRECT_PROPOSAL_CONTEXT_CHARS = 40_000;
+const DIRECT_SOL_CONTEXT_CHARS = 20_000;
 
 // The AI advises submitting `days` before the deadline; turn that into a concrete date.
 export function submitDateFromDays(dueDate: Date | null | undefined, days: number | null): Date | null {
@@ -188,6 +197,26 @@ export async function runDirectReview(
     .map((r) => `- ${r.name}${r.citation ? ` (${r.citation})` : ''}`)
     .join('\n');
 
+  // Build a bounded evidence package before the GenAI call. The direct review remains broad:
+  // every active requirement contributes to the lexical query, but only the highest-value source
+  // windows are sent to the provider. This avoids repeatedly paying to resend irrelevant pages.
+  const evidenceQueries = loaded.requirements.map((r) => ({
+    name: r.name,
+    farReference: r.citation
+  }));
+  const proposalEvidence = selectEvidenceContext(proposalText, evidenceQueries, {
+    maxChars: DIRECT_PROPOSAL_CONTEXT_CHARS,
+    windowChars: 4_500,
+    overlapChars: 700,
+    maxWindows: 14
+  });
+  const solicitationEvidence = selectEvidenceContext(solText, evidenceQueries, {
+    maxChars: DIRECT_SOL_CONTEXT_CHARS,
+    windowChars: 4_000,
+    overlapChars: 600,
+    maxWindows: 8
+  });
+
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
   const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
   if (!apiKey) {
@@ -199,7 +228,12 @@ export async function runDirectReview(
     title: loaded.solicitation?.title,
     solNumber: loaded.solicitation?.solNumber
   });
-  const { system, user } = buildDirectReviewPrompt(solText, proposalText, requirementsRef, personaGuidance);
+  const { system, user } = buildDirectReviewPrompt(
+    solicitationEvidence,
+    proposalEvidence,
+    requirementsRef,
+    personaGuidance
+  );
 
   let ai;
   try {
@@ -213,7 +247,7 @@ export async function runDirectReview(
   const recommendedSubmitAt = submitDateFromDays(loaded.solicitation?.dueDate ?? null, parsed.recommendedSubmitDays);
   // Re-apply the human's status/owner-name onto matching re-suggested findings.
   const priorByKey = new Map(
-    loaded.priorFindings.map((p) => [`${p.requirementRef} ${p.text}`, p])
+    loaded.priorFindings.map((p) => [`${p.requirementRef}\u0000${p.text}`, p])
   );
 
   await withTenant(companyId, async (tx) => {
@@ -221,7 +255,7 @@ export async function runDirectReview(
     if (parsed.findings.length) {
       await tx.finding.createMany({
         data: parsed.findings.map((f, i) => {
-          const prior = priorByKey.get(`${f.requirementRef} ${f.text}`);
+          const prior = priorByKey.get(`${f.requirementRef}\u0000${f.text}`);
           return {
             companyId,
             directReviewId,
