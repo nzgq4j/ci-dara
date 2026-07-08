@@ -31,9 +31,35 @@ async function setShredLabel(jobId: bigint | undefined, label: string): Promise<
 // resumable (below) so a dense RFP is fully mined across worker ticks instead of one mega-call.
 const SHRED_MAX_TOKENS = 8000;
 
-// Safety ceiling on total requirements per solicitation, so a model that keeps hallucinating
-// "new" requirements on gap passes can't loop the resumable shred forever.
-const MAX_REQUIREMENTS = 800;
+// Absolute backstop on total requirements per solicitation. A model that keeps restating
+// already-captured requirements on gap passes must not loop the resumable shred toward a huge
+// matrix. This cap and the churn guard below are the two automatic brakes on that runaway
+// (see the sol-22 incident: a weak model amassed 746 near-duplicate rows vs. the ~125 norm).
+const MAX_REQUIREMENTS = 500;
+
+// Gap-pass churn guard. A pass that returns many items but almost all are already captured
+// (few survive dedup) means the model is restating the matrix, not finding new obligations —
+// the runaway signature. When a pass returns at least GAP_CHURN_MIN_RETURNED items and fewer
+// than GAP_CHURN_NEW_FRACTION of them are genuinely new, treat the RFP as mined and stop the
+// auto-loop. Genuinely-new items from that pass are still kept; a dense RFP with more to find
+// can be topped up via "Generate more".
+const GAP_CHURN_MIN_RETURNED = 12;
+const GAP_CHURN_NEW_FRACTION = 0.2;
+
+// Normalize text for duplicate detection (case- and whitespace-insensitive).
+function normText(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+// Description signature for near-duplicate detection: the FULL normalized requirement text.
+// The shred quotes/paraphrases the RFP, so a restatement of an already-captured requirement
+// under a reworded NAME still carries the same description and is caught here. Using the full
+// string (never a prefix) guarantees two genuinely-distinct requirements can't collide — a
+// false merge would silently drop a real requirement, which we never want. Skips very short
+// descriptions (< 40 chars) so generic one-liners fall back to name-only dedup.
+function descSig(d: string | null | undefined): string {
+  const n = normText(d ?? '');
+  return n.length >= 40 ? n : '';
+}
 
 export interface ShredSummary {
   ok: boolean;
@@ -86,16 +112,18 @@ export async function shredRequirements(
       where: { solicitationId, companyId },
       _max: { sortOrder: true }
     });
-    // Existing requirement names — so a re-run doesn't duplicate what's already there.
+    // Existing requirement names + description signatures — so a re-run (and every gap pass)
+    // doesn't duplicate what's already there, including a restatement under a reworded name.
     const existing = await tx.requirement.findMany({
       where: { solicitationId, companyId },
-      select: { name: true }
+      select: { name: true, description: true }
     });
     return {
       solicitation,
       company,
       nextOrder: (agg._max.sortOrder ?? -1) + 1,
-      existingNames: new Set(existing.map((e) => e.name.trim().toLowerCase().replace(/\s+/g, ' ')))
+      existingNames: new Set(existing.map((e) => normText(e.name))),
+      existingDescs: new Set(existing.map((e) => descSig(e.description)).filter((k) => k !== ''))
     };
   });
 
@@ -124,9 +152,24 @@ export async function shredRequirements(
     return { ok: true, count: 0, exhausted: true };
   }
 
-  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const norm = normText;
   const seenNames = new Set<string>(Array.from(loaded.existingNames));
+  const seenDescs = new Set<string>(Array.from(loaded.existingDescs));
   const shredded: ReturnType<typeof parseShred> = [];
+  // A requirement is a duplicate if its name OR its description signature is already captured.
+  // The description check catches restatements the model returns under a slightly reworded name
+  // (the runaway that ballooned sol 22). markSeen records both keys as each item is accepted.
+  const isDup = (r: { name: string; description: string }): boolean => {
+    const nk = norm(r.name);
+    if (!nk || seenNames.has(nk)) return true;
+    const dk = descSig(r.description);
+    return dk !== '' && seenDescs.has(dk);
+  };
+  const markSeen = (r: { name: string; description: string }): void => {
+    seenNames.add(norm(r.name));
+    const dk = descSig(r.description);
+    if (dk) seenDescs.add(dk);
+  };
   // A shred RESUMES across worker ticks: the first tick (no existing requirements) runs the
   // full extraction; later ticks skip it and only run gap passes to find what's still missing.
   // Each AI call is bounded (SHRED_MAX_TOKENS) so none approaches the 240s provider timeout.
@@ -150,9 +193,8 @@ export async function shredRequirements(
       return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
     }
     for (const r of first) {
-      const k = norm(r.name);
-      if (!k || seenNames.has(k)) continue;
-      seenNames.add(k);
+      if (isDup(r)) continue;
+      markSeen(r);
       shredded.push(r);
     }
     await setShredLabel(jobId, `Initial pass complete — ${shredded.length} requirements found. Running coverage check…`);
@@ -179,10 +221,11 @@ export async function shredRequirements(
       // A failed gap call this tick isn't proof the RFP is exhausted — let it resume.
       break;
     }
-    const more = parseShred(gapAi.text).filter((r) => {
-      const k = norm(r.name);
-      if (!k || seenNames.has(k)) return false;
-      seenNames.add(k);
+    const parsed = parseShred(gapAi.text);
+    const returned = parsed.length;
+    const more = parsed.filter((r) => {
+      if (isDup(r)) return false;
+      markSeen(r);
       return true;
     });
     if (more.length === 0) {
@@ -191,6 +234,13 @@ export async function shredRequirements(
       break;
     }
     more.forEach((r) => shredded.push(r));
+    // Churn guard: a high-volume pass that is mostly duplicates means the model is restating the
+    // matrix, not finding new obligations. Keep the few genuinely-new items (pushed above) but
+    // stop the auto-loop — a dense RFP with more to mine can be topped up via "Generate more".
+    if (returned >= GAP_CHURN_MIN_RETURNED && more.length < returned * GAP_CHURN_NEW_FRACTION) {
+      exhausted = true;
+      break;
+    }
     await setShredLabel(jobId, `Coverage pass ${round + 1} complete — ${seenNames.size} requirements found. Checking for more…`);
   }
 
