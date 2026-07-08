@@ -22,6 +22,8 @@ import {
 } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { logUsage } from '@/utils/dara/usage';
+import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment } from '@/utils/dara/amendments';
@@ -329,7 +331,13 @@ export async function runPass(
     .join('\n');
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(loaded.company, platform),
+    'review_pass',
+    loaded.company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) {
     await failPass(passId, companyId, `No API key configured for provider "${provider}".`);
     return { ok: false, error: 'No API key.' };
@@ -353,9 +361,11 @@ export async function runPass(
   try {
     ai = await complete(provider, system, user, model, apiKey, PASS_MAX_TOKENS);
   } catch (e) {
+    await logUsage({ capability: 'review_pass', provider, model, companyId, ok: false });
     await failPass(passId, companyId, e instanceof Error ? e.message.slice(0, 480) : 'AI request failed.');
     return { ok: false, error: 'AI request failed.' };
   }
+  await logUsage({ capability: 'review_pass', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
   const parsed = parsePassResult(ai.text);
   const priorByKey = new Map(

@@ -68,10 +68,10 @@ enum JobType {
 // Where a requirement originated in the solicitation. Drives the compliance matrix
 // grouping; `evaluation_factor` requirements are the ones a review scores.
 enum RequirementSource {
-  instruction       // Section L — proposal preparation/format instructions
+  instruction // Section L — proposal preparation/format instructions
   evaluation_factor // Section M — evaluation factors/subfactors (scored)
-  sow_pws           // SOW/PWS/SOO task or "shall" statement
-  far_clause        // FAR/DFARS clause, provision, or representation
+  sow_pws // SOW/PWS/SOO task or "shall" statement
+  far_clause // FAR/DFARS clause, provision, or representation
   other
 }
 
@@ -99,9 +99,9 @@ enum RequirementDisposition {
 // The three fixed lenses of a multi-pass AI review. Each color-team review runs all
 // three in sequence, each producing a score + severity-ranked findings.
 enum ReviewPassType {
-  compliance_format         // Pass 1 — structure, volume/page limits, required forms, formatting
-  technical_responsiveness  // Pass 2 — technical approach vs PWS reqs + Section M subfactors
-  risk_competitive          // Pass 3 — programmatic risks, competitive gaps, areas to strengthen
+  compliance_format // Pass 1 — structure, volume/page limits, required forms, formatting
+  technical_responsiveness // Pass 2 — technical approach vs PWS reqs + Section M subfactors
+  risk_competitive // Pass 3 — programmatic risks, competitive gaps, areas to strengthen
 }
 
 // Lifecycle of one pass within a review run. Passes run sequentially (queued → running
@@ -193,9 +193,9 @@ enum DocType {
 
 // Lifecycle of an amendment's AI reconciliation against the compliance matrix.
 enum ReconciliationStatus {
-  pending  // uploaded, not yet reconciled
+  pending // uploaded, not yet reconciled
   proposed // AI has proposed changes awaiting review
-  applied  // changes resolved (accepted/rejected) and folded into the matrix
+  applied // changes resolved (accepted/rejected) and folded into the matrix
 }
 
 // A proposed compliance-matrix change derived from an amendment.
@@ -218,6 +218,19 @@ enum JobStatus {
   failed
 }
 
+// The distinct AI-consuming capabilities across the app. Every complete() call site
+// maps to exactly one of these — it drives both the usage ledger (dara_ai_usage_log)
+// and the per-capability model overrides (PlatformSetting.capabilityModels).
+enum AICapability {
+  shred // requirements extraction from a solicitation
+  compliance_sweep // batched compliance matrix generation
+  review_pass // color-team P1/P2/P3 async pass
+  direct_review // single-click unified Direct AI review
+  amendment_diff // amendment impact/diff analysis
+  evaluation // per-requirement persona evaluation
+  annotated_export // finding-anchoring for the annotated proposal/response export
+}
+
 model Company {
   id               BigInt     @id @default(autoincrement())
   name             String     @db.VarChar(255)
@@ -237,43 +250,43 @@ model Company {
 
   // Per-company entitlements (managed by platform admins in /app/admin): trial usage
   // limit overrides + feature capability flags. Null = all defaults. See utils/dara/trial.ts.
-  entitlements     Json?
+  entitlements Json?
 
   // Company profile (editable on /app/company by company admins)
-  legalName        String?    @map("legal_name") @db.VarChar(255)
-  website          String?    @db.VarChar(255)
-  phone            String?    @db.VarChar(50)
-  cageCode         String?    @map("cage_code") @db.VarChar(20)
-  ueiCode          String?    @map("uei_code") @db.VarChar(20)
-  addressLine1     String?    @map("address_line1") @db.VarChar(255)
-  addressLine2     String?    @map("address_line2") @db.VarChar(255)
-  city             String?    @db.VarChar(120)
-  state            String?    @db.VarChar(120)
-  postalCode       String?    @map("postal_code") @db.VarChar(20)
-  country          String?    @db.VarChar(120)
+  legalName    String? @map("legal_name") @db.VarChar(255)
+  website      String? @db.VarChar(255)
+  phone        String? @db.VarChar(50)
+  cageCode     String? @map("cage_code") @db.VarChar(20)
+  ueiCode      String? @map("uei_code") @db.VarChar(20)
+  addressLine1 String? @map("address_line1") @db.VarChar(255)
+  addressLine2 String? @map("address_line2") @db.VarChar(255)
+  city         String? @db.VarChar(120)
+  state        String? @db.VarChar(120)
+  postalCode   String? @map("postal_code") @db.VarChar(20)
+  country      String? @db.VarChar(120)
 
   // CMMC assessment + C3PAO (auditor) information
-  cmmcTargetLevel  String?    @map("cmmc_target_level") @db.VarChar(20)
-  cmmcStatus       String?    @map("cmmc_status") @db.VarChar(40)
-  c3paoName        String?    @map("c3pao_name") @db.VarChar(255)
-  c3paoContact     String?    @map("c3pao_contact") @db.VarChar(255)
-  c3paoEmail       String?    @map("c3pao_email") @db.VarChar(255)
-  c3paoPhone       String?    @map("c3pao_phone") @db.VarChar(50)
-  assessmentDate   DateTime?  @map("assessment_date")
-  certExpiresAt    DateTime?  @map("cert_expires_at")
+  cmmcTargetLevel String?   @map("cmmc_target_level") @db.VarChar(20)
+  cmmcStatus      String?   @map("cmmc_status") @db.VarChar(40)
+  c3paoName       String?   @map("c3pao_name") @db.VarChar(255)
+  c3paoContact    String?   @map("c3pao_contact") @db.VarChar(255)
+  c3paoEmail      String?   @map("c3pao_email") @db.VarChar(255)
+  c3paoPhone      String?   @map("c3pao_phone") @db.VarChar(50)
+  assessmentDate  DateTime? @map("assessment_date")
+  certExpiresAt   DateTime? @map("cert_expires_at")
 
-  createdAt        DateTime   @default(now()) @map("created_at")
-  updatedAt        DateTime   @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  users         DaraUser[]
-  solicitations Solicitation[]
-  personas      Persona[]
-  evaluations   Evaluation[]
-  results       Result[]
-  jobQueue      JobQueue[]
-  teams         Team[]
-  teamMembers   TeamMember[]
-  invitations   Invitation[]
+  users                   DaraUser[]
+  solicitations           Solicitation[]
+  personas                Persona[]
+  evaluations             Evaluation[]
+  results                 Result[]
+  jobQueue                JobQueue[]
+  teams                   Team[]
+  teamMembers             TeamMember[]
+  invitations             Invitation[]
   solicitationDepartments SolicitationDepartment[]
 
   @@index([plan, planStatus])
@@ -281,29 +294,29 @@ model Company {
 }
 
 model DaraUser {
-  id          String    @id @db.Uuid
-  companyId   BigInt    @map("company_id")
-  email       String    @unique @db.VarChar(255)
-  name        String    @default("") @db.VarChar(255)
+  id                 String    @id @db.Uuid
+  companyId          BigInt    @map("company_id")
+  email              String    @unique @db.VarChar(255)
+  name               String    @default("") @db.VarChar(255)
   // Public URL of the user's uploaded avatar (dara-avatars bucket). Null = show initials.
-  avatarUrl   String?   @map("avatar_url") @db.VarChar(1024)
-  role        UserRole  @default(company_admin)
-  isActive    Boolean   @default(true) @map("is_active")
-  lastLoginAt DateTime? @map("last_login_at")
-  onboardedAt DateTime? @map("onboarded_at")
+  avatarUrl          String?   @map("avatar_url") @db.VarChar(1024)
+  role               UserRole  @default(company_admin)
+  isActive           Boolean   @default(true) @map("is_active")
+  lastLoginAt        DateTime? @map("last_login_at")
+  onboardedAt        DateTime? @map("onboarded_at")
   // DARA-031 (MFA): the TOTP secret + factor live in Supabase Auth (auth.mfa_factors),
   // NOT here — we never store it. mfaEnabled is a convenience mirror of "has a verified
   // TOTP factor" (source of truth is Supabase / the session AAL); mfaBackupCodes holds
   // bcrypt hashes of single-use recovery codes (plaintext shown once at setup).
-  mfaEnabled     Boolean  @default(false) @map("mfa_enabled")
-  mfaBackupCodes String[] @default([]) @map("mfa_backup_codes")
+  mfaEnabled         Boolean   @default(false) @map("mfa_enabled")
+  mfaBackupCodes     String[]  @default([]) @map("mfa_backup_codes")
   // Legal acceptance (Terms of Service + Supplemental Policy Addendum). Current state
   // only; the immutable signing event is also written to dara_audit_log (legal.accept).
   tosAcceptedVersion String?   @map("tos_accepted_version") @db.VarChar(20)
   tosAcceptedAt      DateTime? @map("tos_accepted_at")
   tosSignedName      String?   @map("tos_signed_name") @db.VarChar(255)
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   company         Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   teamMemberships TeamMember[]
@@ -334,16 +347,21 @@ model PlatformAdmin {
 // companies in 'platform' mode) and the centrally-selected provider/model. Managed
 // only from the Application Admin console; accessed via prismaAdmin (dara_admin).
 model PlatformSetting {
-  id              Int        @id @default(1)
-  activeProvider  AIProvider @default(anthropic) @map("active_provider")
-  activeModel     String     @default("claude-sonnet-4-6") @map("active_model") @db.VarChar(100)
-  anthropicKeyEnc String?    @map("anthropic_key_enc")
-  openaiKeyEnc    String?    @map("openai_key_enc")
-  googleKeyEnc    String?    @map("google_key_enc")
+  id                  Int        @id @default(1)
+  activeProvider      AIProvider @default(anthropic) @map("active_provider")
+  activeModel         String     @default("claude-sonnet-4-6") @map("active_model") @db.VarChar(100)
+  anthropicKeyEnc     String?    @map("anthropic_key_enc")
+  openaiKeyEnc        String?    @map("openai_key_enc")
+  googleKeyEnc        String?    @map("google_key_enc")
   // Platform-wide default entitlements (trial limits + feature flags) every company
   // inherits unless it has a per-company override. See utils/dara/trial.ts.
-  defaultEntitlements Json?  @map("default_entitlements")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
+  defaultEntitlements Json?      @map("default_entitlements")
+  // Per-capability model overrides: a JSON map of AICapability -> { provider, model }.
+  // When a capability has an entry, companies in 'platform' AI mode use that
+  // provider/model for that capability instead of the central activeProvider/activeModel.
+  // An absent or empty entry means "use the platform default." See utils/dara/capability-model.ts.
+  capabilityModels    Json?      @map("capability_models")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
 
   @@map("dara_platform_settings")
 }
@@ -429,22 +447,22 @@ model SolicitationDepartment {
 }
 
 model Solicitation {
-  id          BigInt   @id @default(autoincrement())
-  companyId   BigInt   @map("company_id")
-  title       String   @db.VarChar(500)
-  solNumber   String   @default("") @map("sol_number") @db.VarChar(100)
-  agency      String   @default("") @db.VarChar(255)
+  id        BigInt     @id @default(autoincrement())
+  companyId BigInt     @map("company_id")
+  title     String     @db.VarChar(500)
+  solNumber String     @default("") @map("sol_number") @db.VarChar(100)
+  agency    String     @default("") @db.VarChar(255)
   // NAICS code + submission due date — shown on the dashboard (countdown) and used for
   // deadline tracking. Optional; populated at upload or edited in the workspace.
-  naics       String   @default("") @db.VarChar(20)
-  dueDate     DateTime? @map("due_date")
+  naics     String     @default("") @db.VarChar(20)
+  dueDate   DateTime?  @map("due_date")
   // Which review paradigm this solicitation runs under (set at upload, immutable once a
   // review is initiated). New solicitations default to direct_ai.
-  mode        ReviewMode @default(direct_ai)
-  notes       String?
-  createdBy   String?  @map("created_by") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  mode      ReviewMode @default(direct_ai)
+  notes     String?
+  createdBy String?    @map("created_by") @db.Uuid
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
 
   company       Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   solDocs       SolDocument[]
@@ -491,25 +509,25 @@ model SolDocument {
 // complianceStatus/proposalRef track coverage. The compliance matrix for a
 // solicitation is the set of its (non-removed) requirements.
 model Requirement {
-  id               BigInt            @id @default(autoincrement())
-  companyId        BigInt            @map("company_id")
-  solicitationId   BigInt            @map("solicitation_id")
-  name             String            @db.VarChar(300) // short label / handle
+  id               BigInt                 @id @default(autoincrement())
+  companyId        BigInt                 @map("company_id")
+  solicitationId   BigInt                 @map("solicitation_id")
+  name             String                 @db.VarChar(300) // short label / handle
   description      String? // full requirement / "shall" text
-  source           RequirementSource @default(evaluation_factor)
-  isScored         Boolean           @default(true) @map("is_scored")
+  source           RequirementSource      @default(evaluation_factor)
+  isScored         Boolean                @default(true) @map("is_scored")
   // How the requirement is handled (scored / compliance / administrative). Set by the
   // AI shred; `isScored` is kept in sync as `disposition == scored` for the review engine.
   disposition      RequirementDisposition @default(compliance)
-  farReference     String            @default("") @map("far_reference") @db.VarChar(100)
+  farReference     String                 @default("") @map("far_reference") @db.VarChar(100)
   // Where this requirement is cited in the solicitation (e.g. "Section L.4.2", "PWS 3.1").
-  citation         String            @default("") @db.VarChar(200)
-  weight           Int               @default(0)
-  complianceStatus ComplianceStatus  @default(not_assessed) @map("compliance_status")
-  proposalRef      String            @default("") @map("proposal_ref") @db.VarChar(300)
+  citation         String                 @default("") @db.VarChar(200)
+  weight           Int                    @default(0)
+  complianceStatus ComplianceStatus       @default(not_assessed) @map("compliance_status")
+  proposalRef      String                 @default("") @map("proposal_ref") @db.VarChar(300)
   // Free-text team notes shown in the compliance matrix (design's "Notes" column).
   notes            String?
-  sortOrder        Int               @default(0) @map("sort_order")
+  sortOrder        Int                    @default(0) @map("sort_order")
 
   // Amendment provenance (Phase 3). removedAt marks a requirement struck by an
   // amendment — retained, never deleted (excluded from the active matrix).
@@ -628,21 +646,21 @@ model Persona {
 // anchored to what it saw. The DB table/columns keep the old names where remapping
 // avoids churn (table dara_reviews ex dara_responses; name ex offeror_name).
 model Review {
-  id             BigInt       @id @default(autoincrement())
-  companyId      BigInt       @map("company_id")
-  solicitationId BigInt       @map("solicitation_id")
-  name           String       @map("offeror_name") @db.VarChar(300)
-  colorTeam      ColorTeam    @default(pink) @map("color_team")
-  status         ReviewStatus @default(draft)
-  notes          String?
-  snapshotAt     DateTime?    @map("snapshot_at")
+  id                  BigInt       @id @default(autoincrement())
+  companyId           BigInt       @map("company_id")
+  solicitationId      BigInt       @map("solicitation_id")
+  name                String       @map("offeror_name") @db.VarChar(300)
+  colorTeam           ColorTeam    @default(pink) @map("color_team")
+  status              ReviewStatus @default(draft)
+  notes               String?
+  snapshotAt          DateTime?    @map("snapshot_at")
   // Analysis Report holistic outputs — generated by the final (Risk) pass for color-team reviews.
-  recommendation      String    @default("") // DARA recommendation narrative
-  recommendedSubmitAt DateTime? @map("recommended_submit_at") @db.Date
-  checklist           Json?     @map("checklist_json") // [{label,state,detail}] pre-submission checklist
-  createdBy      String?      @map("created_by") @db.Uuid
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at")
+  recommendation      String       @default("") // DARA recommendation narrative
+  recommendedSubmitAt DateTime?    @map("recommended_submit_at") @db.Date
+  checklist           Json?        @map("checklist_json") // [{label,state,detail}] pre-submission checklist
+  createdBy           String?      @map("created_by") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at")
 
   solicitation   Solicitation     @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
   documents      ReviewDocument[]
@@ -723,24 +741,24 @@ model Finding {
 // status/progress. Coexists with the color-team Review model; a solicitation uses one
 // paradigm (Solicitation.mode), never both.
 model DirectReview {
-  id             BigInt             @id @default(autoincrement())
-  companyId      BigInt             @map("company_id")
-  solicitationId BigInt             @unique @map("solicitation_id")
-  status         DirectReviewStatus @default(not_started)
-  score          Int? // 0-100, null until complete
-  progress       Int                @default(0) // 0-100, for the live bar while running
-  progressLabel  String             @default("") @map("progress_label") @db.VarChar(200)
-  findingsCount  Int                @default(0) @map("findings_count")
-  errorMessage   String?            @map("error_message") @db.VarChar(500)
+  id                  BigInt             @id @default(autoincrement())
+  companyId           BigInt             @map("company_id")
+  solicitationId      BigInt             @unique @map("solicitation_id")
+  status              DirectReviewStatus @default(not_started)
+  score               Int? // 0-100, null until complete
+  progress            Int                @default(0) // 0-100, for the live bar while running
+  progressLabel       String             @default("") @map("progress_label") @db.VarChar(200)
+  findingsCount       Int                @default(0) @map("findings_count")
+  errorMessage        String?            @map("error_message") @db.VarChar(500)
   // Analysis Report holistic outputs (AI-generated on each run).
-  recommendation     String    @default("") // DARA recommendation narrative
-  recommendedSubmitAt DateTime? @map("recommended_submit_at") @db.Date
-  checklist          Json?     @map("checklist_json") // [{label,state,detail}] pre-submission checklist
-  runAt          DateTime?          @map("run_at") // timestamp of last completed run
-  startedAt      DateTime?          @map("started_at")
-  completedAt    DateTime?          @map("completed_at")
-  createdAt      DateTime           @default(now()) @map("created_at")
-  updatedAt      DateTime           @default(now()) @updatedAt @map("updated_at")
+  recommendation      String             @default("") // DARA recommendation narrative
+  recommendedSubmitAt DateTime?          @map("recommended_submit_at") @db.Date
+  checklist           Json?              @map("checklist_json") // [{label,state,detail}] pre-submission checklist
+  runAt               DateTime?          @map("run_at") // timestamp of last completed run
+  startedAt           DateTime?          @map("started_at")
+  completedAt         DateTime?          @map("completed_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @default(now()) @updatedAt @map("updated_at")
 
   solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
   findings     Finding[]
@@ -812,34 +830,34 @@ model Evaluation {
 }
 
 model Result {
-  id              BigInt   @id @default(autoincrement())
-  evaluationId    BigInt   @map("evaluation_id")
-  companyId       BigInt   @map("company_id")
+  id                 BigInt    @id @default(autoincrement())
+  evaluationId       BigInt    @map("evaluation_id")
+  companyId          BigInt    @map("company_id")
   // Column stays `criterion_id` (no DB rename) — the FK/unique index keep their
   // names; the relation now points at Requirement.
-  requirementId   BigInt   @map("criterion_id")
-  personaId       BigInt   @map("persona_id")
-  aiDetermination String?  @map("ai_determination") @db.VarChar(50)
-  aiScore         Decimal? @map("ai_score") @db.Decimal(5, 2)
-  aiRationale     String?  @map("ai_rationale")
-  aiConfidence    Decimal? @map("ai_confidence") @db.Decimal(5, 4)
-  aiStrengths     Json?    @map("ai_strengths")
-  aiWeaknesses    Json?    @map("ai_weaknesses")
-  aiCompliance    String?  @map("ai_compliance")
-  aiSuggestedChanges Json? @map("ai_suggested_changes")
-  aiReview        Json?    @map("ai_review")
-  regenCount      Int      @default(0) @map("regen_count")
-  archivedAt      DateTime? @map("archived_at")
-  modelId         String?  @map("model_id") @db.VarChar(100)
-  tokenIn         Int      @default(0) @map("token_in")
-  tokenOut        Int      @default(0) @map("token_out")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+  requirementId      BigInt    @map("criterion_id")
+  personaId          BigInt    @map("persona_id")
+  aiDetermination    String?   @map("ai_determination") @db.VarChar(50)
+  aiScore            Decimal?  @map("ai_score") @db.Decimal(5, 2)
+  aiRationale        String?   @map("ai_rationale")
+  aiConfidence       Decimal?  @map("ai_confidence") @db.Decimal(5, 4)
+  aiStrengths        Json?     @map("ai_strengths")
+  aiWeaknesses       Json?     @map("ai_weaknesses")
+  aiCompliance       String?   @map("ai_compliance")
+  aiSuggestedChanges Json?     @map("ai_suggested_changes")
+  aiReview           Json?     @map("ai_review")
+  regenCount         Int       @default(0) @map("regen_count")
+  archivedAt         DateTime? @map("archived_at")
+  modelId            String?   @map("model_id") @db.VarChar(100)
+  tokenIn            Int       @default(0) @map("token_in")
+  tokenOut           Int       @default(0) @map("token_out")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  evaluation  Evaluation  @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
-  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
-  persona     Persona     @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  evaluation  Evaluation      @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  company     Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requirement Requirement     @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  persona     Persona         @relation(fields: [personaId], references: [id], onDelete: Cascade)
   versions    ResultVersion[]
 
   @@unique([evaluationId, requirementId, personaId])
@@ -875,20 +893,20 @@ model ResultVersion {
 }
 
 model JobQueue {
-  id          BigInt    @id @default(autoincrement())
-  companyId   BigInt    @map("company_id")
-  jobType     JobType   @map("job_type")
-  payload     Json
-  status      JobStatus @default(pending)
-  attempts    Int       @default(0)
-  maxAttempts Int       @default(3) @map("max_attempts")
-  error       String?
-  availableAt DateTime  @default(now()) @map("available_at")
-  startedAt   DateTime? @map("started_at")
-  finishedAt  DateTime? @map("finished_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  progress      Int     @default(0)
-  progressLabel String? @map("progress_label") @db.VarChar(200)
+  id            BigInt    @id @default(autoincrement())
+  companyId     BigInt    @map("company_id")
+  jobType       JobType   @map("job_type")
+  payload       Json
+  status        JobStatus @default(pending)
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(3) @map("max_attempts")
+  error         String?
+  availableAt   DateTime  @default(now()) @map("available_at")
+  startedAt     DateTime? @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  progress      Int       @default(0)
+  progressLabel String?   @map("progress_label") @db.VarChar(200)
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -915,4 +933,26 @@ model AuditLog {
   @@index([companyId, createdAt])
   @@index([action])
   @@map("dara_audit_log")
+}
+
+// Append-only AI usage ledger — one row per LLM call. Like the audit log it has NO
+// Company relation/cascade on purpose: the ledger must survive company deletion (billing
+// + platform-usage reporting). Written/read only via the privileged client (dara_admin);
+// the tenant app role has no access. companyId is nullable so a call made outside a company
+// context still records. logUsage() (utils/dara/usage.ts) never throws into its caller.
+model AiUsageLog {
+  id         BigInt       @id @default(autoincrement())
+  companyId  BigInt?      @map("company_id")
+  provider   String       @db.VarChar(50)
+  model      String       @db.VarChar(100)
+  capability AICapability
+  tokenIn    Int          @default(0) @map("token_in")
+  tokenOut   Int          @default(0) @map("token_out")
+  ok         Boolean      @default(true)
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([companyId, createdAt])
+  @@index([capability])
+  @@map("dara_ai_usage_log")
 }

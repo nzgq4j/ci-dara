@@ -23,6 +23,8 @@ import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { logUsage } from '@/utils/dara/usage';
+import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { userTeamIds, canViewSolicitation } from '@/utils/dara/sol-access';
 import { fenceUntrusted, fenceToken, INJECTION_GUARD } from '@/utils/dara/prompt';
 import { recordAudit } from '@/utils/dara/audit';
@@ -198,7 +200,13 @@ async function anchorFindings(source: Source): Promise<AnchorResult> {
     `FINDINGS (anchor each by its number):\n${list}`;
 
   const platform = source.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(source.company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(source.company, platform),
+    'annotated_export',
+    source.company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return { anchors, egress: null }; // no key → nothing sent; export still works sans anchors
 
   // The CUI leaves the boundary here (whether or not the call ultimately succeeds).
@@ -208,7 +216,9 @@ async function anchorFindings(source: Source): Promise<AnchorResult> {
   try {
     const ai = await complete(provider, system, user, model, apiKey, ANCHOR_MAX_TOKENS);
     text = ai.text;
+    await logUsage({ capability: 'annotated_export', provider, model, companyId: source.companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
   } catch {
+    await logUsage({ capability: 'annotated_export', provider, model, companyId: source.companyId, ok: false });
     return { anchors, egress }; // AI failure → fall back to all-general (still a valid document)
   }
 

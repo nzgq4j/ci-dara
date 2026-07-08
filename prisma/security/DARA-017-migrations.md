@@ -67,6 +67,7 @@ DARA's schema is owned in **two tracked, complementary layers**. Neither is
    | + | `2026-07-01_requirements_rls.sql` | RLS for `dara_requirements` (renamed from `dara_criteria` in `20260701000000_requirements_compliance`) | Yes |
    | + | `2026-07-01_review_passes_rls.sql` | RLS for `dara_review_passes` + `dara_findings` (`20260701060000_review_passes`) | Yes |
    | + | `2026-07-04_direct_reviews_rls.sql` | RLS for `dara_direct_reviews` (`20260704000000_direct_ai_review`); `dara_findings` policy unchanged | Yes |
+   | + | `2026-07-08_ai_usage_log_rls.sql` | RLS + grants for `dara_ai_usage_log` (`20260708130000_ai_usage_and_capability`); **admin-only, fail-closed** — no `dara_app` grant. The paired `capability_models` column on `dara_platform_settings` needs no re-grant (existing admin-only policy governs it). | Yes |
 
    > **Rename note (2026-07-01):** the `20260701000000_requirements_compliance`
    > migration renames `dara_criteria` → `dara_requirements`. PostgreSQL preserves

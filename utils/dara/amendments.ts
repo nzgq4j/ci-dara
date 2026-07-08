@@ -10,6 +10,8 @@ import { decryptField } from '@/utils/dara/crypto';
 import { buildAmendmentDiffPrompt, buildAmendmentGapPrompt, parseAmendmentDiff } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { logUsage } from '@/utils/dara/usage';
+import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 
 // Generous headroom so a large diff's JSON isn't truncated; parseAmendmentDiff also
 // salvages complete changes from a truncated array as a backstop.
@@ -71,7 +73,13 @@ export async function reconcileAmendment(
   }
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(loaded.company, platform),
+    'amendment_diff',
+    loaded.company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return { ok: false, changes: 0, error: `No API key configured for provider "${provider}".` };
 
   const { system, user } = buildAmendmentDiffPrompt(
@@ -88,8 +96,10 @@ export async function reconcileAmendment(
   try {
     ai = await complete(provider, system, user, model, apiKey, DIFF_MAX_TOKENS);
   } catch (e) {
+    await logUsage({ capability: 'amendment_diff', provider, model, companyId, ok: false });
     return { ok: false, changes: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
   }
+  await logUsage({ capability: 'amendment_diff', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
   const diff = parseAmendmentDiff(ai.text);
 
@@ -104,6 +114,7 @@ export async function reconcileAmendment(
       already
     );
     const gapAi = await complete(provider, gap.system, gap.user, model, apiKey, DIFF_MAX_TOKENS);
+    await logUsage({ capability: 'amendment_diff', provider, model, companyId, tokenIn: gapAi.tokenIn, tokenOut: gapAi.tokenOut });
     const seen = new Set(diff.changes.map(changeKey));
     for (const c of parseAmendmentDiff(gapAi.text).changes) {
       const k = changeKey(c);

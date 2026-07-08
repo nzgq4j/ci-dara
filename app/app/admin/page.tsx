@@ -1,7 +1,6 @@
-import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { Prisma } from '@prisma/client';
-import { Save, Building2, Users, ShieldCheck, Ban, Trash2, Plus, Cpu, SlidersHorizontal, Zap } from 'lucide-react';
+import { Save, Building2, Users, ShieldCheck, Ban, Trash2, Plus, SlidersHorizontal } from 'lucide-react';
 import { prismaAdmin } from '@/utils/prisma';
 import {
   requirePlatformAdmin,
@@ -13,9 +12,6 @@ import {
   banUser,
   deleteUser
 } from '@/utils/dara/platform';
-import { getPlatformAIView, AI_PROVIDERS } from '@/utils/dara/platform-ai';
-import { savePlatformKeys } from './ai-actions';
-import PlatformAISelect from './PlatformAISelect';
 import { recordAudit } from '@/utils/dara/audit';
 import { secretHint } from '@/utils/dara/crypto';
 import {
@@ -211,59 +207,6 @@ async function removeAdmin(formData: FormData) {
   revalidatePath('/app/admin');
 }
 
-// Kill switch: delete one active background job (shred / compliance / review / reconcile).
-// The worker drops the vanished row and does not requeue it — the manual equivalent of a
-// runaway shred stopping itself. Cross-tenant, so it runs on prismaAdmin like the rest.
-async function killJob(formData: FormData) {
-  'use server';
-  const admin = await requirePlatformAdmin();
-  const id = BigInt(String(formData.get('jobId')));
-  const job = await prismaAdmin.jobQueue.findUnique({ where: { id } });
-  if (!job) {
-    revalidatePath('/app/admin');
-    return;
-  }
-  await prismaAdmin.jobQueue.delete({ where: { id } });
-  await recordAudit({
-    action: 'admin.job.kill',
-    companyId: job.companyId,
-    actorId: admin.userId,
-    actorEmail: admin.email,
-    entityType: 'job_queue',
-    entityId: id,
-    metadata: {
-      jobType: job.jobType,
-      kind: (job.payload as { kind?: string } | null)?.kind ?? null,
-      status: job.status,
-      attempts: job.attempts
-    }
-  });
-  revalidatePath('/app/admin');
-}
-
-// Kill switch (nuclear): stop every active background job across all accounts.
-async function killAllJobs() {
-  'use server';
-  const admin = await requirePlatformAdmin();
-  const active = await prismaAdmin.jobQueue.findMany({
-    where: { status: { in: ['pending', 'running'] } },
-    select: { id: true }
-  });
-  if (active.length === 0) {
-    revalidatePath('/app/admin');
-    return;
-  }
-  await prismaAdmin.jobQueue.deleteMany({ where: { id: { in: active.map((j) => j.id) } } });
-  await recordAudit({
-    action: 'admin.job.kill_all',
-    actorId: admin.userId,
-    actorEmail: admin.email,
-    entityType: 'platform',
-    metadata: { killed: active.length }
-  });
-  revalidatePath('/app/admin');
-}
-
 // Shared limit + feature inputs (names limit_<resource> / feature_<flag>), pre-filled from
 // `ent`. Used by both the platform-default form and each per-company override form.
 function EntitlementFields({ ent }: { ent: Entitlements }) {
@@ -309,16 +252,10 @@ export default async function AdminPage() {
     include: { company: { select: { name: true } } }
   });
   const admins = await listPlatformAdmins();
-  const ai = await getPlatformAIView();
   const platformDefaults = await getPlatformDefaultEntitlements();
-  const activeJobs = await prismaAdmin.jobQueue.findMany({
-    where: { status: { in: ['pending', 'running'] } },
-    orderBy: [{ status: 'asc' }, { availableAt: 'asc' }],
-    include: { company: { select: { name: true } } }
-  });
 
   return (
-    <div className="mx-auto max-w-5xl fade">
+    <div>
       <PageHeader
         eyebrow="Platform"
         title="Application Admin"
@@ -328,156 +265,10 @@ export default async function AdminPage() {
       <div className="mb-6 rounded-lg border border-line bg-surf px-4 py-2.5 text-[12px] text-t4">
         Application admins manage accounts, users, and platform settings.{' '}
         <span className="text-t2">No access to company CUI</span> (solicitations,
-        documents, evaluations).
+        documents, evaluations). Background jobs, platform AI keys, and usage are on their own tabs.
       </div>
 
       <div className="space-y-8">
-        {/* Background jobs — operator kill switch for runaway shred / compliance / review jobs */}
-        <section id="jobs" className="space-y-4 scroll-mt-6">
-          <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
-            <Zap className="h-4 w-4 text-t5" />Background jobs{' '}
-            <span className="font-mono text-[11px] font-normal text-t5">({activeJobs.length} active)</span>
-          </h2>
-          <p className="text-[12px] text-t4">
-            Active shred, compliance-check, review, and reconcile jobs across all accounts. Kill a
-            job to stop a runaway — e.g. a shred that keeps amassing requirements. The worker drops
-            the row and does not requeue it. High attempt counts flag a job that keeps resuming.
-          </p>
-          {activeJobs.length === 0 ? (
-            <div className={`${card} p-4 text-[12px] text-t4`}>No active background jobs.</div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                {activeJobs.map((j) => {
-                  const p = (j.payload ?? {}) as {
-                    kind?: string;
-                    solicitationId?: string;
-                    reviewId?: string;
-                    passId?: string;
-                    amendmentId?: string;
-                    directReviewId?: string;
-                  };
-                  const entity =
-                    p.solicitationId ?? p.reviewId ?? p.passId ?? p.amendmentId ?? p.directReviewId ?? '';
-                  const ageMin = Math.max(
-                    0,
-                    Math.round((Date.now() - new Date(j.startedAt ?? j.availableAt).getTime()) / 60000)
-                  );
-                  return (
-                    <div key={j.id.toString()} className={`${card} flex flex-wrap items-center gap-3 p-3`}>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[12px] text-t1">{p.kind ?? j.jobType}</span>
-                          {entity && <span className="font-mono text-[11px] text-t5">#{entity}</span>}
-                          <span
-                            className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase ${
-                              j.status === 'running' ? 'bg-[#DBEAFE] text-[#1E40AF]' : 'bg-line text-t4'
-                            }`}
-                          >
-                            {j.status}
-                          </span>
-                          {j.attempts > 3 && (
-                            <span className="rounded bg-[#FEE2E2] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-[#991B1B]">
-                              {j.attempts} attempts
-                            </span>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-t5">
-                          {j.company.name} · started {ageMin}m ago · attempts {j.attempts}
-                        </div>
-                      </div>
-                      <form action={killJob}>
-                        <input type="hidden" name="jobId" value={j.id.toString()} />
-                        <ConfirmButton
-                          message={`Kill this ${p.kind ?? j.jobType} job for ${j.company.name}? It stops immediately and will not requeue.`}
-                          className={btnDanger}
-                        >
-                          <Trash2 className="h-4 w-4" />Kill
-                        </ConfirmButton>
-                      </form>
-                    </div>
-                  );
-                })}
-              </div>
-              <form action={killAllJobs} className="flex justify-end">
-                <ConfirmButton
-                  message={`Kill ALL ${activeJobs.length} active background jobs across every account? This stops every shred, compliance check, and review in flight.`}
-                  className={btnDanger}
-                >
-                  <Ban className="h-4 w-4" />Kill all active jobs
-                </ConfirmButton>
-              </form>
-            </>
-          )}
-        </section>
-
-        {/* Platform AI */}
-        <section id="ai" className="space-y-4 scroll-mt-6">
-          <h2 className={`flex items-center gap-2 ${sectionTitle}`}>
-            <Cpu className="h-4 w-4 text-t5" />Platform AI
-          </h2>
-          <p className="text-[12px] text-t4">
-            Platform API keys used by every company on the{' '}
-            <span className="text-t2">platform</span> key mode, and the model those
-            evaluations run on. This is the only place these keys are configured.
-          </p>
-
-          {/* Keys */}
-          <form action={savePlatformKeys} className={`${card} space-y-4 p-5`}>
-            <h3 className="text-[13px] font-bold text-t1">Provider keys</h3>
-            {AI_PROVIDERS.map((p) => (
-              <div key={p} className="space-y-1.5">
-                <label className={labelClasses}>
-                  {p} key{' '}
-                  {ai.hints[p] ? (
-                    <span className="ml-1 normal-case text-[#166534]">set ({ai.hints[p]})</span>
-                  ) : ai.envOnly[p] ? (
-                    <span className="ml-1 normal-case text-[#d9a441]">from env (move into console)</span>
-                  ) : (
-                    <span className="ml-1 normal-case text-t5">not set</span>
-                  )}
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    name={p}
-                    type="password"
-                    autoComplete="off"
-                    placeholder="Enter new key…"
-                    className={fieldClasses}
-                  />
-                  <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-t4">
-                    <input type="checkbox" name={`${p}_clear`} className={checkboxClasses} />
-                    clear
-                  </label>
-                </div>
-              </div>
-            ))}
-            <p className="text-[12px] text-t4">
-              Stored encrypted (AES-256-GCM). Leave blank to keep the current key; tick
-              &ldquo;clear&rdquo; to remove it. A key set here overrides the matching{' '}
-              <span className="font-mono">PLATFORM_*_KEY</span> env var.
-            </p>
-            <div className="flex justify-end">
-              <button type="submit" className={btnPrimary}><Save className="h-4 w-4" />Save keys</button>
-            </div>
-          </form>
-
-          {/* Active model */}
-          <div className={`${card} space-y-4 p-5`}>
-            <h3 className="text-[13px] font-bold text-t1">Active model</h3>
-            <PlatformAISelect
-              providersWithKey={ai.providersWithKey}
-              activeProvider={ai.activeProvider}
-              activeModel={ai.activeModel}
-            />
-            <p className="text-[12px] text-t4">
-              Current: <span className="font-mono text-t2">{ai.activeProvider}</span> ·{' '}
-              <span className="font-mono text-t2">{ai.activeModel}</span>. Companies on
-              platform mode use this model.
-            </p>
-          </div>
-        </section>
-
         {/* Default gating — platform-wide entitlements every company inherits */}
         <section id="gating" className="space-y-4 scroll-mt-6">
           <h2 className={`flex items-center gap-2 ${sectionTitle}`}>

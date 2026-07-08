@@ -7,6 +7,8 @@ import { decryptField } from '@/utils/dara/crypto';
 import { buildShredPrompt, buildShredGapPrompt, parseShred } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { logUsage } from '@/utils/dara/usage';
+import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 
 // Write a progress label to the owning JobQueue row so the UI
 // can show which phase the shred is in. Fire-and-forget —
@@ -143,7 +145,13 @@ export async function shredRequirements(
 
   const platform =
     loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(loaded.company, platform),
+    'shred',
+    loaded.company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return { ok: false, count: 0, error: `No API key configured for provider "${provider}".` };
 
   // Safety cap: never keep mining past a sane matrix size (a model that hallucinates endless
@@ -186,8 +194,10 @@ export async function shredRequirements(
     try {
       ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
     } catch (e) {
+      await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
       return { ok: false, count: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
     }
+    await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
     const first = parseShred(ai.text);
     if (first.length === 0) {
       return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
@@ -218,9 +228,11 @@ export async function shredRequirements(
     try {
       gapAi = await complete(provider, gap.system, gap.user, model, apiKey, SHRED_MAX_TOKENS);
     } catch {
+      await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
       // A failed gap call this tick isn't proof the RFP is exhausted — let it resume.
       break;
     }
+    await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: gapAi.tokenIn, tokenOut: gapAi.tokenOut });
     const parsed = parseShred(gapAi.text);
     const returned = parsed.length;
     const more = parsed.filter((r) => {

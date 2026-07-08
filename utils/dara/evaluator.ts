@@ -12,6 +12,8 @@ import {
 } from '@/utils/dara/prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
+import { logUsage } from '@/utils/dara/usage';
+import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 
 // Output-token budget for a single evaluation factor's structured result. Enough for a
 // full holistic assessment (review summary + rationale + strengths/weaknesses/compliance/
@@ -189,7 +191,13 @@ export async function runEvaluation(
   if (!company) return fail(evaluationId, companyId, 'Company not found.');
 
   const platform = company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(company, platform),
+    'evaluation',
+    company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return fail(evaluationId, companyId, `No API key configured for provider "${provider}".`);
 
   const documentText = concatDocs(evaluation.review.documents);
@@ -236,9 +244,11 @@ export async function runEvaluation(
         const user = buildUserPrompt(pc, documentText, solText);
         try {
           const ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
+          await logUsage({ capability: 'evaluation', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
           const parsed = parseResult(ai.text, pc.criterionType);
           return parsed ? { factor, parsed, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut } : null;
         } catch {
+          await logUsage({ capability: 'evaluation', provider, model, companyId, ok: false });
           return null;
         }
       })
@@ -354,7 +364,13 @@ export async function runComplianceSweep(
   const solText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'rfp'));
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(loaded.company, platform),
+    'compliance_sweep',
+    loaded.company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
 
   return finishSweep(
@@ -421,12 +437,14 @@ async function sweepRequirements(
         );
         try {
           const ai = await complete(provider, COMPLIANCE_SYSTEM, user, model, apiKey, BATCH_MAX_TOKENS);
+          await logUsage({ capability: 'compliance_sweep', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
           const { items } = parseBatchResults(ai.text);
           if (items.length === 0) {
             return { batch, items: [], error: 'The AI returned no parseable determinations — the model may be truncating output. Try a stronger platform model (e.g. Sonnet).' };
           }
           return { batch, items, error: undefined as string | undefined };
         } catch (e) {
+          await logUsage({ capability: 'compliance_sweep', provider, model, companyId, ok: false });
           return { batch, items: [], error: e instanceof Error ? e.message.slice(0, 300) : 'AI request failed.' };
         }
       })
@@ -498,7 +516,13 @@ export async function runComplianceCheck(
   const solText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'rfp'));
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(loaded.company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(loaded.company, platform),
+    'compliance_sweep',
+    loaded.company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return { ok: false, checked: 0, error: `No API key configured for provider "${provider}".` };
 
   return finishSweep(
@@ -551,7 +575,13 @@ export async function regenerateResult(
   );
 
   const platform = company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
-  const { provider, model, apiKey } = resolveCompanyAI(company, platform);
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(company, platform),
+    'evaluation',
+    company,
+    platform,
+    await getCapabilityOverrides()
+  );
   if (!apiKey) return { ok: false, error: `No API key configured for provider "${provider}".` };
 
   const pc = toPromptCriterion(requirement);
@@ -562,8 +592,10 @@ export async function regenerateResult(
   try {
     ai = await complete(provider, system, user, model, apiKey, EVAL_MAX_TOKENS);
   } catch (e) {
+    await logUsage({ capability: 'evaluation', provider, model, companyId, ok: false });
     return { ok: false, error: e instanceof Error ? e.message : 'AI request failed.' };
   }
+  await logUsage({ capability: 'evaluation', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
   const parsed = parseResult(ai.text, pc.criterionType);
   if (!parsed) return { ok: false, error: 'Could not parse the AI response.' };
 
