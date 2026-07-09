@@ -1,239 +1,60 @@
-// Compliance-matrix engine — SPAN-ANCHORED extraction. A requirement's identity is a VERIFIED
-// character range in a source document (documentId, spanStart, spanEnd), not an LLM-generated
-// name. Duplication + hallucination are solved structurally: verifySpan rejects any quote that
-// isn't verbatim in the source, and a partial unique index makes a re-extracted span a no-op.
-//
-// The shred windows each RFP document, extracts verbatim-quoted obligations per window (bounded
-// parallelism), anchors each quote to a raw offset, ACCUMULATES verified spans in the JobQueue
-// payload across worker ticks, and — only when the last window of the last document completes —
-// stitches edge-split fragments, merges overlap-duplicates, and writes the matrix once.
-// Window-index resumption (persisted in the payload) survives the 300s worker budget; failed
-// windows are reported, not silently dropped.
+// Compliance-matrix engine — WHOLE-DOCUMENT shred. The entire solicitation is sent to the model in
+// one call (modern context windows hold it comfortably), which returns a clean, de-duplicated
+// requirements list. This replaced the windowed span-anchored pipeline: letting the model see the
+// whole document at once gives better granularity (one row per section, not per sentence), correct
+// section citations, and cross-document de-duplication — without windowing, anchoring, or stitching.
 
-import { Prisma } from '@prisma/client';
-import { withTenant, prismaAdmin } from '@/utils/prisma';
+import { withTenant } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
-import { buildExtractPrompt, parseExtract, type ExtractedUnit } from '@/utils/dara/extract-prompt';
+import { buildShredPrompt, parseShredRows } from '@/utils/dara/shred-prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { logUsage } from '@/utils/dara/usage';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
-import type { RequirementSourceValue, RequirementDispositionValue } from '@/utils/dara/prompt';
-import {
-  windowize,
-  verifySpan,
-  stitchFragments,
-  mergeSpans,
-  deriveCitation,
-  clauseReference,
-  classifyComposition,
-  findEnumerators,
-  type Span
-} from '@/utils/dara/spans';
 
-// Output cap per WINDOW extraction call. A ~12k-char window yields at most a few dozen short
-// verbatim quotes → well under this; parseExtract salvages a truncated array either way. Kept far
-// below the 240s provider timeout by construction (small windows, small output).
-const EXTRACT_MAX_TOKENS = 4000;
+// Output budget for the whole matrix in one generation. Anthropic caps far above this; a dense RFP
+// of ~150 requirements is ~20k output tokens, well under.
+const SHRED_MAX_TOKENS = 32000;
 
-// Absolute backstop on total requirements per solicitation (unchanged from the old shred).
+// Sanity cap on the concatenated solicitation (~125k tokens) so a pathological upload can't blow the
+// context window. Typical solicitations are a fraction of this.
+const MAX_INPUT_CHARS = 500_000;
+
+// Absolute backstop on total requirements per solicitation.
 const MAX_REQUIREMENTS = 500;
 
-// Bounded parallelism: windows per round.
-const ROUND_SIZE = 4;
-// Don't START a round unless this much budget remains — enough for a slow round plus the
-// end-of-run merge/write. A pathological full-240s hang mid-round is NOT prevented here; it is
-// recovered via reapOrphanedJobs → cursor resumption → skipDuplicates (re-extraction is a no-op),
-// which is cheaper than starving throughput by reserving the whole 240s timeout every round.
-const ROUND_RESERVE_MS = 130_000;
-
-// Write a progress label to the owning JobQueue row (fire-and-forget; a failed label write must
-// never abort the shred).
-async function setShredLabel(jobId: bigint | undefined, label: string): Promise<void> {
-  if (!jobId) return;
-  try {
-    await prismaAdmin.jobQueue.update({ where: { id: jobId }, data: { progressLabel: label } });
-  } catch {
-    /* non-fatal */
-  }
+function normText(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 export interface ShredSummary {
   ok: boolean;
   count: number;
-  // True when every window of every document has been processed and the matrix has been written.
-  // The worker requeues the shred while this is false so a dense RFP finishes across ticks.
+  // Always true — the whole-document shred completes in a single call. Kept so the worker dispatch
+  // (which reads `exhausted`) marks the job done in one tick.
   exhausted?: boolean;
-  // Observability (populated on the final, writing tick). Global window indices whose LLM call
-  // failed, and the number of source chars covered ONLY by failed windows (never analyzed).
-  failedWindows?: number[];
-  missedChars?: number;
-  // Quotes the model returned that could not be verbatim-anchored (the hallucination gate firing).
-  rejected?: number;
   error?: string;
 }
 
-// A verified span accumulated in the JobQueue payload. JSON-safe (documentId is a string; no
-// bigint). Extends Span (+ truncated) so stitchFragments and mergeSpans operate on it directly.
-// `name` and `citation` are NOT stored here — they're derived from the finalized span + docText at
-// write time. `citationHint` is the model's paragraph-number guess, kept as a citation fallback.
-interface AccumSpan extends Span {
-  documentId: string;
-  truncated: boolean;
-  citationHint: string;
-  source: RequirementSourceValue;
-  disposition: RequirementDispositionValue;
-  isScored: boolean;
-  obligationCount: number;
-  weight: number;
-}
-
-// Fields derived from a unit's classification (everything not tied to span coordinates). disposition
-// is inferred from requirementType with the same fallback the old parser used; name + citation are
-// resolved later from the finalized span/docText.
-function derivedFields(unit: ExtractedUnit): {
-  source: RequirementSourceValue;
-  disposition: RequirementDispositionValue;
-  isScored: boolean;
-  obligationCount: number;
-  weight: number;
-} {
-  const map: Record<string, { disposition: RequirementDispositionValue; isScored: boolean }> = {
-    evaluation_factor: { disposition: 'scored', isScored: true },
-    far_clause: { disposition: 'administrative', isScored: false }
-  };
-  const { disposition, isScored } = map[unit.requirementType] ?? { disposition: 'compliance', isScored: false };
-  return { source: unit.requirementType, disposition, isScored, obligationCount: unit.obligationCount, weight: 0 };
-}
-
-// Resumption cursor persisted under payload.cursor across worker ticks.
-interface ShredCursor {
-  gIndex: number;       // next global window index to process
-  spans: AccumSpan[];   // verified spans accumulated so far
-  failed: number[];     // global window indices whose LLM call failed
-  rejected: number;     // running count of hallucination-gate rejections
-}
-
 interface DocFile {
-  id: bigint;
+  originalFilename: string;
   extractedText: string | null;
   extractionStatus: string;
   docType: string;
 }
 
-// One flattened window across all documents (deterministic given the doc set + text).
-interface FlatWindow {
-  gIndex: number;
-  documentId: bigint;
-  docText: string;
-  start: number;
-  end: number;
-}
-
-/** Extract one window: build prompt → complete → log usage → parse → verbatim-anchor each quote
- *  to a document-absolute span. Returns ok:false only when the LLM call itself failed. */
-async function extractWindow(
-  w: FlatWindow,
-  provider: string,
-  model: string,
-  apiKey: string,
-  companyId: bigint
-): Promise<{ ok: boolean; spans: AccumSpan[]; rejected: number }> {
-  const windowText = w.docText.slice(w.start, w.end);
-  const { system, user } = buildExtractPrompt(windowText);
-  let ai;
-  try {
-    ai = await complete(provider, system, user, model, apiKey, EXTRACT_MAX_TOKENS);
-  } catch {
-    await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
-    return { ok: false, spans: [], rejected: 0 };
-  }
-  await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
-
-  const docId = w.documentId.toString();
-  const spans: AccumSpan[] = [];
-  let rejected = 0;
-  for (const unit of parseExtract(ai.text)) {
-    const common = derivedFields(unit);
-    const startMatch = verifySpan(windowText, unit.anchorStart); // window-scoped → local offsets
-    if (startMatch) {
-      // Search for anchorEnd only AFTER anchorStart, so a short unit can't match its own start as
-      // its end (verifySpan uses indexOf, which finds the first occurrence).
-      const endMatch = verifySpan(windowText.slice(startMatch.end), unit.anchorEnd);
-      if (endMatch) {
-        spans.push({
-          documentId: docId, truncated: false, citationHint: unit.citationHint,
-          start: w.start + startMatch.start,
-          end: w.start + startMatch.end + endMatch.end, // endMatch is relative to the post-start tail
-          ...common
-        });
-      } else {
-        // anchorEnd not in this window → the unit continues past the bottom edge. Extend the partial
-        // to the WINDOW END (NOT the anchor's extent — that wouldn't reach the overlap zone) so it
-        // overlaps the next window's top-partial; stitchFragments then reassembles the whole unit.
-        spans.push({
-          documentId: docId, truncated: true, citationHint: unit.citationHint,
-          start: w.start + startMatch.start,
-          end: w.end,
-          ...common
-        });
-      }
-    } else {
-      // anchorStart not found. If anchorEnd is here, the unit began before this window (top-truncated).
-      const endMatch = verifySpan(windowText, unit.anchorEnd);
-      if (endMatch) {
-        spans.push({
-          documentId: docId, truncated: true, citationHint: unit.citationHint,
-          start: w.start, // conservative; the real start comes from the previous window's
-          end: w.start + endMatch.end, // bottom-partial when stitchFragments merges the two.
-          ...common
-        });
-      } else {
-        rejected++; // neither anchor verified — hallucinated or unresolvable
-      }
-    }
-  }
-  return { ok: true, spans, rejected };
-}
-
-// Chars covered ONLY by a failed window (never by a successful one), per document — an exact
-// interval-difference over the (few) window ranges. Reports how much of the source went
-// un-analyzed when some windows' LLM calls failed.
-function computeMissedChars(flat: FlatWindow[], failed: number[]): number {
-  if (failed.length === 0) return 0;
-  const failedSet = new Set(failed);
-  const byDoc = new Map<string, { bad: [number, number][]; ok: [number, number][] }>();
-  for (const w of flat) {
-    const key = w.documentId.toString();
-    const g = byDoc.get(key) ?? { bad: [], ok: [] };
-    (failedSet.has(w.gIndex) ? g.bad : g.ok).push([w.start, w.end]);
-    byDoc.set(key, g);
-  }
-  let missed = 0;
-  for (const { bad, ok } of Array.from(byDoc.values())) {
-    const pts = Array.from(new Set([...bad, ...ok].flat())).sort((a, b) => a - b);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const lo = pts[i], hi = pts[i + 1];
-      if (hi <= lo) continue;
-      const covBad = bad.some(([a, b]) => a <= lo && b >= hi);
-      const covOk = ok.some(([a, b]) => a <= lo && b >= hi);
-      if (covBad && !covOk) missed += hi - lo;
-    }
-  }
-  return missed;
-}
-
 /**
- * Shred a solicitation's RFP documents into span-anchored requirements. Resumable across worker
- * ticks via a cursor persisted in the JobQueue payload; writes the matrix ONCE when exhausted.
+ * Shred a solicitation's RFP documents into a de-duplicated requirements list via one whole-document
+ * AI call. `deadlineMs`/`jobId` are accepted for the worker's call signature; the shred is one-shot
+ * (no resumption needed) and reports `exhausted: true`.
  */
 export async function shredRequirements(
   solicitationId: bigint,
   companyId: bigint,
-  deadlineMs = Infinity,
-  jobId?: bigint
+  _deadlineMs = Infinity,
+  _jobId?: bigint
 ): Promise<ShredSummary> {
-  // Burst A: load docs + AI config + current ordering/count.
+  // Burst A: load docs + company + current ordering + existing rows (for dedup on re-run).
   const loaded = await withTenant(companyId, async (tx) => {
     const solicitation = await tx.solicitation.findFirst({
       where: { id: solicitationId, companyId },
@@ -245,31 +66,31 @@ export async function shredRequirements(
       where: { solicitationId, companyId },
       _max: { sortOrder: true }
     });
-    const existingCount = await tx.requirement.count({ where: { solicitationId, companyId } });
-    return {
-      solicitation,
-      company,
-      nextOrder: (agg._max.sortOrder ?? -1) + 1,
-      existingCount
-    };
+    const existing = await tx.requirement.findMany({
+      where: { solicitationId, companyId },
+      select: { name: true, description: true }
+    });
+    return { solicitation, company, nextOrder: (agg._max.sortOrder ?? -1) + 1, existing };
   });
 
   if (!loaded?.solicitation) return { ok: false, count: 0, error: 'Solicitation not found.' };
   if (!loaded.company) return { ok: false, count: 0, error: 'Company not found.' };
 
-  // Decrypt each RFP document independently — spans are per-document, so no concatenation.
-  const docs: { id: bigint; text: string }[] = (loaded.solicitation.solDocs as DocFile[])
+  // Concatenate the RFP documents (structure preserved via the per-page line breaks from ingestion).
+  let solText = (loaded.solicitation.solDocs as DocFile[])
     .filter((d) => d.docType === 'rfp' && d.extractionStatus === 'complete')
-    .map((d) => ({ id: d.id, text: decryptField(d.extractedText) }))
-    .filter((d) => d.text.trim() !== '');
+    .map((d) => `=== DOCUMENT: ${d.originalFilename} ===\n\n${decryptField(d.extractedText)}`)
+    .filter((s) => s.trim() !== '')
+    .join('\n\n');
 
-  if (docs.length === 0) {
+  if (solText.trim() === '') {
     return {
       ok: false,
       count: 0,
       error: 'No extracted RFP text. Upload the solicitation (RFP) documents on the Documents tab and wait for extraction.'
     };
   }
+  if (solText.length > MAX_INPUT_CHARS) solText = solText.slice(0, MAX_INPUT_CHARS) + '\n\n[Solicitation truncated to fit context limit]';
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
   const { provider, model, apiKey } = applyCapabilityOverride(
@@ -281,167 +102,57 @@ export async function shredRequirements(
   );
   if (!apiKey) return { ok: false, count: 0, error: `No API key configured for provider "${provider}".` };
 
-  if (loaded.existingCount >= MAX_REQUIREMENTS) return { ok: true, count: 0, exhausted: true };
+  if (loaded.existing.length >= MAX_REQUIREMENTS) return { ok: true, count: 0, exhausted: true };
 
-  // Flatten all windows across all documents into one deterministic, globally-indexed list. The
-  // window geometry is stable across ticks (same doc set/text → same list), so a persisted
-  // gIndex resumes exactly.
-  const flat: FlatWindow[] = [];
-  let g = 0;
-  for (const d of docs) {
-    for (const w of windowize(d.text.length)) {
-      flat.push({ gIndex: g++, documentId: d.id, docText: d.text, start: w.start, end: w.end });
-    }
+  // One whole-document call — the slow network hop, OUTSIDE any transaction.
+  const { system, user } = buildShredPrompt(solText);
+  let ai;
+  try {
+    ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
+  } catch (e) {
+    await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
+    return { ok: false, count: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
   }
+  await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
-  // Read the resumption cursor from the payload (or start fresh). The cursor — NOT the row count —
-  // is the source of truth: under merge-at-end no rows exist until the final tick, so inferring
-  // "resuming" from existing rows would be wrong.
-  const job = jobId
-    ? await prismaAdmin.jobQueue.findUnique({ where: { id: jobId }, select: { payload: true } })
-    : null;
-  const basePayload = (job?.payload ?? {}) as Record<string, unknown>;
-  const cursor: ShredCursor =
-    (basePayload.cursor as ShredCursor | undefined) ?? { gIndex: 0, spans: [], failed: [], rejected: 0 };
+  const parsed = parseShredRows(ai.text);
+  if (parsed.length === 0) return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
 
-  const persistCursor = async (): Promise<void> => {
-    if (!jobId) return;
-    try {
-      await prismaAdmin.jobQueue.update({
-        where: { id: jobId },
-        // The cursor is JSON-serializable (numbers/strings/arrays only); Prisma's Json input type
-        // needs an index signature our typed cursor doesn't declare, hence the cast.
-        data: { payload: { ...basePayload, cursor } as unknown as Prisma.InputJsonObject }
-      });
-    } catch {
-      // Non-fatal: a lost cursor write just re-does a round next tick; skipDuplicates makes the
-      // re-extracted spans a no-op at write time.
-    }
-  };
-
-  // Process windows in bounded-parallel rounds until exhausted or out of budget.
-  while (cursor.gIndex < flat.length) {
-    if (Date.now() > deadlineMs - ROUND_RESERVE_MS) break; // out of budget → resume next tick
-    const round = flat.slice(cursor.gIndex, cursor.gIndex + ROUND_SIZE);
-    await setShredLabel(
-      jobId,
-      `Extracting requirements — windows ${cursor.gIndex + 1}–${cursor.gIndex + round.length} of ${flat.length}…`
-    );
-    const results = await Promise.all(round.map((w) => extractWindow(w, provider, model, apiKey, companyId)));
-    for (let i = 0; i < results.length; i++) {
-      const res = results[i];
-      if (!res.ok) { cursor.failed.push(round[i].gIndex); continue; }
-      cursor.rejected += res.rejected;
-      for (const s of res.spans) cursor.spans.push(s);
-    }
-    cursor.gIndex += round.length;
-    await persistCursor(); // after each completed round, so a kill can't redo finished work
-  }
-
-  // Not done this tick — leave the cursor for the next worker tick (nothing written yet).
-  if (cursor.gIndex < flat.length) {
-    await setShredLabel(jobId, `Paused at window ${cursor.gIndex} of ${flat.length} — resuming next tick…`);
-    return { ok: true, count: 0, exhausted: false };
-  }
-
-  // ── Exhausted: stitch edge-split fragments, merge overlap-duplicates, write ONCE. ──
-  await setShredLabel(jobId, 'Extraction complete — reassembling and writing the matrix…');
-
-  const docTextById = new Map(docs.map((d) => [d.id.toString(), d.text]));
-
-  // Group by document (offsets from different documents aren't comparable).
-  const byDoc = new Map<string, AccumSpan[]>();
-  for (const s of cursor.spans) {
-    const arr = byDoc.get(s.documentId) ?? [];
-    arr.push(s);
-    byDoc.set(s.documentId, arr);
-  }
-
-  let merged: AccumSpan[] = [];
-  for (const arr of Array.from(byDoc.values())) {
-    // stitchFragments first: reassemble obligations a window edge split across neighbors.
-    const stitched = stitchFragments(arr);
-    // A fragment that stitched with nothing and overlapped nothing survives still-truncated —
-    // it means the document has a requirement longer than the window. Surface it, don't hide it.
-    for (const s of stitched) {
-      if (s.truncated) {
-        console.warn(
-          `[shred] un-stitched fragment (requirement longer than window?) sol=${solicitationId} doc=${s.documentId} [${s.start},${s.end}]`
-        );
-      }
-    }
-    // Then mergeSpans: collapse the near-duplicate COMPLETE spans window overlap creates.
-    merged.push(...mergeSpans(stitched));
-  }
-
-  // Clause-collapse: a bare clause citation ("FAR 52.212-5 …") appearing more than once collapses
-  // to a single row per clause number, so a checkbox list of incorporated clauses doesn't become
-  // one row per line. Non-clause spans pass through untouched.
-  const seenClause = new Set<string>();
-  merged = merged.filter((s) => {
-    const key = clauseReference(docTextById.get(s.documentId)!.slice(s.start, s.end));
-    if (!key) return true;
-    const dedup = `${s.documentId}:${key}`;
-    if (seenClause.has(dedup)) return false;
-    seenClause.add(dedup);
+  // De-dup against existing rows (so a re-run doesn't duplicate) and within this batch, by the
+  // normalized requirement text. The model already de-dups; this is the backstop.
+  const seen = new Set(loaded.existing.map((e) => normText(e.description ?? e.name)));
+  const fresh = parsed.filter((r) => {
+    const key = normText(r.text || r.name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
+  if (fresh.length === 0) return { ok: true, count: 0, exhausted: true };
 
-  // Order deterministically (document, then position) and respect the matrix cap.
-  merged.sort((a, b) => (a.documentId < b.documentId ? -1 : a.documentId > b.documentId ? 1 : a.start - b.start));
-  const room = Math.max(0, MAX_REQUIREMENTS - loaded.existingCount);
-  const toWrite = merged.slice(0, room);
+  const toWrite = fresh.slice(0, Math.max(0, MAX_REQUIREMENTS - loaded.existing.length));
 
-  const failedWindows = cursor.failed.slice().sort((a, b) => a - b);
-  const missedChars = computeMissedChars(flat, cursor.failed);
-
-  if (toWrite.length === 0) {
-    return { ok: true, count: 0, exhausted: true, failedWindows, missedChars, rejected: cursor.rejected };
-  }
-
+  // Burst B: persist the new requirement rows.
   await withTenant(companyId, (tx) =>
     tx.requirement.createMany({
-      // skipDuplicates → ON CONFLICT DO NOTHING against the partial unique index
-      // (solicitation_id, document_id, span_start, span_end) WHERE span_start IS NOT NULL, so a
-      // re-run / regenerate re-extracting identical spans is the intended no-op.
-      skipDuplicates: true,
-      data: toWrite.map((s, i) => {
-        const docText = docTextById.get(s.documentId)!;
-        const slice = docText.slice(s.start, s.end);
-        // Citation precedence: structural (deriveCitation, now that PDFs keep line breaks) → the
-        // model's paragraph-number hint → an honest offset fact. Never write ''. citationSynthesized
-        // is true whenever the value did NOT come from document structure.
-        const derived = deriveCitation(docText, { start: s.start, end: s.end });
-        const citation = (derived ?? (s.citationHint || null) ?? `chars ${s.start}–${s.end}`).slice(0, 200);
-        const citationSynthesized = derived === null;
-        // name is derived from the unit's own text (first ~100 chars, whitespace-collapsed).
-        const name = (slice.slice(0, 100).replace(/\s+/g, ' ').trim() || 'Requirement').slice(0, 300);
-        const composition = classifyComposition(slice, findEnumerators(slice), s.obligationCount);
-        return {
-          companyId,
-          solicitationId,
-          documentId: BigInt(s.documentId),
-          spanStart: s.start,
-          spanEnd: s.end,
-          name,
-          description: slice, // verbatim RAW slice (soft hyphens/artifacts and all — faithful)
-          source: s.source,
-          disposition: s.disposition,
-          isScored: s.isScored,
-          complianceStatus:
-            s.disposition === 'administrative' ? ('not_applicable' as const) : ('not_assessed' as const),
-          farReference: (clauseReference(slice) ?? '').slice(0, 100),
-          citation,
-          citationSynthesized,
-          composition: composition.composition,
-          obligationCount: s.obligationCount,
-          enumeratorCount: composition.enumeratorCount,
-          weight: s.weight,
-          sortOrder: loaded.nextOrder + i
-        };
-      })
+      data: toWrite.map((r, i) => ({
+        companyId,
+        solicitationId,
+        name: r.name,
+        description: r.text || null,
+        source: r.source,
+        disposition: r.disposition,
+        isScored: r.disposition === 'scored',
+        complianceStatus:
+          r.disposition === 'administrative' ? ('not_applicable' as const) : ('not_assessed' as const),
+        farReference: r.farReference,
+        citation: r.citation,
+        citationSynthesized: r.citation === '', // false when the model gave the document's own label
+        obligationCount: r.obligationCount,
+        weight: r.weight,
+        sortOrder: loaded.nextOrder + i
+      }))
     })
   );
 
-  return { ok: true, count: toWrite.length, exhausted: true, failedWindows, missedChars, rejected: cursor.rejected };
+  return { ok: true, count: toWrite.length, exhausted: true };
 }
