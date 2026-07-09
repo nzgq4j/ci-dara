@@ -528,7 +528,7 @@ export function buildShredPrompt(solText: string): { system: string; user: strin
   return { system, user };
 }
 
-function stripFences(text: string): string {
+export function stripFences(text: string): string {
   return text.replace(/^```(?:json)?\s*/gm, '').replace(/```\s*$/gm, '').trim();
 }
 
@@ -536,7 +536,7 @@ function stripFences(text: string): string {
 // parsing items individually. A truncated final object (the model hit its output cap)
 // is simply skipped rather than discarding the whole response — so a partial shred/diff
 // still yields every complete item.
-function extractArrayObjects(text: string, key: string): any[] {
+export function extractArrayObjects(text: string, key: string): any[] {
   const keyIdx = text.indexOf(`"${key}"`);
   const start = keyIdx >= 0 ? text.indexOf('[', keyIdx) : text.indexOf('[');
   if (start < 0) return [];

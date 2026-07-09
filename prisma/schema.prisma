@@ -96,6 +96,15 @@ enum RequirementDisposition {
   administrative
 }
 
+// Internal structure of a requirement, set by span extraction (mirrors the `Composition`
+// union in utils/dara/spans.ts). 'unclassified' is a real state — a pure classifier must not
+// manufacture certainty from a soft signal (see classifyComposition).
+enum RequirementComposition {
+  atomic
+  compound
+  unclassified
+}
+
 // The three fixed lenses of a multi-pass AI review. Each color-team review runs all
 // three in sequence, each producing a score + severity-ranked findings.
 enum ReviewPassType {
@@ -496,6 +505,7 @@ model SolDocument {
 
   solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
   amendment    Amendment?   @relation(fields: [amendmentId], references: [id], onDelete: Cascade)
+  requirements Requirement[]
 
   @@index([solicitationId])
   @@index([companyId])
@@ -537,13 +547,49 @@ model Requirement {
   removedByAmendmentId BigInt?   @map("removed_by_amendment_id")
   removedAt            DateTime? @map("removed_at")
 
+  // ── Span-anchored identity (span-extraction redesign) ──
+  // A requirement's identity is a VERIFIED character range in a source document, not an
+  // LLM-generated name. All nullable/defaulted — additive over existing + manually-added rows,
+  // which carry no span. The partial UNIQUE(solicitation_id, document_id, span_start, span_end)
+  // WHERE span_start IS NOT NULL is enforced by raw SQL (prisma/security/
+  // 2026-07-09_span_unique_index.sql); Prisma can't model a partial unique index, so do NOT
+  // add @@unique here.
+  documentId      BigInt?                 @map("document_id")
+  spanStart       Int?                    @map("span_start")
+  spanEnd         Int?                    @map("span_end")
+  composition     RequirementComposition?
+  obligationCount Int?                    @map("obligation_count")
+  enumeratorCount Int?                    @map("enumerator_count")
+
+  // ── Decomposition linkage (Prompt 4 owns the semantics) ──
+  parentId            BigInt?   @map("parent_id")
+  childOrder          Int?      @map("child_order")
+  // rollupMode + decompositionSource are VARCHAR on purpose: their value sets are settled in
+  // Prompt 4, so they are NOT enums yet — Prompt 4 can fix the vocabulary without a second
+  // migration.
+  rollupMode          String?   @map("rollup_mode") @db.VarChar(30)
+  decompositionSource String?   @map("decomposition_source") @db.VarChar(30)
+  decomposedAt        DateTime? @map("decomposed_at") // timestamp(3), NOT timestamptz
+  // True when this row's citation is NOT a fact read from the document but a fallback the system
+  // produced. Deliberately carries TWO meanings, both "unstable, treat with caution" (not a bug):
+  //   (1) deriveCitation found no nearby heading, so citation fell back to a character offset; and
+  //   (2) a decomposition child's letter/citation was synthesized from childOrder (Prompt 4).
+  // One flag is defensible because both cases mean the same thing to a reader: don't trust it as
+  // a quoted source citation.
+  citationSynthesized Boolean   @default(false) @map("citation_synthesized")
+
   solicitation     Solicitation         @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
+  document         SolDocument?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  parent           Requirement?         @relation("RequirementDecomposition", fields: [parentId], references: [id], onDelete: Cascade)
+  children         Requirement[]        @relation("RequirementDecomposition")
   results          Result[]
   versions         RequirementVersion[]
   amendmentChanges AmendmentChange[]
 
   @@index([solicitationId])
   @@index([companyId])
+  @@index([documentId])
+  @@index([parentId])
   @@map("dara_requirements")
 }
 
