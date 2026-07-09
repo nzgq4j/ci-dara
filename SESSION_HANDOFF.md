@@ -332,6 +332,30 @@ migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_us
    - **Pricing accuracy** — LiteLLM is community-maintained; spot-check the seeded Anthropic rates against
      Anthropic's page, and add operator overrides on `/app/admin/usage` for anything the feed lags or omits.
    - **`getPricingMap()` runs per usage/dashboard render** (small table, fine now) — cache if it grows.
+8. **Questions / clarifications / inconsistency generator (NEW 2026-07-09, requested by user).** A new AI
+   capability that reads the solicitation (and the shredded requirements matrix) and produces a structured
+   **list of questions to submit to the Government** during the Q&A / RFI window — the deliverable a capture
+   team sends to the Contracting Officer before the question-cutoff date. Three question classes it must
+   generate: (a) **requirement clarification** — where an obligation is under-specified, ambiguous, or missing a
+   value the offeror needs to respond (undefined quantities, unstated period of performance, "TBD" fields,
+   deliverable formats not specified); (b) **solicitation verbiage** — where the language itself is unclear,
+   contradictory to standard usage, or open to multiple readings that change the response; (c) **logical
+   inconsistency** — where two parts of the solicitation conflict (e.g. Section L page limit vs. Section M
+   content the offeror must cover; a PWS task with no corresponding evaluation factor; an amendment that
+   changes a value one place but not another; due dates/quantities/thresholds that disagree across documents).
+   **Desired shape (design later — this is on HOLD behind the shred pre-processor redesign):** likely a new
+   engine `utils/dara/questions.ts` + prompt builder (`buildQuestionsPrompt`/`parseQuestions` in `prompt.ts`),
+   run as its own JobQueue capability (`capability: 'questions'`, so it logs to the usage ledger like the
+   others) over `docType='rfp'` text + the current `Requirement` rows for cross-referencing. Each generated
+   question should carry: the **class** (clarification / verbiage / inconsistency), the **question text**
+   (ready to paste into a Q&A submission), the **citation(s)** it arises from (section/paragraph, and for
+   inconsistencies BOTH conflicting locations), and a short **why-it-matters** rationale. Surface on the
+   solicitation workspace (probably a new tab or a panel on the Compliance/Overview tab) with export (CSV /
+   DOCX, reuse the matrix-export plumbing) so the team can hand it to the CO. Reuse the injection-fencing +
+   tolerant-salvage-parse patterns already in `prompt.ts`; no schema work needed if questions are generated
+   on demand and exported (persist as a new `dara_*` table only if we want them saved/edited/tracked — decide
+   at design time). Coordinate with the requirements pre-processor redesign (currently held) since both read
+   the same shredded matrix.
 
 ---
 
