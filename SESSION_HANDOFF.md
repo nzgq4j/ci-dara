@@ -359,6 +359,24 @@ migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_us
 
 ---
 
+## 4a. ★ Span-anchored requirement extraction (compliance-matrix redesign)
+
+_Design, in revision (2026-07-09). Full plan: `NEXT_STEPS_span-anchored-extraction.md`._ Replaces the shred
+with **span-as-identity** `(documentId, spanStart, spanEnd)` + a verbatim-verification gate + a partial unique
+index, so duplication/hallucination are solved structurally; adds user-initiated **decomposition** of compound
+requirements. This is the redesign the shred pre-processor (item 6/held) is held for. Delivered as a **6-prompt
+chain** (schema → deterministic utils → extraction pipeline → decomposition → exclusion predicate → matrix UI).
+**Do not run Prompt 3 (pipeline rewrite — highest-risk step; a prior attempt caused a prod stall + revert)
+until the required fixes in the next-steps doc are folded in** — critically (1) window-index resumption +
+bounded parallelism to survive the 300s worker, (2) normalization-tolerant `verifySpan` returning RAW offsets
+(exact match drops PDF-extracted rows silently), (3) payload-accumulated spans + merge-at-end (cross-tick
+resumption otherwise breaks the global `mergeSpans` and duplicates boundary straddlers). Plus `skipDuplicates`,
+restored per-window `logUsage`, visible `failedWindows`, the `parseTiling` residual fix, `timestamp(3)` not
+`TIMESTAMPTZ`, and a wider Prompt-5 grep. Separate from item 6 (does NOT add the `manual_verification`
+disposition).
+
+---
+
 ## 5. SECURITY BACKLOG — top priority (`SECURITY_BACKLOG.md`)
 
 CMMC L2 / NIST 800-171 / OWASP re-audit (2026-07-05). **Prior hardening holds — no regressions**
