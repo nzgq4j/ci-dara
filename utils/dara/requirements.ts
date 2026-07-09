@@ -13,7 +13,7 @@
 import { Prisma } from '@prisma/client';
 import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
-import { buildExtractPrompt, parseExtract } from '@/utils/dara/extract-prompt';
+import { buildExtractPrompt, parseExtract, type ExtractedUnit } from '@/utils/dara/extract-prompt';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { logUsage } from '@/utils/dara/usage';
@@ -75,15 +75,35 @@ export interface ShredSummary {
 
 // A verified span accumulated in the JobQueue payload. JSON-safe (documentId is a string; no
 // bigint). Extends Span (+ truncated) so stitchFragments and mergeSpans operate on it directly.
+// `name` and `citation` are NOT stored here — they're derived from the finalized span + docText at
+// write time. `citationHint` is the model's paragraph-number guess, kept as a citation fallback.
 interface AccumSpan extends Span {
   documentId: string;
   truncated: boolean;
-  name: string;
+  citationHint: string;
   source: RequirementSourceValue;
   disposition: RequirementDispositionValue;
   isScored: boolean;
   obligationCount: number;
   weight: number;
+}
+
+// Fields derived from a unit's classification (everything not tied to span coordinates). disposition
+// is inferred from requirementType with the same fallback the old parser used; name + citation are
+// resolved later from the finalized span/docText.
+function derivedFields(unit: ExtractedUnit): {
+  source: RequirementSourceValue;
+  disposition: RequirementDispositionValue;
+  isScored: boolean;
+  obligationCount: number;
+  weight: number;
+} {
+  const map: Record<string, { disposition: RequirementDispositionValue; isScored: boolean }> = {
+    evaluation_factor: { disposition: 'scored', isScored: true },
+    far_clause: { disposition: 'administrative', isScored: false }
+  };
+  const { disposition, isScored } = map[unit.requirementType] ?? { disposition: 'compliance', isScored: false };
+  return { source: unit.requirementType, disposition, isScored, obligationCount: unit.obligationCount, weight: 0 };
 }
 
 // Resumption cursor persisted under payload.cursor across worker ticks.
@@ -130,23 +150,48 @@ async function extractWindow(
   }
   await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
+  const docId = w.documentId.toString();
   const spans: AccumSpan[] = [];
   let rejected = 0;
-  for (const it of parseExtract(ai.text)) {
-    const anchor = verifySpan(windowText, it.quote); // window-scoped → local offsets
-    if (!anchor) { rejected++; continue; }           // hallucination gate: not verbatim → drop
-    spans.push({
-      documentId: w.documentId.toString(),
-      start: w.start + anchor.start, // → document-absolute
-      end: w.start + anchor.end,
-      truncated: it.truncated,
-      name: it.name,
-      source: it.source,
-      disposition: it.disposition,
-      isScored: it.isScored,
-      obligationCount: it.obligationCount,
-      weight: it.weight
-    });
+  for (const unit of parseExtract(ai.text)) {
+    const common = derivedFields(unit);
+    const startMatch = verifySpan(windowText, unit.anchorStart); // window-scoped → local offsets
+    if (startMatch) {
+      // Search for anchorEnd only AFTER anchorStart, so a short unit can't match its own start as
+      // its end (verifySpan uses indexOf, which finds the first occurrence).
+      const endMatch = verifySpan(windowText.slice(startMatch.end), unit.anchorEnd);
+      if (endMatch) {
+        spans.push({
+          documentId: docId, truncated: false, citationHint: unit.citationHint,
+          start: w.start + startMatch.start,
+          end: w.start + startMatch.end + endMatch.end, // endMatch is relative to the post-start tail
+          ...common
+        });
+      } else {
+        // anchorEnd not in this window → the unit continues past the bottom edge. Extend the partial
+        // to the WINDOW END (NOT the anchor's extent — that wouldn't reach the overlap zone) so it
+        // overlaps the next window's top-partial; stitchFragments then reassembles the whole unit.
+        spans.push({
+          documentId: docId, truncated: true, citationHint: unit.citationHint,
+          start: w.start + startMatch.start,
+          end: w.end,
+          ...common
+        });
+      }
+    } else {
+      // anchorStart not found. If anchorEnd is here, the unit began before this window (top-truncated).
+      const endMatch = verifySpan(windowText, unit.anchorEnd);
+      if (endMatch) {
+        spans.push({
+          documentId: docId, truncated: true, citationHint: unit.citationHint,
+          start: w.start, // conservative; the real start comes from the previous window's
+          end: w.start + endMatch.end, // bottom-partial when stitchFragments merges the two.
+          ...common
+        });
+      } else {
+        rejected++; // neither anchor verified — hallucinated or unresolvable
+      }
+    }
   }
   return { ok: true, spans, rejected };
 }
@@ -363,7 +408,14 @@ export async function shredRequirements(
       data: toWrite.map((s, i) => {
         const docText = docTextById.get(s.documentId)!;
         const slice = docText.slice(s.start, s.end);
-        const citation = deriveCitation(docText, { start: s.start, end: s.end });
+        // Citation precedence: structural (deriveCitation, now that PDFs keep line breaks) → the
+        // model's paragraph-number hint → an honest offset fact. Never write ''. citationSynthesized
+        // is true whenever the value did NOT come from document structure.
+        const derived = deriveCitation(docText, { start: s.start, end: s.end });
+        const citation = (derived ?? (s.citationHint || null) ?? `chars ${s.start}–${s.end}`).slice(0, 200);
+        const citationSynthesized = derived === null;
+        // name is derived from the unit's own text (first ~100 chars, whitespace-collapsed).
+        const name = (slice.slice(0, 100).replace(/\s+/g, ' ').trim() || 'Requirement').slice(0, 300);
         const composition = classifyComposition(slice, findEnumerators(slice), s.obligationCount);
         return {
           companyId,
@@ -371,16 +423,16 @@ export async function shredRequirements(
           documentId: BigInt(s.documentId),
           spanStart: s.start,
           spanEnd: s.end,
-          name: s.name,
+          name,
           description: slice, // verbatim RAW slice (soft hyphens/artifacts and all — faithful)
           source: s.source,
           disposition: s.disposition,
           isScored: s.isScored,
           complianceStatus:
             s.disposition === 'administrative' ? ('not_applicable' as const) : ('not_assessed' as const),
-          farReference: clauseReference(slice) ?? '',
+          farReference: (clauseReference(slice) ?? '').slice(0, 100),
           citation,
-          citationSynthesized: citation === '', // deriveCitation found nothing → offset-only fact
+          citationSynthesized,
           composition: composition.composition,
           obligationCount: s.obligationCount,
           enumeratorCount: composition.enumeratorCount,

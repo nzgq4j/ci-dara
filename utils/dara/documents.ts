@@ -62,10 +62,15 @@ export async function extractText(filename: string, buffer: Buffer): Promise<str
       // unpdf bundles a serverless-friendly (worker-free) pdfjs build, which
       // avoids the worker / asset-tracing failures pdf-parse hits on Vercel.
       const { extractText: pdfExtractText } = await import('unpdf');
-      const { text } = await pdfExtractText(new Uint8Array(buffer), {
-        mergePages: true
+      // mergePages:false preserves per-line \n structure; mergePages:true flattens every line
+      // break to a space, destroying section headings and paragraph boundaries (which defeats
+      // deriveCitation and pushes the shred toward sentence-level fragmentation). Join pages with
+      // a blank line. Soft line-wrap newlines are harmless — verifySpan's normalize() collapses
+      // whitespace runs, so a model's un-wrapped quote still matches the stored (wrapped) text.
+      const { text: pages } = await pdfExtractText(new Uint8Array(buffer), {
+        mergePages: false
       });
-      return text || '';
+      return Array.isArray(pages) ? pages.join('\n\n') : String(pages ?? '');
     }
     if (lower.endsWith('.docx')) {
       const mammoth: any = await import('mammoth');

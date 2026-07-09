@@ -300,7 +300,20 @@ export function stitchFragments<T extends TruncatableSpan>(spans: T[]): T[] {
       j++;
     }
     // A joined chain is treated as complete; a lonely fragment survives still-truncated.
-    stitched.push({ ...meta, start, end, truncated: joined ? false : true });
+    const out = { ...meta, start, end, truncated: joined ? false : true } as T;
+    // Reconcile citationHint across the chain: the EARLIEST window with a non-empty hint wins
+    // (surviving is start-sorted, so surviving[i] is earliest). This is the ONE domain field
+    // stitchFragments merges — geometry otherwise keeps the longest fragment's metadata. No-op for
+    // span types that don't carry a citationHint (e.g. the tests).
+    if ('citationHint' in (out as object)) {
+      let hint = '';
+      for (let k = i; k < j; k++) {
+        const h = (surviving[k] as { citationHint?: string }).citationHint;
+        if (h) { hint = h; break; }
+      }
+      (out as { citationHint?: string }).citationHint = hint;
+    }
+    stitched.push(out);
     i = j;
   }
 
@@ -373,17 +386,19 @@ const CITATION_LOOKBACK = 2000;
 
 /**
  * Derive a "Section L.4.2" / "PWS 3.1" / clause-number citation by scanning RAW text backward
- * from the span for the nearest heading. Returns '' when none is found. Slices RAW text — which
- * is exactly why verifySpan returns raw offsets.
+ * from the span for the nearest heading. Returns null when none is found — so the caller can fall
+ * through a precedence chain (model hint, then an offset fact) instead of writing an empty string.
+ * Slices RAW text — which is exactly why verifySpan returns raw offsets.
  */
-export function deriveCitation(rawText: string, span: Span): string {
+export function deriveCitation(rawText: string, span: Span): string | null {
   const from = Math.max(0, span.start - CITATION_LOOKBACK);
   const before = rawText.slice(from, span.start);
   const re = new RegExp(CITATION_RE.source, 'g');
   let last = '';
   let m: RegExpExecArray | null;
   while ((m = re.exec(before)) !== null) last = m[0];
-  return last.trim();
+  const trimmed = last.trim();
+  return trimmed === '' ? null : trimmed;
 }
 
 // FAR/DFARS clause number, e.g. 52.212-5, 252.204-7012. The NUMBER format is legally mandated

@@ -96,6 +96,14 @@ function eq<T>(a: T, b: T): boolean {
     verifySpan(raw, 'costeffective') !== null);
   check('verifySpan: miss returns null', verifySpan(raw, 'nonexistent phrase') === null);
   check('verifySpan: empty quote returns null', verifySpan(raw, '   ') === null);
+
+  // Bare newline (soft line-wrap from mergePages:false) collapses to a space in the match key,
+  // so a model quoting the un-wrapped text still matches, and the RAW slice keeps the newline.
+  const wrapped = 'Corpus Christi Army\nDepot, TX';
+  const wspan = verifySpan(wrapped, 'Corpus Christi Army Depot');
+  check('verifySpan: bare line-wrap newline matches un-wrapped quote',
+    wspan !== null && wrapped.slice(wspan.start, wspan.end) === 'Corpus Christi Army\nDepot',
+    wspan ? `slice=${JSON.stringify(wrapped.slice(wspan.start, wspan.end))}` : 'no match');
 }
 
 // ── windowize: correct at any n, full coverage ────────────────────────────────
