@@ -578,6 +578,15 @@ model Requirement {
   // a quoted source citation.
   citationSynthesized Boolean   @default(false) @map("citation_synthesized")
 
+  // ── HRLR (Hierarchical Requirement Logic Resolution) semantic bundle ──
+  // The rich, mostly-display/review metadata the HRLR shred produces that has no dedicated column:
+  // node state, synthetic presentation path, normalized meaning, section path, original marker,
+  // mandatory kind, satisfaction rule (kind/n/basis/rationale), eval scope, applicability,
+  // confidence, verbatim-verified flag, and the resolve-time review flags. Structured/queryable
+  // fields (parentId, documentId, span_*, composition, source, disposition, complianceStatus,
+  // rollupMode) stay as real columns; this JSONB holds the rest. Null on pre-HRLR + manual rows.
+  hrlr                Json?     @map("hrlr")
+
   solicitation     Solicitation         @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
   document         SolDocument?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
   parent           Requirement?         @relation("RequirementDecomposition", fields: [parentId], references: [id], onDelete: Cascade)
