@@ -120,12 +120,30 @@ export interface RequirementNode {
   response: ResponseMeta | null; // populated only in response mode
 
   flags: string[]; // integrity notes added during resolve (see resolve.ts)
+
+  // Same-marker fragment detection (resolve.ts). Present ONLY on a node flagged as a probable
+  // mis-split — e.g. a bare "(CDRL A005)" tag the model emitted as its own node under a marker its
+  // real requirement already occupies. Detection flags; a reviewer decides whether to merge.
+  fragmentStatus?: 'PROBABLE_SPLIT';
+  fragmentReason?: string; // which fragment signal matched
+  fragmentMergeCandidate?: string; // logicalId of the longest node sharing this source marker
 }
 
 export interface NumberingConflict {
   childId: string; // logicalId
   parentId: string; // logicalId
   note: string;
+}
+
+// A source structural marker (e.g. "2.4.1") physically present in the document for which no node
+// was extracted — the coverage-gap detector's finding. A missing requirement is worse than a
+// duplicate, so gaps are surfaced, never inferred away.
+export interface CoverageGap {
+  type: 'coverageGap';
+  sourceMarker: string; // normalized marker missing from the extracted nodes
+  rawContext: string; // ~300 chars of source around the marker, for review
+  detectedAt: 'resolveGraph' | 'shredRequirements';
+  status: 'UNEXTRACTED';
 }
 
 export interface GraphStats {
@@ -142,5 +160,6 @@ export interface RequirementGraph {
   documentName: string;
   nodes: RequirementNode[];
   numberingConflicts: NumberingConflict[];
+  coverageGaps: CoverageGap[]; // source markers with no extracted node; [] when the check found none
   stats: GraphStats;
 }

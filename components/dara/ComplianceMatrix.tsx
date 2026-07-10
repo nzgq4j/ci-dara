@@ -9,6 +9,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Loader2, Check } from 'lucide-react';
+import RequirementDetail, { type RequirementDetailData } from '@/components/dara/RequirementDetail';
 
 export type MatrixRowData = {
   id: string;
@@ -20,6 +21,9 @@ export type MatrixRowData = {
   isNew?: boolean;
   isAmended?: boolean;
   version?: number;
+  // Full requirement detail for the click-to-open modal (source doc + HRLR logic). Optional so a
+  // row without it still renders as plain text.
+  detail?: RequirementDetailData;
 };
 
 const STATUS_META: Record<string, { label: string; chip: string; row: string; glyph: string }> = {
@@ -175,7 +179,13 @@ function MatrixRow({
       <span className="pt-1 font-mono text-[11px] text-t5">{index}</span>
 
       <div className="min-w-0">
-        <div className="text-[12.5px] leading-snug text-t2">{row.name}</div>
+        {row.detail ? (
+          <RequirementDetail detail={row.detail}>
+            <span className="text-[12.5px] leading-snug text-t2 hover:underline">{row.name}</span>
+          </RequirementDetail>
+        ) : (
+          <div className="text-[12.5px] leading-snug text-t2">{row.name}</div>
+        )}
         <div className="mt-0.5 flex items-center gap-1.5">
           {row.isNew && (
             <span className="rounded bg-[#DCFCE7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#166534]">new</span>

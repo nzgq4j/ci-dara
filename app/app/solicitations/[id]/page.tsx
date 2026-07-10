@@ -32,7 +32,6 @@ import AiActionButton from '@/components/dara/AiActionButton';
 import ComplianceCheckControl from '@/components/dara/ComplianceCheckControl';
 import AsyncJobControl from '@/components/dara/AsyncJobControl';
 import AddSection, { CloseModalOnComplete } from '@/components/dara/AddSection';
-import RequirementDetail from '@/components/dara/RequirementDetail';
 import PrintButton from '@/components/dara/PrintButton';
 import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
@@ -1484,17 +1483,63 @@ export default async function SolicitationDetailPage({
   );
 
   const requirements = activeRequirements;
-  const matrixRows = requirements.map((r) => ({
-    id: r.id.toString(),
-    name: r.name,
-    citation: r.citation,
-    complianceStatus: r.complianceStatus,
-    proposalRef: r.proposalRef,
-    notes: r.notes ?? '',
-    isNew: !!r.addedByAmendmentId,
-    isAmended: !!r.changedByAmendmentId,
-    version: r.version
-  }));
+  // Map each requirement's source document id to its filename so the detail modal can name the
+  // document the requirement was extracted from.
+  const docNameById = new Map(solicitation.solDocs.map((d) => [d.id.toString(), d.originalFilename]));
+  const matrixRows = requirements.map((r) => {
+    const h = (r.hrlr ?? {}) as Record<string, any>;
+    const sat = (h.satisfaction ?? {}) as Record<string, any>;
+    return {
+      id: r.id.toString(),
+      name: r.name,
+      citation: r.citation,
+      complianceStatus: r.complianceStatus,
+      proposalRef: r.proposalRef,
+      notes: r.notes ?? '',
+      isNew: !!r.addedByAmendmentId,
+      isAmended: !!r.changedByAmendmentId,
+      version: r.version,
+      detail: {
+        name: r.name,
+        description: r.description ?? '',
+        citation: r.citation,
+        source: r.source,
+        disposition: r.disposition,
+        farReference: r.farReference,
+        complianceStatus: r.complianceStatus,
+        proposalRef: r.proposalRef,
+        notes: r.notes ?? '',
+        // Source provenance.
+        sourceDocument: r.documentId ? docNameById.get(r.documentId.toString()) ?? '' : '',
+        sectionPath: h.sectionPath ?? '',
+        originalMarker: h.originalMarker ?? '',
+        page: h.page ?? null,
+        spanStart: r.spanStart,
+        spanEnd: r.spanEnd,
+        verbatimVerified: typeof h.verbatimVerified === 'boolean' ? h.verbatimVerified : undefined,
+        // HRLR logic graph.
+        logicalId: h.logicalId ?? '',
+        syntheticPath: h.syntheticPath ?? '',
+        state: h.state ?? '',
+        composition: r.composition ?? '',
+        mandatory: h.mandatory ?? '',
+        satisfactionKind: sat.kind ?? '',
+        satisfactionN: sat.n ?? null,
+        satisfactionBasis: sat.basis ?? '',
+        satisfactionRationale: sat.rationale ?? '',
+        evalScope: h.evalScope ?? '',
+        enumeratorCount: r.enumeratorCount,
+        applicability: h.applicability ?? '',
+        confidence: h.confidence ?? '',
+        confidenceRationale: h.confidenceRationale ?? '',
+        // Review signals.
+        flags: Array.isArray(h.flags) ? (h.flags as string[]) : [],
+        fragmentStatus: h.fragmentStatus ?? '',
+        fragmentReason: h.fragmentReason ?? '',
+        fragmentMergeCandidate: h.fragmentMergeCandidate ?? ''
+      }
+    };
+  });
 
   const compliancePanel = (
     <div className="space-y-4">

@@ -58,10 +58,12 @@ async function main() {
   console.log(`[hrlr] model returned in ${((Date.now() - t0) / 1000).toFixed(1)}s · in ${ai.tokenIn} / out ${ai.tokenOut} tokens`);
 
   const nodes = parseHrlrNodes(ai.text, docText, docName, kind);
-  const graph = resolveGraph(nodes, kind, docName);
+  const graph = resolveGraph(nodes, kind, docName, docText);
+  const fragments = graph.nodes.filter((n) => n.fragmentStatus === 'PROBABLE_SPLIT').length;
   console.log(
     `[hrlr] graph: ${graph.stats.total} nodes · ${graph.stats.standalone} standalone · ${graph.stats.parents} parents · ` +
-      `${graph.stats.unresolved} unresolved · ${graph.stats.unverified} unverified · ${graph.numberingConflicts.length} numbering conflicts`
+      `${graph.stats.unresolved} unresolved · ${graph.stats.unverified} unverified · ${graph.numberingConflicts.length} numbering conflicts · ` +
+      `${graph.coverageGaps.length} coverage gaps · ${fragments} fragment(s)`
   );
 
   mkdirSync(outDir, { recursive: true });

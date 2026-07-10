@@ -7,7 +7,7 @@
 //   logicalId (REQ-XXXXXX)     = LOGICAL identity (assigned by extraction order, stable)
 //   syntheticPath (R-n.n)      = PRESENTATION identity (derived by walking the resolved tree)
 
-import type { NumberingConflict, RequirementGraph, RequirementNode } from './types';
+import type { CoverageGap, NumberingConflict, RequirementGraph, RequirementNode } from './types';
 
 function reqId(seq: number): string {
   return 'REQ-' + String(seq).padStart(6, '0');
@@ -17,6 +17,106 @@ function reqId(seq: number): string {
 function dottedNumber(marker: string): string {
   const m = marker.match(/\b(\d+(?:\.\d+)+|\d+)\b/);
   return m ? m[1] : '';
+}
+
+// Normalize a section marker for cross-comparison: collapse internal whitespace, trim, strip trailing
+// periods. Applied IDENTICALLY to source-scanned markers and emitted node markers so the coverage
+// diff and the fragment grouping compare like with like (e.g. source "2.4.1." == emitted "2.4.1").
+function normalizeMarker(marker: string): string {
+  return marker.replace(/\s+/g, ' ').trim().replace(/\.+$/, '').trim();
+}
+
+// Scan the raw source for its own structural markers (decimal outline, lettered items, parenthetical
+// clause numbers). Returns each normalized marker mapped to the char offset of its first occurrence
+// (used to slice review context for a gap).
+function scanSourceMarkers(sourceText: string): Map<string, number> {
+  const patterns = [
+    /^\s*\d+(\.\d+)+[.\s]/gm, // decimal outline numbers, e.g. "2.4.1."
+    /^\s*\(?[a-z]\)[.\s]/gm, // lettered list items, e.g. "(a)" / "a)"
+    /^\s*\(\d+\)/gm // parenthetical clause numbers, e.g. "(1)"
+  ];
+  const markers = new Map<string, number>();
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sourceText)) !== null) {
+      const marker = normalizeMarker(m[0]);
+      if (marker && !markers.has(marker)) markers.set(marker, m.index);
+      if (m.index === re.lastIndex) re.lastIndex++; // zero-length-match guard
+    }
+  }
+  return markers;
+}
+
+// COVERAGE-GAP DETECTOR — diff the markers physically present in the source against the markers the
+// model actually emitted. Every source marker with no extracted node is a gap (the model dropped a
+// requirement). Flag it; do not attempt re-extraction here (out of scope for this pass).
+function detectCoverageGaps(nodes: RequirementNode[], sourceText: string): CoverageGap[] {
+  const sourceMarkers = scanSourceMarkers(sourceText);
+  const emitted = new Set<string>();
+  for (const n of nodes) {
+    const norm = normalizeMarker(n.provenance.originalMarker || '');
+    if (norm) emitted.add(norm);
+  }
+
+  const gaps: CoverageGap[] = [];
+  for (const [marker, index] of Array.from(sourceMarkers.entries())) {
+    if (emitted.has(marker)) continue;
+    const ctxStart = Math.max(0, index - 30);
+    gaps.push({
+      type: 'coverageGap',
+      sourceMarker: marker,
+      rawContext: sourceText.slice(ctxStart, ctxStart + 300),
+      detectedAt: 'resolveGraph',
+      status: 'UNEXTRACTED'
+    });
+    console.warn(
+      `[HRLR] Coverage gap detected: source marker §${marker} present in document, not found in extracted nodes.`
+    );
+  }
+  console.log(`[HRLR] Coverage gap detection complete. ${gaps.length} gap(s) found.`);
+  return gaps;
+}
+
+// Which fragment signal (if any) marks a node as a probable mis-split. Returns the reason, or null.
+function fragmentSignal(n: RequirementNode): string | null {
+  const t = n.exactText;
+  const hasObligation = /\b(shall|must)\b/i.test(t);
+  if (t.length < 120) return 'exact_text under 120 characters';
+  if (/^\s*\(.*\)\s*$/.test(t)) return 'bare parenthetical';
+  if (/CDRL\s+[A-Z]\d+/i.test(t) && !hasObligation) return 'CDRL tag without an obligation verb';
+  if (/^see\s+section/i.test(t) && !hasObligation) return '"see section" cross-reference without an obligation verb';
+  return null;
+}
+
+// SAME-MARKER FRAGMENT DETECTOR — when the model emits more than one node under a single source
+// marker, the short/parenthetical/reference ones are likely a real requirement broken apart (e.g. a
+// trailing "(CDRL A005)" split off from its sentence). Flag them with a merge candidate (the longest
+// node under that marker). Flag only — never delete or merge; the reviewer decides.
+function detectFragments(nodes: RequirementNode[]): void {
+  const groups = new Map<string, RequirementNode[]>();
+  for (const n of nodes) {
+    const norm = normalizeMarker(n.provenance.originalMarker || '');
+    if (!norm) continue; // only group nodes that actually carry a source marker
+    if (!groups.has(norm)) groups.set(norm, []);
+    groups.get(norm)!.push(n);
+  }
+
+  for (const [marker, group] of Array.from(groups.entries())) {
+    if (group.length < 2) continue;
+    const longest = group.reduce((a, b) => (b.exactText.length > a.exactText.length ? b : a));
+    for (const n of group) {
+      if (n.logicalId === longest.logicalId) continue; // don't flag the merge target against itself
+      const reason = fragmentSignal(n);
+      if (!reason) continue;
+      n.fragmentStatus = 'PROBABLE_SPLIT';
+      n.fragmentReason = reason;
+      n.fragmentMergeCandidate = longest.logicalId;
+      console.warn(
+        `[HRLR] Fragment detected: node ${n.logicalId} (source §${marker}) flagged as probable mis-split. ` +
+          `Merge candidate: ${longest.logicalId}.`
+      );
+    }
+  }
 }
 
 /**
@@ -30,7 +130,8 @@ function dottedNumber(marker: string): string {
 export function resolveGraph(
   nodes: RequirementNode[],
   docKind: 'solicitation' | 'response',
-  documentName: string
+  documentName: string,
+  sourceText?: string
 ): RequirementGraph {
   const byKey = new Map<string, RequirementNode>();
   for (const n of nodes) if (!byKey.has(n.key)) byKey.set(n.key, n);
@@ -158,6 +259,14 @@ export function resolveGraph(
     }
   }
 
+  // 9. Coverage-gap detection — source markers with no extracted node. Needs the raw source text;
+  //    when it isn't supplied (a caller that only has the node list) the check is skipped -> [].
+  const coverageGaps = sourceText != null ? detectCoverageGaps(order, sourceText) : [];
+
+  // 10. Same-marker fragment detection — probable mis-splits (e.g. a "(CDRL A005)" tag emitted as its
+  //     own node). Runs on the emitted nodes only; logicalIds are already assigned above.
+  detectFragments(order);
+
   const stats = {
     total: nodes.length,
     standalone: nodes.filter((n) => n.state === 'STANDALONE').length,
@@ -167,5 +276,5 @@ export function resolveGraph(
     unverified: nodes.filter((n) => !n.provenance.verbatimVerified).length
   };
 
-  return { docKind, documentName, nodes: order, numberingConflicts, stats };
+  return { docKind, documentName, nodes: order, numberingConflicts, coverageGaps, stats };
 }

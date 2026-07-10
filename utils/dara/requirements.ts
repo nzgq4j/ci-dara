@@ -43,6 +43,9 @@ export interface ShredSummary {
   // (which reads `exhausted`) marks the job done in one tick.
   exhausted?: boolean;
   error?: string;
+  // Count of source markers present in the document that produced no extracted node (coverage-gap
+  // detector). Surfaced so the caller/worker can see a dropped-requirement signal; 0 on a clean run.
+  coverageGaps?: number;
 }
 
 interface DocRow {
@@ -147,7 +150,7 @@ export async function shredRequirements(
   // tree repair, satisfaction sanity, numbering-conflict detection).
   const nodes = parseHrlrNodes(ai.text, solText, loaded.solicitation.title ?? 'solicitation', 'solicitation');
   if (nodes.length === 0) return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
-  const graph = resolveGraph(nodes, 'solicitation', loaded.solicitation.title ?? 'solicitation');
+  const graph = resolveGraph(nodes, 'solicitation', loaded.solicitation.title ?? 'solicitation', solText);
 
   const capped = graph.nodes.slice(0, MAX_REQUIREMENTS);
 
@@ -220,7 +223,11 @@ export async function shredRequirements(
         confidence: n.confidence,
         confidenceRationale: n.confidenceRationale,
         verbatimVerified: n.provenance.verbatimVerified,
-        flags: n.flags
+        flags: n.flags,
+        // Same-marker fragment flags (undefined -> dropped from the JSON) so a reviewer can act later.
+        fragmentStatus: n.fragmentStatus,
+        fragmentReason: n.fragmentReason,
+        fragmentMergeCandidate: n.fragmentMergeCandidate
       } as unknown as object,
       sortOrder: base + i
     };
@@ -254,5 +261,5 @@ export async function shredRequirements(
     return inserted.length;
   });
 
-  return { ok: true, count: written, exhausted: true };
+  return { ok: true, count: written, exhausted: true, coverageGaps: graph.coverageGaps.length };
 }

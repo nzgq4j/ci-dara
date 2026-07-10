@@ -97,7 +97,25 @@ relying on YOUR keys for links; put whatever the document shows (or "") in sourc
 
 ### Exclude
 The scoring METHODOLOGY (rating scales, weighting, best-value process), acronym lists, and pure
-background/definitions. The evaluation FACTORS are requirements; the scoring machinery is not.`;
+background/definitions. The evaluation FACTORS are requirements; the scoring machinery is not.
+
+--- EXTRACTION COMPLETENESS RULES ---
+
+Rule C-1: Emit a node for every numbered or lettered item present in the source document, in
+sequence. Never skip an item because it resembles a sibling. Near-identical obligations that differ
+only in threshold, time window, metric, or subject matter are DISTINCT requirements and must each
+receive their own node. If you determine that a numbered item is not a requirement, emit it anyway —
+set its "disposition" to "administrative" (or its "state" to "UNRESOLVED" if the item is genuinely
+indeterminable) and explain the determination in "confidence_rationale". Omitting a source item is
+never correct.
+
+Rule C-2: A bare parenthetical cross-reference or deliverable tag — for example (CDRL A005),
+(see Section 3.2), (Attachment 1) — is an attribute of its containing sentence, NOT an independently
+actionable requirement. Do not emit it as a standalone node. Because "exact_text" is copied verbatim,
+a trailing tag like "(CDRL A005)" stays part of the sentence's own exact_text; keep it there rather
+than splitting it into its own node.
+
+--- END EXTRACTION COMPLETENESS RULES ---`;
 
 const RESPONSE_GUIDANCE = `
 ### What is one node (response mode)?

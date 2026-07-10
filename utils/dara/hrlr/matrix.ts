@@ -45,6 +45,8 @@ export function renderTree(graph: RequirementGraph): string {
 /** Flat compliance matrix (Markdown). Every node is a row; parents included (they may carry an
  *  independent obligation and always anchor their children's rollup). */
 export function renderMatrix(graph: RequirementGraph): string {
+  // Summary block: always shown (even at 0) so a reviewer can confirm the coverage check ran.
+  const summary = `**Coverage gaps detected: ${graph.coverageGaps.length}** (see coverageGaps in graph output)`;
   const head =
     '| Logical ID | Source Ref | Path | Requirement | Mand. | State | Satisfaction | Eval | Class | Disp | Conf | Flags |\n' +
     '|---|---|---|---|---|---|---|---|---|---|---|---|';
@@ -65,7 +67,7 @@ export function renderMatrix(graph: RequirementGraph): string {
     ];
     return '| ' + cells.join(' | ') + ' |';
   });
-  return [head, ...rows].join('\n');
+  return [summary, '', head, ...rows].join('\n');
 }
 
 /** Everything the model was unsure about, plus source/logical numbering conflicts. */
