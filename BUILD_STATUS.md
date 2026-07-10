@@ -1,21 +1,101 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-08_
+_Last updated: 2026-07-10_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `5728f07` (`dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`, `ci-dara-4rteq5dyn`) — **working tree clean** (except untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`; everything below is committed + pushed + deployed, `main`==`5728f07`==last deployed).
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `e373498` (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`, `ci-dara-9499lntga`) — everything below is committed + pushed + deployed, `main`==`e373498`==last deployed (working tree clean except untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`).
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
-> **Start-here for the next session is `SESSION_HANDOFF.md` §0 (2026-07-08)** (deploy model, gotchas, backlog, key files).
-> **This session (2026-07-08):** admin **AI cost dashboard + per-run cost tracking** + admin **sidebar nav** +
-> fixed the **usage ledger never recording Direct AI Reviews** — see §-3 below. One prod migration
-> (`20260708200000_ai_pricing_and_run_id`) + RLS applied.
+> **Start-here for the next session is `SESSION_HANDOFF.md` §0 (2026-07-10)** (deploy model, gotchas, backlog, key files).
+> **This session (2026-07-10):** **HRLR shred** — the compliance-matrix generator now reconstructs a
+> typed requirement **graph** (hierarchy + satisfaction logic + verbatim provenance) instead of a flat
+> list; see §-4 below. One prod migration (`20260710120000_requirement_hrlr`, additive `hrlr JSONB`, no
+> RLS file needed). **First real dense-RFP run on prod is still the true test.**
 > **Top priority next remains the security backlog** — `SECURITY_BACKLOG.md` (untracked; `DARA-021..046`, prior
 > hardening intact). **DARA-025 (BOLA) + DARA-046 (password reset) DONE 2026-07-07.** Top open: DARA-021 rate
 > limiting (code) + DARA-022/023 (operator: Next 15, branch protection).
 > **Operator dashboard steps DONE** (2026-07-07): Supabase Manual Linking + 12 email templates pasted.
 > ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header — decide: untrack (`git rm --cached` + gitignore) or accept.
+
+---
+
+## -4. Latest session (2026-07-10) — HRLR shred: requirement-graph reconstruction (replaces the flat shred)
+
+Commit `e373498` (single), **pushed + deployed** (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`, `ci-dara-9499lntga`,
+READY / production, aliased `dara.crucibleinsight.com`). **One prod migration** —
+`20260710120000_requirement_hrlr` (additive `hrlr JSONB` on `dara_requirements`) — applied as owner BEFORE
+the deploy; **no paired RLS file** (table-level grants extend to new columns — same pattern as prior
+additive-column migrations). `migrate status` first confirmed the 2026-07-09 span migration was ALREADY
+applied in prod → no drift, only HRLR pending. `tsc --noEmit` + `pnpm build` both exit 0.
+
+**What shipped — Hierarchical Requirement Logic Resolution.** The compliance-matrix shred no longer returns a
+flat de-duplicated list. `shredRequirements` (`utils/dara/requirements.ts`) sends the whole solicitation in ONE
+call and reconstructs a requirement **graph**:
+- **Node typing** — STANDALONE / PARENT_WITH_CHILDREN / CHILD / PARENT_AND_CHILD / UNRESOLVED (explicit, not
+  inferred from mere presence/absence of descendants).
+- **Satisfaction logic** — ALL_OF / ANY_OF / EXACTLY_ONE_OF / AT_LEAST_N(n) / OPTIONAL_SET /
+  EVALUATE_{COLLECTIVELY,INDIVIDUALLY} / EXAMPLES_OF / EVIDENCE_FOR, each tagged EXPLICIT / INFERRED / UNRESOLVED.
+- **Three identities kept separate** (core doctrine): source number = evidence (`citation` +
+  `hrlr.originalMarker`, never rewritten); the row's BigInt id = stable **logical** identity;
+  `hrlr.syntheticPath` (R-n.n) = derived display. Source numbering that contradicts the inferred hierarchy is
+  **preserved and flagged**, never overwritten (e.g. Section M "4.1 → 4.2/4.3/4.4" keeps its markers with a
+  logical parent/child link + a numbering-conflict flag).
+- **Verbatim provenance verification** — each node's `exact_text` is located in the source (raw, then
+  whitespace/typography-normalized via a normalized→raw offset map); text that can't be found is FLAGGED
+  (`verbatimVerified:false`), **never silently dropped** (the span-anchored post-mortem's core lesson: a
+  missing requirement is worse than a duplicate).
+
+**Core lives in `utils/dara/hrlr/`** — pure, app-free (no `@/`), so it runs standalone AND ports unchanged:
+`types.ts` (model), `prompt.ts` (extraction prompt, `docKind: solicitation|response`), `parse.ts` (JSON +
+provenance verify), `resolve.ts` (identity assignment, tree repair, satisfaction sanity, numbering-conflict
+detection), `matrix.ts` (renderers), `run.ts` (standalone CLI:
+`npx tsx utils/dara/hrlr/run.ts --in <file> --kind solicitation|response`).
+
+**Persistence** reuses the 2026-07-09 span/decomposition columns; only `hrlr JSONB` is new:
+
+| HRLR value | Column |
+|---|---|
+| verbatim text | `description` |
+| source marker | `citation` (+ `hrlr.originalMarker`) |
+| per-doc offsets | `documentId` / `spanStart` / `spanEnd` (re-located per source doc via `locateSpan`, independent of the concatenated-corpus offsets used for verification) |
+| hierarchy | `parentId` / `childOrder` (2-pass: `createMany` → read back by `sortOrder` → wire `parentId`) |
+| node state | `composition` (STANDALONE/CHILD→atomic, PARENT_*→compound, UNRESOLVED→unclassified) |
+| satisfaction kind | `rollupMode`; `enumeratorCount` = child count; `obligationCount` left **null** on purpose |
+| everything else | `hrlr` JSONB (state, syntheticPath, normalizedMeaning, sectionPath, mandatory, satisfaction{kind,n,basis,rationale}, evalScope, applicability, confidence, verbatimVerified, flags) |
+
+**Anti-runaway (addresses sol-18/19 + the two prior "spectacular" shred failures):** one-shot
+(`exhausted:true`, **no resumption/gap-pass loop** → can't infinitely requeue), 240s call timeout,
+throw→job-fails→poll releases, existing `reapOrphanedJobs` try/catch intact. Container/parent nodes insert
+`complianceStatus:not_applicable` so they **stay out of the compliance sweep** (evaluator.ts:493 grades
+`disposition:'compliance'` + `not_assessed` **leaves** only) — the INV-08 trap, handled. **No-ops into a
+non-empty matrix** (regeneration = clear first) so a re-trigger can't build a duplicate graph.
+
+**Verified:** standalone runner on a synthetic RFP: 19 nodes, **0 unverified provenance**, 6 source/logical
+numbering conflicts; every flagship case correct (AT_LEAST_N(2) EXPLICIT, "including"→ALL_OF INFERRED@MEDIUM,
+"should"→NON_MANDATORY, unnumbered requirement, 4.1-parent-of-4.2/4.3/4.4 markers preserved, background
+excluded, DFARS/SAM/Section L classified). One model error (over-nesting siblings under 3.2.1) was
+**auto-flagged by two independent detectors** (numbering-conflict + "has children but satisfaction NONE") →
+review queue, not silently in the matrix. Response mode proven (11 nodes:
+EVIDENCE/COMMITMENT/ASSUMPTION/EXCEPTION/NARRATIVE + solicitation-marker links). **Not yet run on a real dense
+RFP on prod — that is the true test.**
+
+**Supersedes** the `NEXT_STEPS_span-anchored-extraction.md` direction: this is whole-document single-call
+HRLR, NOT the windowed/resumable pipeline (its Prompts 3–6 are moot). The 2026-07-09 span **schema** (Prompt 1)
++ `spans.ts`/`extract-prompt.ts` (Prompt 2) already landed and are reused/left in place. Note the intervening
+2026-07-09 span-anchored commits (`43fd1ee`→`2c9a9b6`) were never written up here; HRLR sits on and replaces
+that work.
+
+**Where to next (all optional / not blocking):**
+- **Response HRLR** is built + proven but has no app home — needs a schema decision (response-graph table vs a
+  `kind` flag on `Requirement`) + a server action + UI.
+- **Matrix UI** still renders rows flat grouped by `source`; it does not yet show the parent/child tree,
+  satisfaction badges, synthetic path, or the review queue (flags + numbering conflicts). All the data is in the
+  `hrlr` JSONB — this is a UI enhancement.
+- Prototype refinements: auto-repair the flagged over-nesting (un-nest a "child" whose source number is a peer
+  of its parent); a semantic **same-obligation** cross-ref for restated requirements (a link, not a delete).
+- **Security backlog stays #1** (DARA-021 rate limiting, DARA-022 Next 15, DARA-023 branch protection) —
+  unchanged; this session was feature work.
 
 ---
 

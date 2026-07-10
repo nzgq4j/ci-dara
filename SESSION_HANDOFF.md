@@ -1,11 +1,11 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-08 · last DEPLOYED code `5728f07` (`dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`, `ci-dara-4rteq5dyn`) · branch `main` · for: next session_
+_Prepared: 2026-07-10 · last DEPLOYED code `e373498` (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`, `ci-dara-9499lntga`) · branch `main` · for: next session_
 
 Start-here doc. **Everything below is committed, pushed, + live on production** (`dara.crucibleinsight.com`).
-`main` == `5728f07` == last deployed (git is back in sync — this session pushed the CLI-only commits up too).
-Working tree clean except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`. Deep decision log:
-`BUILD_STATUS.md`. **Start with §0 below (2026-07-08).**
+`main` == `e373498` == last deployed. Working tree clean except the untracked `SECURITY_BACKLOG.md` +
+`tsconfig.tsbuildinfo`. Deep decision log: `BUILD_STATUS.md` (§-4 for this session). **Start with §0 below
+(2026-07-10).**
 
 > ✅ **Operator steps DONE** (user confirmed 2026-07-07): Supabase Manual Linking enabled + 12 branded email
 > templates pasted.
@@ -16,7 +16,47 @@ Working tree clean except the untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuil
 
 ---
 
-## 0. Latest session (2026-07-08) — Admin AI cost dashboard + per-run cost + sidebar nav + usage-ledger fix
+## 0. Latest session (2026-07-10) — HRLR shred (requirement-graph reconstruction; replaces the flat shred)
+
+Commit `e373498` on `main`, **pushed + deployed to prod** (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`,
+`ci-dara-9499lntga`, READY / production, aliased `dara.crucibleinsight.com`). **One prod migration** —
+`20260710120000_requirement_hrlr` (additive `hrlr JSONB` on `dara_requirements`) — applied as owner
+(`prisma migrate deploy`) BEFORE the deploy; **no RLS file** (table grants cover new columns). `migrate status`
+confirmed the 2026-07-09 span migration was already applied → no drift. `tsc --noEmit` + `pnpm build` clean.
+Full decision log: `BUILD_STATUS.md` §-4.
+
+**What it is.** "Generate from solicitation" now runs **Hierarchical Requirement Logic Resolution** instead of
+the flat whole-document list. One call reconstructs a requirement **graph** — typed nodes (STANDALONE /
+PARENT_WITH_CHILDREN / CHILD / PARENT_AND_CHILD / UNRESOLVED), parent/child links, cardinality/Boolean
+**satisfaction rules** (ALL_OF / ANY_OF / AT_LEAST_N / EXAMPLES_OF / …), evaluation scope, and
+**verbatim-verified source provenance** (unfound text is flagged, never dropped). Three identities stay
+separate: the document's number is evidence, the row id is the stable logical id, `hrlr.syntheticPath` is
+display; contradictory source numbering is preserved + flagged.
+
+**Key files.** Core (pure, app-free) in `utils/dara/hrlr/` — `types/prompt/parse/resolve/matrix.ts` + `run.ts`
+(standalone: `npx tsx utils/dara/hrlr/run.ts --in <file> --kind solicitation|response`). `utils/dara/
+requirements.ts` `shredRequirements` rewritten to run the pipeline + persist the graph (reuses span/
+decomposition columns; new `hrlr` JSONB bundle). Worker signature unchanged (`passes.ts:754`).
+
+**Safety (why this shouldn't repeat sol-18/19 or the two prior failures).** One-shot, **no resumption loop**
+(can't infinitely requeue); 240s timeout; throw→job-fails→poll releases. Container/parent nodes insert
+`complianceStatus:not_applicable` → **excluded from the compliance sweep** (only `compliance`+`not_assessed`
+leaves grade). **No-ops into a non-empty matrix** (regenerate = clear first).
+
+**To watch / do next.**
+- **First real dense-RFP run on prod is the true test.** Trigger it on ONE solicitation with an empty matrix
+  and confirm the job COMPLETES (guards make a stall self-clear rather than pin the poll).
+- **Matrix UI** still shows rows flat grouped by `source` — no tree / satisfaction badges / synthetic path /
+  review queue (flags + numbering conflicts) yet. All data is in the `hrlr` JSONB; UI is the follow-on.
+- **Response HRLR** built + proven, no app home yet (needs a response-graph store + action + UI).
+- **Security backlog remains #1** (DARA-021 rate limiting, DARA-022 Next 15, DARA-023 branch protection).
+
+**Supersedes** `NEXT_STEPS_span-anchored-extraction.md` (that windowed/resumable design is moot; its schema
+Prompt 1 + `spans.ts`/`extract-prompt.ts` already landed and are reused). The intervening 2026-07-09
+span-anchored commits (`43fd1ee`→`2c9a9b6`) were never written up in this handoff; HRLR sits on and replaces
+that direction.
+
+## 0 (2026-07-08). Admin AI cost dashboard + per-run cost + sidebar nav + usage-ledger fix
 
 All committed + **pushed + deployed to prod** (commits `1207e27` → `5728f07`; last deploy
 `dpl_DCY7rVgfwQH1LurCx9mYeZKX9Mtv`). Builds clean (`tsc --noEmit --skipLibCheck`). Context: this session

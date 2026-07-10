@@ -87,16 +87,18 @@ One big server component; `PipelineStepper` (client) maps stages to views:
   (JobQueue), `processReviewJobs` (worker — claims jobs via `prismaAdmin`, runs under the
   job's tenant, requeues on deadline), `triggerWorker()` (fire-and-forget kick),
   `syncMatrixFromPasses` (fold Pass-1 findings → matrix, no LLM).
-- **`requirements.ts` `shredRequirements`** — AI-shred RFP docs → `Requirement` rows.
-  **Multi-pass**: initial extract + ≤2 coverage passes (`buildShredGapPrompt`) that hunt for
-  missed reqs, stop when dry. Dedupes by name. `SHRED_MAX_TOKENS = 16000`.
+- **`requirements.ts` `shredRequirements`** — **HRLR shred (2026-07-10)**: one whole-document call
+  reconstructs a typed requirement **graph** (`utils/dara/hrlr/*`) → `Requirement` rows with
+  parent/child links + `hrlr` JSONB. One-shot (no gap-pass loop), no-ops into a non-empty matrix,
+  containers inserted `not_applicable` (kept out of the sweep). See memory `hrlr-shred.md`. (The old
+  multi-pass `buildShredGapPrompt`/`SHRED_MAX_TOKENS` flow is gone; `shred-prompt.ts` is orphaned.)
 - **`evaluator.ts`** — legacy holistic `runEvaluation` (scored factors) still present;
   `runComplianceSweep`/`runComplianceCheck` (lean pass/fail over `disposition=compliance`).
 - **`amendments.ts`** — `reconcileAmendment` (AI diff + **1 coverage pass**,
   `buildAmendmentGapPrompt`), `applyAmendmentChange`. `DIFF_MAX_TOKENS = 16000`.
 - **`prompt.ts`** — all prompt builders + tolerant salvage parsers. `PASS_LENS` /
-  `buildPassPrompt` / `parsePassResult`; `buildShredPrompt` (disposition classify + exclude
-  non-requirements) / `buildShredGapPrompt`; `buildAmendmentDiffPrompt`/`buildAmendmentGapPrompt`.
+  `buildPassPrompt` / `parsePassResult`; `buildAmendmentDiffPrompt`/`buildAmendmentGapPrompt`. (Shred
+  prompting now lives in `utils/dara/hrlr/prompt.ts`, not `buildShredPrompt`.)
 - **`providers.ts`** — `complete()` clamps output tokens per provider.
 - **Worker route** `app/api/cron/passes/route.ts` + **`vercel.json` cron** (every minute).
 
