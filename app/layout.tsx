@@ -7,6 +7,7 @@ import ThemeProvider from '@/components/layout/ThemeProvider';
 import { Toaster } from '@/components/ui/Toasts/toaster';
 import { PropsWithChildren, Suspense } from 'react';
 import { getURL } from '@/utils/helpers';
+import { Analytics } from '@vercel/analytics/next';
 import 'styles/main.css';
 
 const inter = Inter({
@@ -54,6 +55,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
           <Suspense>
             <Toaster />
           </Suspense>
+          <Analytics />
         </ThemeProvider>
       </body>
     </html>
