@@ -1,22 +1,100 @@
 # DARA — Build Status & Decisions
 
-_Last updated: 2026-07-10_
+_Last updated: 2026-07-11_
 
 **Production:** https://dara.crucibleinsight.com (alias: https://ci-dara.vercel.app)
-**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `e373498` (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`, `ci-dara-9499lntga`) — everything below is committed + pushed + deployed, `main`==`e373498`==last deployed (working tree clean except untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`).
+**Vercel project:** `crucible-insight/ci-dara` · **Branch:** `main` · last DEPLOYED code `0709595` (`dpl_6AHhbXkRpyeYomcTj7kHBU7PSD6T`, `ci-dara-qzz5bb5ub`) — everything below is committed + pushed + deployed, `main`==`0709595`==last deployed (working tree clean except untracked `SECURITY_BACKLOG.md` + `tsconfig.tsbuildinfo`).
 **Deploy method:** GitHub→Vercel auto-deploy is **not firing**; deploys are done manually via `vercel deploy --prod --yes` after `git push`. (See §4.)
 **Stack:** Next.js 14.2.35 (App Router) · Prisma 7 · Supabase (Postgres + Auth + Storage + MFA) · Stripe · Vercel
 
-> **Start-here for the next session is `SESSION_HANDOFF.md` §0 (2026-07-10)** (deploy model, gotchas, backlog, key files).
-> **This session (2026-07-10):** **HRLR shred** — the compliance-matrix generator now reconstructs a
-> typed requirement **graph** (hierarchy + satisfaction logic + verbatim provenance) instead of a flat
-> list; see §-4 below. One prod migration (`20260710120000_requirement_hrlr`, additive `hrlr JSONB`, no
-> RLS file needed). **First real dense-RFP run on prod is still the true test.**
+> **Start-here for the next session is `SESSION_HANDOFF.md` §0 (2026-07-11)** (deploy model, gotchas, backlog, key files).
+> **This session (2026-07-11):** **shred scan-integrity guards + requirement-detail modal** — two
+> deterministic detectors that catch model-side extraction defects the pipeline previously couldn't see
+> (a **coverage gap** = a source section the model dropped; a **same-marker fragment** = one requirement
+> split into two, e.g. a `(CDRL A005)` tag broken off), plus a click-to-open **requirement-detail modal**
+> on the compliance matrix (verbatim text, source document, HRLR logic, flags). See §-5 below.
+> **No migration** this session (TS logic + UI only). The detectors run on the NEXT shred — existing
+> matrices don't retroactively show gaps until regenerated. **First real dense-RFP run on prod is still
+> the true test** of the HRLR shred (§-4).
 > **Top priority next remains the security backlog** — `SECURITY_BACKLOG.md` (untracked; `DARA-021..046`, prior
 > hardening intact). **DARA-025 (BOLA) + DARA-046 (password reset) DONE 2026-07-07.** Top open: DARA-021 rate
 > limiting (code) + DARA-022/023 (operator: Next 15, branch protection).
 > **Operator dashboard steps DONE** (2026-07-07): Supabase Manual Linking + 12 email templates pasted.
 > ⚠️ **`SECURITY_BACKLOG.md` is tracked in git** despite its "do not commit while open" header — decide: untrack (`git rm --cached` + gitignore) or accept.
+
+---
+
+## -5. Latest session (2026-07-11) — shred scan-integrity guards (coverage-gap + fragment detectors) + requirement-detail modal
+
+Commit `0709595` (single), **pushed + deployed** (`dpl_6AHhbXkRpyeYomcTj7kHBU7PSD6T`, `ci-dara-qzz5bb5ub`,
+READY / production, newest prod deployment, aliased `dara.crucibleinsight.com`). **No migration** — TypeScript
+logic + UI only. `tsc --noEmit` + `pnpm build` both exit 0.
+
+**Why.** Two confirmed extraction defects on a live §2.4 Performance Standards doc: (1) **§2.4.1 dropped** —
+the model emitted the 2.4 stem, skipped 2.4.1 (recall miss on a near-duplicate sibling in the one-shot
+whole-document pass), continued from 2.4.2; (2) **§2.4.3 split** — the `(CDRL A005)` tail was emitted as its
+own node citing the same section. Both arrive at the deterministic pipeline as **well-formed** node objects, so
+`parseHrlrNodes`/`resolveGraph` couldn't see either failure — HRLR's "flag, never drop" doctrine covered text
+the model DID emit, but nothing watched for text it should have emitted (a gap) or one requirement emitted as
+two (a fragment). These are the guards.
+
+**1. Coverage-gap detector (`utils/dara/hrlr/resolve.ts`).** After extraction, scans the RAW source for its own
+structural markers (decimal `2.4.1`, lettered `(a)`, parenthetical `(1)`) and diffs against the markers the
+model emitted (same normalization both sides: collapse whitespace, strip trailing periods). Every source
+section with no node becomes a `CoverageGap { type, sourceMarker, rawContext(~300 chars), detectedAt, status:
+'UNEXTRACTED' }` on the graph. Logs a per-gap warning + a summary count (always, even at 0). Fully
+document-agnostic — regexes + a set diff, nothing tuned to §2.4.
+
+**2. Same-marker fragment detector (`resolve.ts`).** Groups emitted nodes by normalized marker; for any group
+>1, flags nodes matching a fragment signal — `exact_text` <120 chars, OR bare parenthetical, OR a `CDRL A###`
+tag with no obligation verb, OR a `see section` cross-ref with no obligation verb — with
+`fragmentStatus:'PROBABLE_SPLIT'`, `fragmentReason`, and `fragmentMergeCandidate` (logicalId of the longest
+sibling). **Flag only** — never auto-merges or deletes; a reviewer decides.
+
+**3. Prompt reinforcement (`utils/dara/hrlr/prompt.ts`).** Appended an `--- EXTRACTION COMPLETENESS RULES ---`
+block to `SOLICITATION_GUIDANCE` (existing content untouched/un-reordered): **C-1** emit every numbered/lettered
+item, never skip a near-duplicate sibling (if not a requirement, still emit it — `disposition:administrative`
+or `state:UNRESOLVED` + reason); **C-2** a bare cross-ref/deliverable tag like `(CDRL A005)` is an attribute of
+its sentence, keep it inside that sentence's `exact_text`, don't split it out. ⚠️ **Deviation from the request
+spec:** it asked to set `structural_state:ADMINISTRATIVE` — that field/value doesn't exist (`state` has no
+ADMINISTRATIVE member; `administrative` is a `disposition`), and instructing the model to emit an invalid
+`state` would corrupt output, so C-1 uses the real schema fields.
+
+**Surfacing.** Gap count on the rendered matrix (`matrix.ts` `renderMatrix` summary line, shown even at 0), on
+the standalone runner log (`run.ts`), and on `ShredRequirements`' return (`ShredSummary.coverageGaps`).
+Fragment flags persisted in the `hrlr` JSONB. Types: `CoverageGap` + optional `fragmentStatus/Reason/
+MergeCandidate` on `RequirementNode` + `coverageGaps: CoverageGap[]` on `RequirementGraph` (`hrlr/types.ts`).
+`resolveGraph` gained an optional `sourceText?` param (both callers — `run.ts`, `requirements.ts` — pass it);
+when absent the coverage check is skipped → `[]`, so the signature stays backward-compatible.
+
+**Requirement-detail modal (`components/dara/RequirementDetail.tsx` + `ComplianceMatrix.tsx`).** The
+`RequirementDetail.tsx` component existed but was **dead** (imported in the sol page, never rendered) — I
+repurposed it into a full click-to-open modal and wired it into the matrix (clicking a requirement name opens
+it). Shows: verbatim requirement text; a **needs-review** banner (flags + probable mis-split); Classification
+(source/type/mandatory/FAR/status/response-loc/notes); **Source & provenance** incl. the **source DOCUMENT
+filename** (mapped from `documentId`), section path, source marker, page, char span, verbatim-verified badge;
+and the **HRLR logic graph** (state, composition, satisfaction rule, eval scope, child count, applicability,
+confidence). Fed from the `hrlr` JSONB + a `documentId→filename` map built on the page (`app/app/
+solicitations/[id]/page.tsx` `matrixRows`). All HRLR fields optional → pre-HRLR / manually-added rows just
+render the sections they have. Removed the now-dead direct import from the sol page.
+
+**Verified.** Live standalone run on the §2.4 fixture (`run.ts`, sonnet-4-6): **4 nodes, 0 coverage gaps, 0
+fragments**, all four sections (2.4 stem / 2.4.1 / 2.4.2 / 2.4.3) present, `(CDRL A005)` folded into 2.4.3's
+verbatim text (not a sibling). Plus a **deterministic negative control** (no API): fed a crafted model output
+that drops 2.4.1 and splits `(CDRL A005)` → coverage detector flagged `["2.4.1"]`, fragment detector flagged
+the `(CDRL A005)` node with merge candidate = the real 2.4.3 → **both fire on the defect shape**, proving the
+guards aren't just false-positive-free. Modal is **build-verified**, not yet clicked in a live browser (needs
+the auth'd app + a sol with requirements).
+
+**Constraints honored (per the request):** did NOT touch `parseHrlrNodes` node-drop logic, the salvage parser,
+or existing `SOLICITATION_GUIDANCE` ordering; **no** follow-up re-extraction call (deliberately out of scope —
+gaps are flagged and stopped); no renames; no new deps.
+
+**Where to next (all optional).** (a) **Review-queue UI** — coverage gaps + fragment flags + numbering
+conflicts have no surfaced home yet; the matrix shows a gap COUNT but not the list. (b) **Optional gap
+re-extraction** — a small, bounded follow-up call that extracts only the missing sections (no window loop, so
+it can't repeat the sol-18/19 stall). (c) **Fragment auto-merge** affordance in the modal (merge the flagged
+node into its candidate). (d) Same detectors for **response HRLR** when it gets an app home.
 
 ---
 

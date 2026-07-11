@@ -1,11 +1,11 @@
 # DARA — Session Handoff
 
-_Prepared: 2026-07-10 · last DEPLOYED code `e373498` (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`, `ci-dara-9499lntga`) · branch `main` · for: next session_
+_Prepared: 2026-07-11 · last DEPLOYED code `0709595` (`dpl_6AHhbXkRpyeYomcTj7kHBU7PSD6T`, `ci-dara-qzz5bb5ub`) · branch `main` · for: next session_
 
 Start-here doc. **Everything below is committed, pushed, + live on production** (`dara.crucibleinsight.com`).
-`main` == `e373498` == last deployed. Working tree clean except the untracked `SECURITY_BACKLOG.md` +
-`tsconfig.tsbuildinfo`. Deep decision log: `BUILD_STATUS.md` (§-4 for this session). **Start with §0 below
-(2026-07-10).**
+`main` == `0709595` == last deployed. Working tree clean except the untracked `SECURITY_BACKLOG.md` +
+`tsconfig.tsbuildinfo`. Deep decision log: `BUILD_STATUS.md` (§-5 for this session). **Start with §0 below
+(2026-07-11).**
 
 > ✅ **Operator steps DONE** (user confirmed 2026-07-07): Supabase Manual Linking enabled + 12 branded email
 > templates pasted.
@@ -16,7 +16,53 @@ Start-here doc. **Everything below is committed, pushed, + live on production** 
 
 ---
 
-## 0. Latest session (2026-07-10) — HRLR shred (requirement-graph reconstruction; replaces the flat shred)
+## 0. Latest session (2026-07-11) — shred scan-integrity guards + requirement-detail modal
+
+Commit `0709595` on `main`, **pushed + deployed to prod** (`dpl_6AHhbXkRpyeYomcTj7kHBU7PSD6T`,
+`ci-dara-qzz5bb5ub`, READY / production, newest prod deployment, aliased `dara.crucibleinsight.com`). **No
+migration** (TypeScript logic + UI only). `tsc --noEmit` + `pnpm build` clean. Full decision log:
+`BUILD_STATUS.md` §-5.
+
+**What it is.** Two deterministic guards that catch model-side HRLR extraction defects the pipeline previously
+couldn't see, + a requirement-detail modal on the compliance matrix. Motivated by two confirmed defects on a
+live §2.4 doc: **§2.4.1 dropped** (recall miss on a near-duplicate sibling) and **§2.4.3 split** (its
+`(CDRL A005)` tail emitted as its own node). Both arrive as well-formed nodes, so `parseHrlrNodes`/`resolveGraph`
+were blind to them.
+
+- **Coverage-gap detector** (`utils/dara/hrlr/resolve.ts`) — scans the raw source for its own outline markers
+  (decimal/lettered/parenthetical), diffs against the markers the model emitted, records every missing section
+  as a `CoverageGap` on the graph. Logs per-gap + a summary count (even at 0). Catches the §2.4.1 omission.
+- **Same-marker fragment detector** (`resolve.ts`) — groups nodes by marker; short/parenthetical/CDRL/see-section
+  nodes sharing a marker are flagged `PROBABLE_SPLIT` + merge candidate (longest sibling). Flag only, no
+  auto-merge. Catches the `(CDRL A005)` mis-split.
+- **Prompt reinforcement** (`hrlr/prompt.ts`) — `EXTRACTION COMPLETENESS RULES` appended to
+  `SOLICITATION_GUIDANCE` (C-1 emit every numbered item / no near-dup skips; C-2 fold bare cross-ref tags in).
+- **Requirement-detail modal** (`components/dara/RequirementDetail.tsx` + `ComplianceMatrix.tsx`) — repurposed a
+  dead component into a click-to-open modal: verbatim text, needs-review banner (flags + mis-split),
+  classification, **source & provenance incl. the source DOCUMENT filename**, and the HRLR logic graph. Fed from
+  the `hrlr` JSONB + a `documentId→filename` map on the sol page.
+
+**Surfacing.** Gap count on `renderMatrix` (even 0), the runner log, and `ShredSummary.coverageGaps`. Fragment
+flags persisted in the `hrlr` JSONB. `resolveGraph` took an optional `sourceText?` (backward-compatible; absent
+→ coverage check skipped → `[]`).
+
+**Verified.** Live §2.4 run: 4 nodes, 0 gaps, 0 fragments, `(CDRL A005)` folded into 2.4.3. Deterministic
+negative control (no API, drops 2.4.1 + splits CDRL): both detectors fired correctly. Modal is build-verified,
+**not yet clicked live**.
+
+**To watch / do next.**
+- **Detectors run on the NEXT shred only** — existing matrices won't retroactively show gaps/fragments until
+  regenerated (regenerate = clear the matrix first; the shred no-ops into a non-empty matrix).
+- **Modal not yet exercised in a browser** — open a sol with requirements and click a row to confirm.
+- **Review-queue UI still absent** — coverage gaps + fragment flags + numbering conflicts have no surfaced list
+  (matrix shows a gap COUNT only). All data is in the `hrlr` JSONB / graph.
+- Optional next: bounded **gap re-extraction** (deliberately NOT built this session), fragment **auto-merge**
+  affordance, same guards for **response HRLR**.
+- **Security backlog remains #1** (DARA-021 rate limiting, DARA-022 Next 15, DARA-023 branch protection).
+
+**Supersedes nothing** — this sits ON the 2026-07-10 HRLR shred (§0 below) as a scan-integrity layer.
+
+## 0 (2026-07-10). HRLR shred (requirement-graph reconstruction; replaces the flat shred)
 
 Commit `e373498` on `main`, **pushed + deployed to prod** (`dpl_Agw9a9mQhg14ruGePy6h9xB2ExBN`,
 `ci-dara-9499lntga`, READY / production, aliased `dara.crucibleinsight.com`). **One prod migration** —
@@ -445,8 +491,8 @@ DARA-xxx register as `DARA-021..045`** (was `SEC-01..23`) — in `security-conte
 ## 6. Fast restart
 
 ```bash
-git status                       # clean main except untracked SECURITY_BACKLOG.md + tsconfig.tsbuildinfo; HEAD 5728f07 (== last deployed, pushed)
-git log --oneline -14            # 5728f07 dashboard · 8682097 sidebar nav · 3732e4b cost estimation · 1207e27 direct_review ledger fix
+git status                       # clean main except untracked SECURITY_BACKLOG.md + tsconfig.tsbuildinfo; HEAD 0709595 (== last deployed, pushed)
+git log --oneline -14            # 0709595 scan-integrity guards + detail modal · e373498 HRLR graph · 2c9a9b6 whole-doc shred · bc9e1e9 PDF line structure
 pnpm install
 pnpm exec tsc --noEmit
 pnpm build                       # must pass; recent: /auth/confirm interstitial (GET renders, POST verifies)
@@ -458,6 +504,16 @@ pnpm build                       # must pass; recent: /auth/confirm interstitial
 
 ## 7. Key files
 
+- **Shred scan-integrity guards + detail modal (2026-07-11, §0):** detectors + graph types in
+  `utils/dara/hrlr/resolve.ts` (`detectCoverageGaps`/`detectFragments`/`scanSourceMarkers`/`normalizeMarker`,
+  new optional `sourceText?` param) + `utils/dara/hrlr/types.ts` (`CoverageGap`, `RequirementGraph.coverageGaps`,
+  optional `fragmentStatus/Reason/MergeCandidate` on `RequirementNode`); prompt rules in
+  `utils/dara/hrlr/prompt.ts` (`SOLICITATION_GUIDANCE` → `EXTRACTION COMPLETENESS RULES`); surfacing in
+  `utils/dara/hrlr/matrix.ts` (`renderMatrix` summary line), `utils/dara/hrlr/run.ts` (log), and
+  `utils/dara/requirements.ts` (`ShredSummary.coverageGaps`, passes `solText` to `resolveGraph`, persists
+  fragment fields in the `hrlr` JSONB). Modal: `components/dara/RequirementDetail.tsx` (repurposed from dead) +
+  `components/dara/ComplianceMatrix.tsx` (name → `<RequirementDetail>`); data wired in
+  `app/app/solicitations/[id]/page.tsx` `matrixRows` (+ `documentId→filename` map). No migration.
 - **AI cost + usage ledger (2026-07-08, §0):** ledger + report `utils/dara/usage.ts` (`logUsage`, `getUsageReport`,
   `run_id`); pricing `utils/dara/pricing.ts` (`getPricingMap`/`costOf`/`refreshPricing`/`listPricing`/
   `setPriceOverride`); run context `utils/dara/run-context.ts` (`withRunContext`/`currentRunId`); weekly cron
