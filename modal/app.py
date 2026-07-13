@@ -70,6 +70,26 @@ CONDITION_TYPE_MAP = {
 
 _flag_counter = 0
 
+# ── Text cleaning ─────────────────────────────────────────────────────────────
+
+# Soft hyphen (U+00AD) marks an optional hyphenation point. pdfplumber preserves it in the extracted
+# text — typically at the line break where a word was split ("com­\npliance") — but an LLM
+# transcribing the same text emits the JOINED word ("compliance"). A downstream verbatim comparison of
+# LLM output against this raw text then mismatches on the artifact alone. Rejoin the word by removing
+# the soft hyphen together with any whitespace (including a single line break) that follows it, then
+# drop zero-width characters and the BOM. Lossless de-artifacting of the source text — no real content
+# is altered.
+_SOFT_HYPHEN_BREAK = re.compile(chr(0x00AD) + r"[ \t]*\n?[ \t]*")  # soft hyphen + trailing ws / one linebreak
+_ZERO_WIDTH        = re.compile("[" + chr(0x200B) + chr(0x200C) + chr(0x200D) + chr(0xFEFF) + "]")
+
+
+def clean_extracted_text(text: str) -> str:
+    if not text:
+        return text
+    text = _SOFT_HYPHEN_BREAK.sub("", text)
+    text = _ZERO_WIDTH.sub("", text)
+    return text
+
 # ── Main endpoint ─────────────────────────────────────────────────────────────
 
 @app.function(
@@ -333,7 +353,7 @@ def _parse_pdf(doc_bytes: bytes, document_id: str) -> dict:
             for tbl_i, table in enumerate(page.extract_tables()):
                 if not table or len(table) < 2:
                     continue
-                headers = [str(c or "").strip() for c in table[0]]
+                headers = [clean_extracted_text(str(c or "")).strip() for c in table[0]]
                 rows    = []
                 is_cdrl = any(
                     "cdrl" in h.lower() or "data item" in h.lower() or "did" in h.lower()
@@ -343,7 +363,7 @@ def _parse_pdf(doc_bytes: bytes, document_id: str) -> dict:
 
                 for row_i, row in enumerate(table[1:]):
                     cells = {
-                        headers[i]: str(cell or "").strip()
+                        headers[i]: clean_extracted_text(str(cell or "")).strip()
                         for i, cell in enumerate(row)
                         if i < len(headers)
                     }
@@ -377,7 +397,7 @@ def _parse_pdf(doc_bytes: bytes, document_id: str) -> dict:
                 })
 
             # Body text
-            page_text = page.extract_text() or ""
+            page_text = clean_extracted_text(page.extract_text() or "")
             if not page_text.strip():
                 continue
 
@@ -446,7 +466,7 @@ def _parse_docx(doc_bytes: bytes, document_id: str) -> dict:
     para_index           = 0
 
     for para in doc.paragraphs:
-        text = para.text.strip()
+        text = clean_extracted_text(para.text).strip()
         if not text:
             continue
 
@@ -499,14 +519,14 @@ def _parse_docx(doc_bytes: bytes, document_id: str) -> dict:
     for tbl_i, table in enumerate(doc.tables):
         if not table.rows:
             continue
-        headers = [cell.text.strip() for cell in table.rows[0].cells]
+        headers = [clean_extracted_text(cell.text).strip() for cell in table.rows[0].cells]
         rows    = []
         is_cdrl = any("cdrl" in h.lower() or "did" in h.lower() for h in headers)
         is_obligation_bearing = False
 
         for row_i, row in enumerate(table.rows[1:]):
             cells = {
-                headers[i]: cell.text.strip()
+                headers[i]: clean_extracted_text(cell.text).strip()
                 for i, cell in enumerate(row.cells)
                 if i < len(headers)
             }

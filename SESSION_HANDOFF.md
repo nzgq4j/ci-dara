@@ -26,6 +26,17 @@ clean; 16/16 deterministic unit checks) + DEPLOYED** — commit `4796114`, migra
 **Untested: the live dense-RFP shred** (Section M classification + `governing_factors`) — regenerate a sol with
 an empty matrix to confirm; existing matrices don't backfill until regenerated.
 
+**Follow-up (soft-hyphen root cause).** CHIPS II CSV review: the majority of flagged rows are U+00AD soft-hyphen
+false positives — specifically `<shy>` **at a line break** (`hrlr/parse.ts:90` already strips a bare one; the
+normalizer turns the newline into a space so the LLM's joined word mismatches). Fix rejoins the word at source:
+`clean_extracted_text` (`modal/app.py`) + `SOFT_HYPHEN_BREAK` rejoin in `requirements.ts` `cleanSourceText`.
+`deriveReviewStatus` now auto-**approves** clean rows (was `pending`). **⚠️ `modal/app.py` is deployed to Vercel
+but NOT to Modal** — sandbox can't reach api.modal.com's gRPC; **OWNER runs `python -m modal deploy modal\app.py`
+locally** (`.venv` active). A CHIPS II re-shred is already fixed by the app-side rejoin (re-shred reuses stored
+parse rows) — Modal redeploy only affects future re-PARSES. **CHIPS II steps for the user:** clear the matrix →
+regenerate → flagged count should be ~near-zero → remaining flags are genuine. Parent/container (N/A) rows
+should be visually distinct from child rows — FUTURE UI task, do not build now.
+
 - **Fix 1** `requirements.ts` `cleanSourceText()` (NFKC + strip soft-hyphen/zero-width/BOM, no single-letter
   regex) on source text before extraction+verification → fixes the 99/278 `verbatimVerified=false` class,
   app-side (not Modal; `parse.ts` is protected), retroactive on regenerate.

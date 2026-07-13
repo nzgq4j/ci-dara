@@ -25,6 +25,13 @@ Use the **PowerShell tool** for Modal commands — the Bash tool runs Git Bash a
 The deployed structural parser source is `modal/app.py` (`dara-parser`, workspace `islanista`). **Do not
 modify `modal/app.py`** unless a confirmed bug is found. See memory `modal-parser-integration.md`.
 
+**`modal deploy` cannot run from Claude Code's sandbox** — the gRPC connection to `api.modal.com` cannot be
+completed here (TCP:443 opens but the HTTP/2/gRPC channel is refused), regardless of auth. This is a network
+constraint, not a code/credentials problem; do NOT keep retrying it in-session. A Modal redeploy is only needed
+when `modal/app.py` changes — after such a session the OWNER runs, from a local PowerShell with `.venv` active:
+`python -m modal deploy modal\app.py`. All other changes (Next.js, Prisma, HRLR) deploy via `vercel deploy
+--prod --yes` as normal.
+
 ## Stack & conventions
 
 - Next.js 14.2.35 (App Router, TypeScript) · Prisma 7 (`@prisma/adapter-pg`) · Supabase (Postgres + Auth +
@@ -55,12 +62,17 @@ before building on them.** Ground truth as of 2026-07-13 (`dara_requirements`):
 - **`disposition` enum** = `scored` · `compliance` · `administrative`. `complianceStatus` enum =
   `not_assessed` · `compliant` · `partial` · `non_compliant` · `not_applicable`.
 - **`Requirement.reviewStatus`** (enum `RequirementReviewStatus` = `pending`·`approved`·`rejected`·`flagged`,
-  added 2026-07-13) is the per-requirement **parse-QA** status, set by the shred (`flagged` when
-  unverified/flagged/fragmented/LOW-confidence) and advanced by a reviewer in the matrix detail modal. It is
-  DISTINCT from `complianceStatus` (proposal coverage) and from the color-team **`Review`** table's
-  `ReviewStatus` enum (`draft`/`in_progress`/`complete`, a workflow status). Also new:
-  `Requirement.governingFactors` (`text[]`) = Section M factor markers each Section L instruction / SOW task is
-  evaluated under (L→M link, populated by the shred).
+  added 2026-07-13) is the per-requirement **parse-QA** status, set by the shred `deriveReviewStatus`:
+  `flagged` when unverified/flagged/fragmented/LOW-confidence, **`approved` otherwise** (a leftover `pending`
+  row means the shred never classified it — pre-fix or manually added — NOT that a human reviewed it). Advanced
+  by a reviewer in the matrix detail modal. DISTINCT from `complianceStatus` (proposal coverage) and from the
+  color-team **`Review`** table's `ReviewStatus` enum. Also new: `Requirement.governingFactors` (`text[]`) =
+  Section M factor markers each Section L instruction / SOW task is evaluated under (L→M link, from the shred).
+- **Soft-hyphen (U+00AD) verbatim false positives:** pdfplumber preserves the hyphenation soft-hyphen at a
+  line break (`com<shy>\npliance`); the LLM emits the joined `compliance`, so verbatim verification mismatches.
+  Fixed by REJOINING at the source: `clean_extracted_text` in `modal/app.py` (strips `<shy>` + a following
+  linebreak) AND `cleanSourceText` in `requirements.ts` (same, for the flat/existing-parse path). Do NOT "fix"
+  this in `hrlr/parse.ts` — a bare strip leaves the newline → `com pliance` and still mismatches.
 - **`hrlr` JSONB** (flattened at persist time in `requirements.ts`) carries: `verbatimVerified` (bool),
   `confidence` (HIGH/MEDIUM/LOW), `flags` (string[]), `state`, `syntheticPath`, `sectionPath`,
   `normalizedMeaning`, `satisfaction`, `applicability`, and **`evalScope`**. `evalScope` is a STRUCTURAL enum

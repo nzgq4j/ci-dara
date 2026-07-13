@@ -48,21 +48,28 @@ const PARSER_HANDLE = /^\[?(?:cand[-_]|trigger[-_]|table[-_]|t\d+$)/i;
 // alter letters, case, spacing, or single characters (no single-uppercase-letter stripping, which would
 // eat legitimate tokens like "Section A" / "Part B" / "Exhibit C").
 const ZERO_WIDTH = new Set([0x00ad, 0x200b, 0x200c, 0x200d, 0xfeff]); // soft hyphen · ZWSP · ZWNJ · ZWJ · BOM
+// Soft-hyphen line-break de-hyphenation, mirroring modal/app.py clean_extracted_text: rejoin
+// "com<shy>\npliance" -> "compliance" so the source matches the LLM's joined output (a bare strip
+// would leave the newline -> "com pliance" and still mismatch). The Modal structured path is already
+// cleaned at source; this covers the flat unpdf/mammoth fallback path.
+const SOFT_HYPHEN_BREAK = new RegExp(String.fromCharCode(0x00ad) + '[ \\t]*\\n?[ \\t]*', 'g');
 function cleanSourceText(s: string): string {
-  const normalized = s.normalize('NFKC');
+  const rejoined = s.normalize('NFKC').replace(SOFT_HYPHEN_BREAK, '');
   let out = '';
-  for (const ch of normalized) if (!ZERO_WIDTH.has(ch.codePointAt(0)!)) out += ch;
+  for (const ch of rejoined) if (!ZERO_WIDTH.has(ch.codePointAt(0)!)) out += ch;
   return out;
 }
 
-// Parse-QA review state for a freshly-shredded node. Anything the pipeline is not confident it read
-// correctly starts `flagged` (needs a human look); everything else starts `pending`.
-function reviewStatusFor(n: RequirementNode): 'pending' | 'flagged' {
+// Parse-QA review state for a freshly-shredded node. Only nodes the pipeline could not confidently
+// read are `flagged` (need a human look); a verbatim-verified node with no flags, no fragment signal,
+// and non-LOW confidence is `approved` — so a leftover `pending` row means the shred never classified
+// it (pre-fix / manually-added), NOT that it was reviewed.
+function deriveReviewStatus(n: RequirementNode): 'approved' | 'flagged' {
   if (!n.provenance.verbatimVerified) return 'flagged';
   if (n.flags && n.flags.length > 0) return 'flagged';
   if (n.fragmentStatus) return 'flagged';
   if (n.confidence === 'LOW') return 'flagged';
-  return 'pending';
+  return 'approved';
 }
 
 // The model emits `governing_factors` (Section M markers an L instruction / SOW task feeds) but the
@@ -295,8 +302,9 @@ export async function shredRequirements(
       citation,
       citationSynthesized: citation === '',
       weight: 0,
-      // Parse-QA review state — flagged when the pipeline is unsure it read the node correctly.
-      reviewStatus: reviewStatusFor(n),
+      // Parse-QA review state — approved when verbatim-verified/clean, flagged when the pipeline is
+      // unsure it read the node correctly.
+      reviewStatus: deriveReviewStatus(n),
       // L→M linkage: Section M factor markers this instruction/task is evaluated under.
       governingFactors,
       // Containers/parents are a rollup, not a directly-graded unit — keep them OUT of the compliance

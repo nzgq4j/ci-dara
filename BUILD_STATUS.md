@@ -34,6 +34,21 @@ production) → pushed (`origin/main == 4796114`). Memory: `increment1-lm-wiring
 dense-RFP shred** (Section M classification + `governing_factors`) — the real test — needs a regenerate on a
 sol with an empty matrix.
 
+**Follow-up (soft-hyphen root cause, same day).** CSV review of a shredded matrix (CHIPS II) showed the
+overwhelming majority of flagged rows are **U+00AD soft-hyphen** false positives. Verified root cause:
+`hrlr/parse.ts:90` already strips a bare `<shy>`, so the culprit is `<shy>` **at a line break** — pdfplumber
+keeps `com<shy>\npliance`, the normalizer turns the `\n` into a space (`com pliance`) while the LLM emits the
+joined `compliance` → mismatch. Fix REJOINS the word at the source: `clean_extracted_text` in `modal/app.py`
+(PDF page/tables + DOCX para/tables) + the same `SOFT_HYPHEN_BREAK` rejoin in `requirements.ts` `cleanSourceText`
+(covers the flat / existing-parse path). Also: `deriveReviewStatus` now **auto-approves** clean verified rows
+(was `pending`), so a leftover `pending` means the shred never classified it. `tsc`/`pnpm build` clean; regex
+verified (line-break rejoin works, "Section A" untouched, paragraph breaks preserved). **⚠️ `modal/app.py` is
+committed + Vercel-deployed but NOT deployed to Modal** — `modal deploy` can't run from the sandbox (gRPC to
+api.modal.com refused). **OWNER runs locally:** `python -m modal deploy modal\app.py` (`.venv` active). A
+re-shred of CHIPS II is already fixed by the app-side rejoin without the Modal redeploy (re-shred reuses stored
+parse rows). Parent/container N/A rows should be visually distinct in the matrix from child rows — noted as a
+FUTURE UI task, not built.
+
 **Verified:** `tsc --noEmit` + `pnpm build` both clean; a standalone deterministic test (no API) exercised the
 real `hrlr/parse.ts` verification path + the new helpers — **16/16 checks green** (dirty ligature/soft-hyphen/
 zero-width text that previously failed `locateSpan` now verifies; cleaning leaves "Section A"/"Part B" intact;
