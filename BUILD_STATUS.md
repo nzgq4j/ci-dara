@@ -42,11 +42,10 @@ joined `compliance` → mismatch. Fix REJOINS the word at the source: `clean_ext
 (PDF page/tables + DOCX para/tables) + the same `SOFT_HYPHEN_BREAK` rejoin in `requirements.ts` `cleanSourceText`
 (covers the flat / existing-parse path). Also: `deriveReviewStatus` now **auto-approves** clean verified rows
 (was `pending`), so a leftover `pending` means the shred never classified it. `tsc`/`pnpm build` clean; regex
-verified (line-break rejoin works, "Section A" untouched, paragraph breaks preserved). **⚠️ `modal/app.py` is
-committed + Vercel-deployed but NOT deployed to Modal** — `modal deploy` can't run from the sandbox (gRPC to
-api.modal.com refused). **OWNER runs locally:** `python -m modal deploy modal\app.py` (`.venv` active). A
-re-shred of CHIPS II is already fixed by the app-side rejoin without the Modal redeploy (re-shred reuses stored
-parse rows). Parent/container N/A rows should be visually distinct in the matrix from child rows — noted as a
+verified (line-break rejoin works, "Section A" untouched, paragraph breaks preserved). **`modal/app.py`
+deployed to Modal by the owner** (2026-07-13, run locally — `modal deploy` can't run from the sandbox: gRPC to
+api.modal.com refused; owner ran `python -m modal deploy modal\app.py`). Fix is now live on BOTH paths (source
+clean on new re-parses; app-side rejoin on re-shred of existing docs). Parent/container N/A rows should be visually distinct in the matrix from child rows — noted as a
 FUTURE UI task, not built.
 
 **Verified:** `tsc --noEmit` + `pnpm build` both clean; a standalone deterministic test (no API) exercised the

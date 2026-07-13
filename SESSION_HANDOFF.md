@@ -30,10 +30,9 @@ an empty matrix to confirm; existing matrices don't backfill until regenerated.
 false positives — specifically `<shy>` **at a line break** (`hrlr/parse.ts:90` already strips a bare one; the
 normalizer turns the newline into a space so the LLM's joined word mismatches). Fix rejoins the word at source:
 `clean_extracted_text` (`modal/app.py`) + `SOFT_HYPHEN_BREAK` rejoin in `requirements.ts` `cleanSourceText`.
-`deriveReviewStatus` now auto-**approves** clean rows (was `pending`). **⚠️ `modal/app.py` is deployed to Vercel
-but NOT to Modal** — sandbox can't reach api.modal.com's gRPC; **OWNER runs `python -m modal deploy modal\app.py`
-locally** (`.venv` active). A CHIPS II re-shred is already fixed by the app-side rejoin (re-shred reuses stored
-parse rows) — Modal redeploy only affects future re-PARSES. **CHIPS II steps for the user:** clear the matrix →
+`deriveReviewStatus` now auto-**approves** clean rows (was `pending`). **`modal/app.py` deployed to Modal by the
+owner** (2026-07-13, locally — sandbox can't reach api.modal.com's gRPC; ran `python -m modal deploy
+modal\app.py`). Live on both paths now (source-clean on re-parses; app-side rejoin on re-shred). **CHIPS II steps for the user:** clear the matrix →
 regenerate → flagged count should be ~near-zero → remaining flags are genuine. Parent/container (N/A) rows
 should be visually distinct from child rows — FUTURE UI task, do not build now.
 
