@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ShieldCheck, Building2, Users, Cpu, SlidersHorizontal, LogOut, LayoutDashboard, Zap, BarChart2, type LucideIcon } from 'lucide-react';
+import { ShieldCheck, Building2, Users, Cpu, SlidersHorizontal, LogOut, LayoutDashboard, Zap, BarChart2, Library, type LucideIcon } from 'lucide-react';
 import { SignOut } from '@/utils/auth-helpers/server';
 import { handleRequest } from '@/utils/auth-helpers/client';
 
@@ -16,10 +16,11 @@ interface NavItem {
 
 // Application Admin console nav. Company-less by design — no Workspace / CUI links.
 const ITEMS: NavItem[] = [
-  { href: '/app/admin',       label: 'Overview',        icon: LayoutDashboard, exact: true },
-  { href: '/app/admin/jobs',  label: 'Background jobs', icon: Zap },
-  { href: '/app/admin/usage', label: 'AI usage',        icon: BarChart2 },
-  { href: '/app/admin/ai',    label: 'Platform AI',     icon: Cpu },
+  { href: '/app/admin',         label: 'Overview',        icon: LayoutDashboard, exact: true },
+  { href: '/app/admin/jobs',    label: 'Background jobs', icon: Zap },
+  { href: '/app/admin/usage',   label: 'AI usage',        icon: BarChart2 },
+  { href: '/app/admin/clauses', label: 'Clause library',  icon: Library },
+  { href: '/app/admin/ai',      label: 'Platform AI',     icon: Cpu },
   { href: '/app/admin',       label: 'Gating',          icon: SlidersHorizontal, hash: '#gating', exact: true },
   { href: '/app/admin',       label: 'Accounts',        icon: Building2, exact: true },
   { href: '/app/admin',       label: 'Users',           icon: Users, hash: '#users', exact: true },
@@ -85,11 +86,11 @@ export default function PlatformAdminSidebar({
         <div className="px-2 pb-1.5 pt-3 font-mono text-[9px] uppercase tracking-[0.1em] text-white/30">
           Operations
         </div>
-        {ITEMS.slice(0, 3).map(renderItem)}
+        {ITEMS.slice(0, 4).map(renderItem)}
         <div className="px-2 pb-1.5 pt-4 font-mono text-[9px] uppercase tracking-[0.1em] text-white/30">
           Configuration &amp; accounts
         </div>
-        {ITEMS.slice(3).map(renderItem)}
+        {ITEMS.slice(4).map(renderItem)}
         <div className="mt-4 rounded-md border border-white/10 bg-white/5 px-2.5 py-2 text-[11px] leading-relaxed text-white/50">
           This account has no access to company CUI (solicitations, documents,
           evaluations).
