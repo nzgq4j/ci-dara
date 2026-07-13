@@ -16,6 +16,29 @@ Start-here doc. **Everything below is committed, pushed, + live on production** 
 
 ---
 
+## 0 (2026-07-13). Modal structural parser integration — NOT YET DEPLOYED
+
+Code + migration + RLS authored and locally verified (`tsc --noEmit` + `next build` exit 0; offline
+serializer/preamble smoke test passes). **No commit/push/deploy this session.** Full decision log:
+`BUILD_STATUS.md` §-6.
+
+**What it is.** The deployed Modal `dara-parser` (pdfplumber + spaCy) is wired into the app. Document uploads
+call Modal synchronously, store the structured `ParseResult` in a new versioned `dara_parse_results` table, and
+the HRLR shred reads that structured output (rich preamble: obligations, CDRL tables, IbR, conditionals) instead
+of flat text — **the `hrlr` JSONB output format is unchanged**. Fully fallback-safe: no Modal / any error → flat
+unpdf/mammoth path, exactly as before. Pre-feature documents (no parse row) are unaffected. A platform-admin-only
+parse-history viewer + async re-parse job round it out.
+
+**⚠️ To deploy (owner, IN ORDER):**
+1. `pnpm prisma migrate deploy`  (migration `20260713120000_parse_results`)
+2. `npx tsx prisma/security/apply-sql.ts prisma/security/2026-07-13_parse_results_rls.sql`  ← BEFORE code deploy
+3. `vercel deploy --prod --yes` → `git push`
+
+`MODAL_PARSER_URL`/`MODAL_PARSER_SECRET` already set in Vercel + `.env.local`. New/re-parsed docs get structured
+input; existing docs keep flat text until re-parsed. Untracked new file: `components/dara/ParseHistory.tsx`.
+
+---
+
 ## 0. Latest session (2026-07-11) — shred scan-integrity guards + requirement-detail modal
 
 Commit `0709595` on `main`, **pushed + deployed to prod** (`dpl_6AHhbXkRpyeYomcTj7kHBU7PSD6T`,

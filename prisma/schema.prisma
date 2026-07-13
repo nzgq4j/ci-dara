@@ -506,11 +506,53 @@ model SolDocument {
   solicitation Solicitation @relation(fields: [solicitationId], references: [id], onDelete: Cascade)
   amendment    Amendment?   @relation(fields: [amendmentId], references: [id], onDelete: Cascade)
   requirements Requirement[]
+  parseResults DaraParseResult[]
 
   @@index([solicitationId])
   @@index([companyId])
   @@index([amendmentId])
   @@map("dara_sol_documents")
+}
+
+// Structural pre-processing output from the Modal `dara-parser` service (pdfplumber /
+// python-docx + spaCy). One immutable row per parse of a SolDocument: the full ParseResult
+// JSON plus denormalized summary counts for cheap list queries. Never hard-deleted — a
+// re-parse sets `supersededAt` on the prior row(s) and inserts a new one, so the table is a
+// full parse-history log. The current parse for a document is `supersededAt IS NULL`.
+//
+// Note: `result` holds the full extracted document text (potentially CUI). It is stored as
+// plaintext JSONB here (matching the shred's direct read + the parse-history viewer), and is
+// protected at rest by the same per-tenant RLS as the rest of dara_* (company_id GUC). Unlike
+// dara_sol_documents.extracted_text (encrypted under DARA-009) it is NOT field-encrypted —
+// consistent with dara_requirements.description, which already stores verbatim requirement CUI
+// in plaintext. Revisit if the CUI-at-rest posture tightens.
+model DaraParseResult {
+  id                  BigInt    @id @default(autoincrement())
+  companyId           BigInt    @map("company_id")
+  solDocId            BigInt    @map("sol_doc_id")
+  schemaVersion       String    @default("1.0") @map("schema_version") @db.VarChar(20)
+  parserVersion       String    @map("parser_version") @db.VarChar(20)
+  docType             String    @map("doc_type") @db.VarChar(20)
+  pageCount           Int?      @map("page_count")
+  wordCount           Int?      @map("word_count")
+  processingTimeMs    Int?      @map("processing_time_ms")
+  qualityGatePassed   Boolean   @default(false) @map("quality_gate_passed")
+  qualityGateFailures Json      @default("[]") @map("quality_gate_failures")
+  result              Json
+  modalCandidateCount Int?      @map("modal_candidate_count")
+  tableCount          Int?      @map("table_count")
+  ibrFlagCount        Int?      @map("ibr_flag_count")
+  imagePageCount      Int?      @map("image_page_count")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  createdBy           String?   @map("created_by") @db.Uuid
+  supersededAt        DateTime? @map("superseded_at")
+
+  document SolDocument @relation(fields: [solDocId], references: [id], onDelete: Cascade)
+
+  @@index([solDocId])
+  @@index([companyId])
+  @@index([createdAt])
+  @@map("dara_parse_results")
 }
 
 // A single discrete requirement shredded from the solicitation — the row unit of

@@ -29,6 +29,7 @@ import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
+import { parseAndPersist } from '@/utils/dara/modal-parser';
 
 const PASS_MAX_TOKENS = 8000;
 
@@ -218,6 +219,17 @@ export async function getShredStatus(
     active: !!match,
     progressLabel: match?.progressLabel ?? null,
   };
+}
+
+/** Enqueue an async structural re-parse (Modal) of a single solicitation document. */
+export function enqueueReparse(solDocId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
+  return enqueueUniqueJob(companyId, 'reparse', 'solDocId', solDocId);
+}
+
+/** True when a re-parse is queued/running for this document. */
+export async function isReparseActive(solDocId: bigint, companyId: bigint): Promise<boolean> {
+  const jobs = await activeEvaluatePayloads(companyId);
+  return jobs.some((j) => jobPayloadMatches(j.payload, 'reparse', 'solDocId', solDocId));
 }
 
 /** Enqueue an async amendment reconcile ("Reconcile with AI") for an amendment. */
@@ -711,6 +723,36 @@ async function runComplianceJob(solicitationId: bigint, companyId: bigint, deadl
  * completes the job or requeues it (deadline hit mid-run) for the next tick. Called by the
  * cron route and by the immediate post-enqueue trigger.
  */
+/**
+ * Re-parse one solicitation document through the Modal parser (async, worker-only). Loads the
+ * stored file, runs parseAndPersist (which atomically supersedes the prior parse row and inserts
+ * a new one), then enqueues a shred so the improved structured input can regenerate the matrix.
+ * The shred no-ops into a non-empty matrix (regeneration = clear first), so on a populated matrix
+ * the re-parse refreshes the parse history but does not clobber existing requirements.
+ */
+async function runReparse(solDocId: bigint, companyId: bigint): Promise<void> {
+  const doc = await withTenant(companyId, (tx) =>
+    tx.solDocument.findFirst({
+      where: { id: solDocId, companyId },
+      select: { id: true, storedFilename: true, solicitationId: true, docType: true }
+    })
+  );
+  if (!doc) return; // deleted between enqueue and run — nothing to do.
+
+  await parseAndPersist({
+    storedFilename: doc.storedFilename,
+    solDocId: doc.id,
+    companyId,
+    createdBy: null // system-initiated re-parse (no interactive actor on the worker)
+  });
+
+  // Only an RFP feeds the compliance-matrix shred; a proposal/amendment re-parse just refreshes
+  // its parse history.
+  if (doc.docType === 'rfp') {
+    await enqueueShred(doc.solicitationId, companyId);
+  }
+}
+
 export async function processReviewJobs(deadlineMs: number): Promise<{ processed: number }> {
   await reapOrphanedJobs();
 
@@ -730,7 +772,7 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
     if (claim.count === 0) continue;
 
     const companyId = pending.companyId;
-    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string; amendmentId?: string; directReviewId?: string };
+    const payload = (pending.payload ?? {}) as { kind?: string; reviewId?: string; passId?: string; solicitationId?: string; amendmentId?: string; directReviewId?: string; solDocId?: string };
 
     try {
       let done = true;
@@ -761,6 +803,9 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
         done = shredRes.exhausted ?? true;
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
+      } else if (payload.kind === 'reparse' && payload.solDocId) {
+        // Structural re-parse (Modal) — one-shot; enqueues its own follow-on shred.
+        await runReparse(BigInt(payload.solDocId), companyId);
       } else if (payload.reviewId) {
         ({ done } = await runReviewPasses(BigInt(payload.reviewId), companyId, deadlineMs));
       }

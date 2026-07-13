@@ -7,6 +7,14 @@ completed, gaps, session log) and `SESSION_HANDOFF.md`. Security posture + findi
 `/app/security` and `utils/dara/security-content.ts`. Agent memory: `multi-pass-review.md`,
 `color-team-reframing.md`.
 
+> **Engine input update (2026-07-13, NOT yet deployed):** the HRLR shred (`utils/dara/requirements.ts`)
+> now reads structured `ParseResult` output from the deployed Modal `dara-parser` service (pdfplumber +
+> spaCy) when a current `dara_parse_results` row exists for a document, falling back to flat unpdf/mammoth
+> text otherwise. Document uploads call Modal synchronously and persist a versioned parse row; the shred
+> gains a structural pre-analysis preamble but the `hrlr` JSONB OUTPUT format is unchanged. A
+> platform-admin-only parse-history viewer lives in the Documents panel. Deploy is pending (migration +
+> RLS must be applied first). See `BUILD_STATUS.md` §-6 / `SESSION_HANDOFF.md` §0 (2026-07-13).
+
 ---
 
 ## 1. What DARA is (current product model)

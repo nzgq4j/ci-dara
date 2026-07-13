@@ -18,10 +18,14 @@ import { withTenant } from '@/utils/prisma';
 import { userTeamIds, canViewSolicitation, canManageDepartments } from '@/utils/dara/sol-access';
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
+import { parseAndPersist } from '@/utils/dara/modal-parser';
 import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, getShredStatus, enqueueReconcile, activeReconcileAmendmentIds } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, getShredStatus, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
+import { isPlatformAdmin } from '@/utils/dara/admin';
+import ParseHistory, { type ParseSummary } from '@/components/dara/ParseHistory';
+import type { ParseResult } from '@/utils/dara/parse-result';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { getTrialUsage, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
 import { buildMatrixDocx } from '@/utils/dara/matrix-docx';
@@ -755,6 +759,14 @@ async function uploadSolDoc(formData: FormData) {
       }
     })
   );
+  // Structural pre-processing (Modal). Best-effort + synchronous: on any failure the shred falls
+  // back to the flat extracted text. Never blocks the upload (parseAndPersist never throws).
+  await parseAndPersist({
+    storedFilename: doc.storedFilename,
+    solDocId: created.id,
+    companyId: daraUser.companyId,
+    createdBy: daraUser.id
+  });
   await recordAudit({
     action: 'document.upload',
     companyId: daraUser.companyId,
@@ -790,6 +802,52 @@ async function deleteSolDoc(formData: FormData) {
     metadata: { filename: owned.originalFilename }
   });
   revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// ---- Structural parse history (platform admin only) ----
+// Enqueue an async re-parse of one document through the Modal parser. Server-side platform-admin
+// gate (never rely on UI visibility) + tenant/solicitation ownership check.
+async function reparseDocument(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  const solDocId = BigInt(String(formData.get('solDocId')));
+  await requireViewableSolicitation(solId, daraUser);
+  if (!isPlatformAdmin(daraUser.email)) return; // authoritative admin gate
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.solDocument.findFirst({
+      where: { id: solDocId, companyId: daraUser.companyId, solicitationId: solId },
+      select: { id: true }
+    })
+  );
+  if (!owned) return;
+  await enqueueReparse(solDocId, daraUser.companyId);
+  triggerWorker();
+  await recordAudit({
+    action: 'document.reparse',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'sol_document',
+    entityId: solDocId,
+    metadata: { solicitationId: solId.toString() }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// Fetch the full ParseResult JSONB for one parse row on demand (the list view omits it — it can be
+// 100KB+). Platform-admin gated + tenant-scoped.
+async function getParseDetail(parseId: string): Promise<ParseResult | null> {
+  'use server';
+  const daraUser = await authedUser();
+  if (!isPlatformAdmin(daraUser.email)) return null;
+  const row = await withTenant(daraUser.companyId, (tx) =>
+    tx.daraParseResult.findFirst({
+      where: { id: BigInt(parseId), companyId: daraUser.companyId },
+      select: { result: true }
+    })
+  );
+  return (row?.result ?? null) as ParseResult | null;
 }
 
 // ---- Per-review response documents (color team) ----
@@ -1282,6 +1340,57 @@ export default async function SolicitationDetailPage({
   };
   const personas = meta.personas;
   const allTeams = meta.allTeams;
+
+  // Structural parse history — platform-admin-only observability into the Modal parser. Summary
+  // columns only (the full `result` JSONB is fetched on demand in the drawer). Tenant-scoped.
+  const isParseAdmin = isPlatformAdmin(daraUser.email);
+  let parseSummaries: ParseSummary[] = [];
+  if (isParseAdmin && meta.solDocs.length > 0) {
+    const docNameByIdForParse = new Map(meta.solDocs.map((d) => [d.id.toString(), d.originalFilename]));
+    const parseRows = await withTenant(companyId, (tx) =>
+      tx.daraParseResult.findMany({
+        where: { solDocId: { in: meta.solDocs.map((d) => d.id) }, companyId },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          solDocId: true,
+          docType: true,
+          parserVersion: true,
+          schemaVersion: true,
+          pageCount: true,
+          wordCount: true,
+          processingTimeMs: true,
+          qualityGatePassed: true,
+          qualityGateFailures: true,
+          modalCandidateCount: true,
+          tableCount: true,
+          ibrFlagCount: true,
+          imagePageCount: true,
+          createdAt: true,
+          supersededAt: true
+        }
+      })
+    );
+    parseSummaries = parseRows.map((r) => ({
+      id: r.id.toString(),
+      solDocId: r.solDocId.toString(),
+      docName: docNameByIdForParse.get(r.solDocId.toString()) ?? `Document #${r.solDocId}`,
+      docType: r.docType,
+      parserVersion: r.parserVersion,
+      schemaVersion: r.schemaVersion,
+      pageCount: r.pageCount,
+      wordCount: r.wordCount,
+      processingTimeMs: r.processingTimeMs,
+      qualityGatePassed: r.qualityGatePassed,
+      qualityGateFailures: (r.qualityGateFailures ?? []) as ParseSummary['qualityGateFailures'],
+      modalCandidateCount: r.modalCandidateCount,
+      tableCount: r.tableCount,
+      ibrFlagCount: r.ibrFlagCount,
+      imagePageCount: r.imagePageCount,
+      createdAt: r.createdAt.toISOString(),
+      supersededAt: r.supersededAt ? r.supersededAt.toISOString() : null
+    }));
+  }
   const personaMap = new Map(personas.map((p) => [p.id.toString(), p.displayName]));
   const activeCount = personas.filter((p) => p.isActive).length;
   const assignedTeamIds = new Set(solicitation.departments.map((d) => d.teamId.toString()));
@@ -1476,6 +1585,31 @@ export default async function SolicitationDetailPage({
             uploadAction={uploadSolDoc}
             label="Drop your proposal draft here"
             sub="PDF, Word, or text · max 20 MB"
+          />
+        </div>
+      )}
+
+      {/* Structural parse history — platform-admin observability into the Modal parser. Hidden for
+          everyone else. */}
+      {isParseAdmin && (
+        <div className={`${card} p-5`}>
+          <h2 className={`mb-1 flex items-center gap-2 ${sectionTitle}`}>
+            <Sparkles className="h-4 w-4 text-t5" />
+            Structural parse history
+            <span className="rounded bg-navy/10 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-navy">
+              Platform admin
+            </span>
+          </h2>
+          <p className="mb-4 text-[13px] text-t4">
+            Modal parser output per document (pages, obligations, tables, IbR citations, quality
+            gates). The current shred uses the newest parse; a re-parse supersedes the prior record
+            and re-runs the shred. Full history is retained.
+          </p>
+          <ParseHistory
+            solId={sid}
+            items={parseSummaries}
+            reparseAction={reparseDocument}
+            detailAction={getParseDetail}
           />
         </div>
       )}

@@ -135,6 +135,27 @@ export async function uploadAndExtract(
   };
 }
 
+/**
+ * Mint a short-lived signed download URL for a stored object, or null on failure. Used to hand
+ * the Modal parser a URL it can fetch the raw file from; generated fresh per call and never
+ * stored (60s TTL is the default — enough for Modal to download). Uses the service-role client,
+ * consistent with upload/remove, so it does not depend on a request-scoped session.
+ */
+export async function createSignedDownloadUrl(
+  storedFilename: string,
+  ttlSeconds = 60
+): Promise<string | null> {
+  try {
+    const { data, error } = await storage()
+      .storage.from(DOCS_BUCKET)
+      .createSignedUrl(storedFilename, ttlSeconds);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  } catch {
+    return null;
+  }
+}
+
 /** Remove stored objects by path. Best-effort: ignores errors. */
 export async function removeStored(paths: string[]): Promise<void> {
   if (paths.length === 0) return;

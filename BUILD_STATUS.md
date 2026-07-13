@@ -24,6 +24,74 @@ _Last updated: 2026-07-11_
 
 ---
 
+## -6. Latest session (2026-07-13) — Modal structural parser integration (shred input + parse history)
+
+**Not yet deployed** — code + migration + RLS authored and locally verified (`tsc --noEmit` + `next build`
+both exit 0; offline serializer/preamble smoke test passes). **Deploy is pending an owner action** (migration
++ RLS must be applied before the code deploy — see below). No commit/push made this session.
+
+**What it is.** Wires the deployed Modal `dara-parser` service (pdfplumber + spaCy `en_core_web_md`,
+`https://islanista--dara-parser-parse-document.modal.run`) into the app: document uploads now synchronously
+call Modal, store the structured `ParseResult` in a new `dara_parse_results` table (versioned history), and the
+HRLR shred reads that structured output instead of flat text — **without changing the `hrlr` JSONB output
+format**. Fully fallback-safe: no Modal, no config, or any error → the shred runs on flat unpdf/mammoth text
+exactly as before.
+
+**New table `dara_parse_results`** (migration `20260713120000_parse_results`, RLS
+`prisma/security/2026-07-13_parse_results_rls.sql`). One immutable row per parse of a `dara_sol_documents` row:
+full `ParseResult` JSON (`result` JSONB) + denormalized summary counts (pages/words/obligations/tables/IbR/
+image-pages, quality gate). Never hard-deleted — a re-parse sets `superseded_at` on the prior current row and
+inserts a new one (current = `superseded_at IS NULL`). Tenant-scoped: dual RLS (dara_app company_id GUC +
+dara_admin) mirroring `dara_requirements`. **BigInt ids** (the prompt's UUID design was corrected to match the
+schema; only `created_by` is `@db.Uuid`). Model `DaraParseResult` in schema.prisma.
+
+**Files.** New: `utils/dara/parse-result.ts` (ParseResult TS contract + `joinParagraphs`/`asParseResult` pure
+helpers), `utils/dara/modal-parser.ts` (`callModalParser` never-throws/never-logs-secret + `saveParseResult`
+atomic supersede-in-`withTenant` + `parseAndPersist` orchestrator), `components/dara/ParseHistory.tsx`
+(admin-only viewer). Modified: `documents.ts` (`createSignedDownloadUrl`, service-role 60s signed URL),
+`[id]/page.tsx` + `new/page.tsx` (call `parseAndPersist` after each SolDocument create; parse-history UI + two
+server actions), `requirements.ts` (per-doc structured/flat input; isolated try/catch so an unreadable parse
+table degrades to flat text, never breaks the shred), `hrlr/prompt.ts` (`buildHrlrPrompt` gained an optional
+`structured?: ParseResult[]` param → prepends a capped structural pre-analysis preamble; backward compatible,
+`run.ts` untouched), `passes.ts` (`enqueueReparse` + `kind='reparse'` worker branch → `parseAndPersist` then
+`enqueueShred`).
+
+**HRLR prompt preamble** (structured path only, solicitation only): DOCUMENT SUMMARY, SECTION STRUCTURE,
+PRE-IDENTIFIED OBLIGATION SENTENCES (modal candidates), OBLIGATION-BEARING TABLES (CDRL-aware), CONDITIONAL
+STRUCTURES, IbR citations, PASSIVE VOICE OBLIGATIONS, IMAGE-ONLY PAGES — each list capped so a dense RFP can't
+blow context; explicitly framed as a HINT to verify against the source. The source text fed to the model +
+anchored for provenance is the ParseResult paragraphs joined (verbatim), so `hrlr` output + provenance verify
+unchanged.
+
+**Parse-history UI** (`ParseHistory.tsx`, in the Documents panel, `isPlatformAdmin` gated both in render AND in
+the server actions). Summary cards (counts, quality gate, superseded state) + on-demand detail drawer (full
+`result` fetched only on expand — it's 100KB+) with sections/obligations/tables/IbR/entities/image-pages, all
+null-safe. Re-parse button enqueues an async `kind='reparse'` job (never calls Modal from the click).
+
+**Constraints honored:** `modal/app.py` untouched; `hrlr/types.ts|parse.ts|resolve.ts|run.ts` untouched; `hrlr`
+JSONB format unchanged; secret never logged; upload never blocks on Modal failure; supersede+insert atomic
+(`withTenant` transaction); `toLocaleDateString`/`after()` not used.
+
+**Known deviations from the spec** (full list in this session's completion report): UUID→BigInt (schema
+reality); `buildShredPrompt`→existing `buildHrlrPrompt`; per-doc input since the shred concatenates all RFP
+docs; `saveParseResult` uses `withTenant` not raw prisma; signed URL via service-role client; `result` stored as
+**plaintext JSONB per the prompt** (flagged: CUI at rest, unlike DARA-009's encrypted `extracted_text`; matches
+`dara_requirements.description` precedent — revisit); wired the create-flow upload site too (not just
+`[id]/page.tsx`).
+
+**⚠️ DEPLOY (owner, in order) — NOT done this session:**
+1. `pnpm prisma migrate deploy` (owner / DIRECT_URL)
+2. `npx tsx prisma/security/apply-sql.ts prisma/security/2026-07-13_parse_results_rls.sql`  ← BEFORE code deploy (table fail-closed until granted)
+3. `vercel deploy --prod --yes` → `git push`
+`MODAL_PARSER_URL` + `MODAL_PARSER_SECRET` already set in Vercel + `.env.local`. Existing docs (no parse row) keep
+using flat text; only newly-uploaded/re-parsed docs get structured input.
+
+**Where to next (optional).** Re-parse into a POPULATED matrix currently no-ops the follow-on shred (the shred's
+no-clobber guard) — apply requires clearing/regenerating the matrix; a "re-parse + regenerate" affordance could
+close that. Response-doc structured parse (proposal HRLR) has no home yet. Consider encrypting `result` at rest.
+
+---
+
 ## -5. Latest session (2026-07-11) — shred scan-integrity guards (coverage-gap + fragment detectors) + requirement-detail modal
 
 Commit `0709595` (single), **pushed + deployed** (`dpl_6AHhbXkRpyeYomcTj7kHBU7PSD6T`, `ci-dara-qzz5bb5ub`,

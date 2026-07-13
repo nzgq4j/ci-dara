@@ -11,3 +11,7 @@ package-lock.json
 # scratch / worktrees
 _*.mjs
 .claude/worktrees/
+
+# python / modal (venv is local-only; never commit)
+.venv/
+**/__pycache__/

@@ -21,6 +21,7 @@ import { buildHrlrPrompt } from '@/utils/dara/hrlr/prompt';
 import { parseHrlrNodes, buildSourceIndex, locateSpan } from '@/utils/dara/hrlr/parse';
 import { resolveGraph } from '@/utils/dara/hrlr/resolve';
 import type { RequirementNode } from '@/utils/dara/hrlr/types';
+import { asParseResult, joinParagraphs, type ParseResult } from '@/utils/dara/parse-result';
 
 // Output budget for the whole graph in one generation. Anthropic caps far above this; a dense RFP
 // of ~150 requirement nodes is well under.
@@ -105,11 +106,52 @@ export async function shredRequirements(
   // already populated, no-op (regeneration = clear the matrix first, a deliberate user action).
   if (loaded.existingCount > 0) return { ok: true, count: 0, exhausted: true };
 
+  // Structured-input path (Modal parser): for each RFP doc, prefer the CURRENT (non-superseded)
+  // ParseResult's reconstructed paragraph text — richer, table-aware input — over flat unpdf/mammoth
+  // text. Documents uploaded before this feature (or where Modal was unavailable) have no parse row
+  // and fall back to the flat extracted text, so the shred behaves EXACTLY as before for them. The
+  // lookup is isolated in its own try/catch: if the parse table is unreadable for any reason, the
+  // shred degrades to flat text rather than failing (fallback is guaranteed).
+  const rfpDocRows = (loaded.solicitation.solDocs as DocRow[]).filter(
+    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete'
+  );
+  const parseByDoc = new Map<string, ParseResult>();
+  const rfpDocIds = rfpDocRows.map((d) => d.id);
+  if (rfpDocIds.length > 0) {
+    try {
+      const parseRows = await withTenant(companyId, (tx) =>
+        tx.daraParseResult.findMany({
+          where: { solDocId: { in: rfpDocIds }, companyId, supersededAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: { solDocId: true, result: true }
+        })
+      );
+      for (const row of parseRows) {
+        const key = row.solDocId.toString();
+        if (parseByDoc.has(key)) continue; // keep the newest (rows are createdAt desc)
+        const pr = asParseResult(row.result);
+        if (pr) parseByDoc.set(key, pr);
+      }
+    } catch (e) {
+      console.warn('[shred] parse-result lookup failed; using flat text extraction', e);
+    }
+  }
+
   // Decrypt the RFP documents; keep them individually so provenance can be anchored to a specific
-  // document, and concatenate (structure preserved) for the whole-document model call.
-  const rfpDocs: { id: bigint; name: string; text: string }[] = (loaded.solicitation.solDocs as DocRow[])
-    .filter((d) => d.docType === 'rfp' && d.extractionStatus === 'complete')
-    .map((d) => ({ id: d.id, name: d.originalFilename, text: decryptField(d.extractedText) }))
+  // document, and concatenate (structure preserved) for the whole-document model call. Collect the
+  // ParseResults actually used so the prompt can add a structural pre-analysis preamble.
+  const structuredResults: ParseResult[] = [];
+  const rfpDocs: { id: bigint; name: string; text: string }[] = rfpDocRows
+    .map((d) => {
+      const flat = decryptField(d.extractedText);
+      const pr = parseByDoc.get(d.id.toString());
+      const structured = pr ? joinParagraphs(pr) : '';
+      if (pr && structured.trim() !== '') {
+        structuredResults.push(pr);
+        return { id: d.id, name: d.originalFilename, text: structured };
+      }
+      return { id: d.id, name: d.originalFilename, text: flat };
+    })
     .filter((d) => d.text.trim() !== '');
 
   if (rfpDocs.length === 0) {
@@ -135,8 +177,14 @@ export async function shredRequirements(
   );
   if (!apiKey) return { ok: false, count: 0, error: `No API key configured for provider "${provider}".` };
 
-  // One whole-document HRLR call — the slow network hop, OUTSIDE any transaction.
-  const { system, user } = buildHrlrPrompt(solText, 'solicitation');
+  // One whole-document HRLR call — the slow network hop, OUTSIDE any transaction. When any RFP doc
+  // came from the Modal parser, the prompt gains a structural pre-analysis preamble (hint only; the
+  // output schema and HRLR rules are unchanged).
+  const { system, user } = buildHrlrPrompt(
+    solText,
+    'solicitation',
+    structuredResults.length ? structuredResults : undefined
+  );
   let ai;
   try {
     ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);

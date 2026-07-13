@@ -6,6 +6,7 @@ import { getDaraUser } from '@/utils/dara/provision';
 import { withTenant } from '@/utils/prisma';
 import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract } from '@/utils/dara/documents';
+import { parseAndPersist } from '@/utils/dara/modal-parser';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { triggerWorker } from '@/utils/dara/passes';
 import { requireTrialCapacity, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
@@ -186,6 +187,13 @@ async function uploadDocToSol(formData: FormData): Promise<StepResult> {
         })
       )
     );
+    // Structural pre-processing (Modal). Best-effort; the shred falls back to flat text on failure.
+    await parseAndPersist({
+      storedFilename: doc.storedFilename,
+      solDocId: created.id,
+      companyId,
+      createdBy: daraUser.id
+    });
     await recordAudit({
       action: 'document.upload',
       companyId,
