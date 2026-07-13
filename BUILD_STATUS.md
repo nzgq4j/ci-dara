@@ -24,11 +24,97 @@ _Last updated: 2026-07-11_
 
 ---
 
+## -8. Latest session (2026-07-13, latest) — Increment-1 + L→M wiring: BUILT + verified (deploy pending)
+
+The build deferred in §-7 was completed this session. Scope confirmed with the user: **fix Section M
+extraction AND build the L→M link, computed in the shred.** `MODAL_PARSER_SECRET` is **rotated** (user
+confirmed) and §-6's Modal commit is **pushed** (`origin/main == 57c4e8d`). Memory: `increment1-lm-wiring.md`.
+
+**Verified:** `tsc --noEmit` + `pnpm build` both clean; a standalone deterministic test (no API) exercised the
+real `hrlr/parse.ts` verification path + the new helpers — **16/16 checks green** (dirty ligature/soft-hyphen/
+zero-width text that previously failed `locateSpan` now verifies; cleaning leaves "Section A"/"Part B" intact;
+parser handles rejected; real markers kept; `governing_factors` read/dedup/degrade).
+
+- **Fix 1 — verbatim-verify false negatives** (99/278, 82 HIGH). `requirements.ts` `cleanSourceText()`
+  NFKC-normalizes + strips soft-hyphen/zero-width/BOM (codepoint Set; **no** single-letter regex) on each
+  `rfpDocs[].text` before extraction AND verification. App-side, NOT Modal (`parse.ts` is protected; upstream
+  cleaning fixes structured + flat paths and is retroactive on regenerate).
+- **Fix 2 — parse-QA `reviewStatus`.** New enum `RequirementReviewStatus` (pending/approved/rejected/flagged)
+  + `review_status` column (migration `20260713140000_requirement_review_status_governance`, additive, default
+  `pending`, no RLS file). Auto-set at shred (`flagged` when unverified/flagged/fragmented/LOW). UI: matrix
+  "flagged" badge + "Needs review" filter + approve/reject/flag control in the detail modal, via a BOLA-safe
+  `setReviewStatusAction`. DISTINCT from `complianceStatus` and the color-team `ReviewStatus`.
+- **D5 — citation pollution FIXED.** `hrlr/prompt.ts` tells the model `[cand-…]`/`[trigger-…]`/`TABLE` brackets
+  are internal handles, never `source_marker`; `requirements.ts` `PARSER_HANDLE` rejects them at persist.
+- **Section M extraction.** `SOLICITATION_GUIDANCE` teaches recognition of Section M factors (evaluation/
+  rating/basis-for-award language) as `evaluation_factor`/`scored` — fixing the sow_pws misclassification.
+- **L→M link (in the shred).** Model emits `governing_factors` (M markers each L instruction/SOW task is
+  evaluated under; new `NODE_SCHEMA` field + guidance). `requirements.ts` reads it off the raw JSON
+  (`extractGoverningByKey`, since `parse.ts`/`types.ts` are protected) into the new `governing_factors text[]`
+  column. Surfaced as "Evaluated under" chips in the detail modal + an export column. Unblocks the deferred
+  Evaluation-Only view (SESSION_HANDOFF backlog 9). Export widened 9→11 cols; `matrix-docx.ts` `COL_WIDTHS`
+  rebalanced (sum still 14400).
+
+**⚠️ DEPLOY PENDING (owner, when asked):** `pnpm prisma migrate deploy` → `vercel deploy --prod --yes` →
+`git push`. AI-dependent behavior (M classification + `governing_factors`) is only truly testable on a live
+dense-RFP shred + regenerate — still the "true test".
+
+---
+
+## -7. Latest session (2026-07-13, later) — Increment-1 + L→M wiring: INSPECTION ONLY (build deferred)
+
+**No feature code written.** A three-part prompt (Fix 1 Modal PDF text cleaning · Fix 2 parse-QA `reviewStatus`
+auto-classification · L→M evaluation-factor wiring) was inspected through Phase 1; the user chose to stop after
+inspection and defer the build. This section records the findings so the next session doesn't rebuild on the
+prompt's incorrect premises. (Also: §-6's Modal integration **was deployed** this session — see the note at the
+end of §-6 / `SESSION_HANDOFF.md`.)
+
+**Prod data snapshot (read-only SQL via DIRECT_URL, 278 hrlr rows):** `source` = 237 `sow_pws` / 25 `other` /
+11 `instruction` (Section L) / 4 `far_clause` / **1 `evaluation_factor` (Section M)**. `verbatimVerified=false`
+on **99/278** (82 HIGH + 16 MEDIUM + 1 LOW). `flags` present on **153/278**. Only sol id 30 has both L and M
+(4 L, 1 M). Section L `evalScope` ∈ {SELF·8, PARENT_COLLECTIVE·2, EACH_CHILD·1}. Several L `citation`s =
+`cand-sent-para-p1-1` (Modal candidate IDs).
+
+**Divergences from the prompt's "Confirmed Facts" (must fix before building):**
+- **D1** `source` values are `instruction`/`evaluation_factor`/`sow_pws`/`far_clause`/`other` — NOT
+  `'Section L instruction'`/`'M factor'`. Section L=`instruction`, Section M=`evaluation_factor`.
+- **D2** `reviewStatus` does NOT exist on `Requirement` (only `complianceStatus`). Prompt's "added last session"
+  is false. Existing `ReviewStatus` enum (`draft/in_progress/complete`) belongs to the color-team **Review**
+  table (workflow status), a different concept from Fix 2's parse-QA status. → Fix 2 must ADD a new column + enum
+  (avoid the `ReviewStatus` name collision; e.g. `RequirementReviewStatus`).
+- **D3** `evalScope` is a STRUCTURAL enum (`SELF/EACH_CHILD/PARENT_COLLECTIVE/AGGREGATE_SET/UNRESOLVED`), never an
+  M cross-reference → the prompt's evalScope-based DIRECT mapping yields **0**. DIRECT must be redefined (explicit
+  M citation/factor-name in the L instruction text/`applicability`/`sectionPath`).
+- **D4** ~no Section M data exists (1 row prod-wide) → L→M has nothing to wire until the shred extracts Section M
+  factors (real blocker; classification issue — most rows land as `sow_pws`).
+- **D5 (discovered regression)** `citation` polluted by Modal `candidate_id`s — the structured preamble added in
+  §-6 (`utils/dara/hrlr/prompt.ts`) formats candidates as `[cand-…] SOURCE:…` and the model copies that bracket ID
+  into `source_marker`→`citation`. Fix is in `hrlr/prompt.ts`, which THIS prompt barred (constraint conflict).
+
+**Feasibility / recommendation:** Fix 1 ✅ well-motivated (99 vv=false; but DROP the stray single-uppercase-letter
+regex — it eats "Section A"/"Part B"; keep soft-hyphen U+00AD / zero-width / NFKC). Fix 2 ✅ but needs the D2
+schema add and must read the flattened `hrlr` JSONB fields (`verbatimVerified`/`confidence`/`flags`/`state` all
+present). L→M ⚠️ infra buildable but re-scope off evalScope, and its value is gated on D4+D5. **Recommended:** ship
+Fix 1 + Fix 2; re-scope or defer L→M. Two open decisions were about to be put to the user (L→M approach; the
+hrlr/prompt.ts constraint conflict + regex) — see `SESSION_HANDOFF.md` §0 (latest).
+
+**Build anchors located (no edits made):** `utils/dara/requirements.ts` shred `createMany` rows (~L176);
+`modal/app.py` (`_parse_pdf`: `page_text`→`paragraphs`+`_process_sentences`; `_parse_docx`; table
+`reconstructed_text`; Python 3.12 / spaCy 3.8.14; no `clean_extracted_text`); `[id]/page.tsx` `exportMatrixAction`
+(~L522, 9 cols `# · Requirement · Detail · Source · Type · Citation · Response Location · Status · Notes`) →
+`matrix-docx.ts` (generic cols/rows, `COL_WIDTHS` len 9); `AiActionButton` pattern ~L1743;
+`components/dara/ComplianceMatrix.tsx` (CSS-grid columns, not a table).
+
+---
+
 ## -6. Latest session (2026-07-13) — Modal structural parser integration (shred input + parse history)
 
-**Not yet deployed** — code + migration + RLS authored and locally verified (`tsc --noEmit` + `next build`
-both exit 0; offline serializer/preamble smoke test passes). **Deploy is pending an owner action** (migration
-+ RLS must be applied before the code deploy — see below). No commit/push made this session.
+**✅ DEPLOYED this session** (updated later 2026-07-13). Migration applied → RLS applied (owner) → `vercel deploy
+--prod` (`dpl_CSjJmb4PtMarptZYbnJHQnWsfkCw`, READY, aliased `dara.crucibleinsight.com`); live Modal endpoint
+smoke-tested 200 / `quality_gate_passed=true`; `tsc --noEmit` + `next build` clean. Committed as **`57c4e8d`**
+(**not pushed** — `main` is 1 ahead of `origin/main`). ⚠️ **`MODAL_PARSER_SECRET` rotation still pending before
+go-live** (exposed in a smoke-test command); after rotating, redeploy so the app picks up the new value. The
+structured preamble here is the source of the D5 citation pollution noted in §-7.
 
 **What it is.** Wires the deployed Modal `dara-parser` service (pdfplumber + spaCy `en_core_web_md`,
 `https://islanista--dara-parser-parse-document.modal.run`) into the app: document uploads now synchronously

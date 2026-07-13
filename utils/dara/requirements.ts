@@ -18,7 +18,7 @@ import { getPlatformAI } from '@/utils/dara/platform-ai';
 import { logUsage } from '@/utils/dara/usage';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { buildHrlrPrompt } from '@/utils/dara/hrlr/prompt';
-import { parseHrlrNodes, buildSourceIndex, locateSpan } from '@/utils/dara/hrlr/parse';
+import { parseHrlrNodes, buildSourceIndex, locateSpan, stripFences } from '@/utils/dara/hrlr/parse';
 import { resolveGraph } from '@/utils/dara/hrlr/resolve';
 import type { RequirementNode } from '@/utils/dara/hrlr/types';
 import { asParseResult, joinParagraphs, type ParseResult } from '@/utils/dara/parse-result';
@@ -36,6 +36,57 @@ const MAX_REQUIREMENTS = 800;
 
 // Clause-number extractor for farReference (e.g. "252.204-7012" out of a citation).
 const CLAUSE_NUM = /\b(\d{2,3}\.\d{3}(?:-\d{1,4})?)\b/;
+
+// A citation that is actually a Modal parser handle leaking through the structured preamble
+// (`cand-sent-para-p1-1`, `trigger-…`, `t1`/`table-…`). These are internal IDs, never a real document
+// marker — reject them so they don't pollute the matrix `citation` column (see SESSION_HANDOFF §0 D5).
+const PARSER_HANDLE = /^\[?(?:cand[-_]|trigger[-_]|table[-_]|t\d+$)/i;
+
+// Normalize source text so PDF/DOCX typography artifacts don't cause false verbatim-verification misses
+// (the residual ~99/278 verbatimVerified=false class): NFKC folds ligatures/compatibility forms, and we
+// strip zero-width joiners/spaces, the soft hyphen, and the BOM. Deliberately conservative — it does NOT
+// alter letters, case, spacing, or single characters (no single-uppercase-letter stripping, which would
+// eat legitimate tokens like "Section A" / "Part B" / "Exhibit C").
+const ZERO_WIDTH = new Set([0x00ad, 0x200b, 0x200c, 0x200d, 0xfeff]); // soft hyphen · ZWSP · ZWNJ · ZWJ · BOM
+function cleanSourceText(s: string): string {
+  const normalized = s.normalize('NFKC');
+  let out = '';
+  for (const ch of normalized) if (!ZERO_WIDTH.has(ch.codePointAt(0)!)) out += ch;
+  return out;
+}
+
+// Parse-QA review state for a freshly-shredded node. Anything the pipeline is not confident it read
+// correctly starts `flagged` (needs a human look); everything else starts `pending`.
+function reviewStatusFor(n: RequirementNode): 'pending' | 'flagged' {
+  if (!n.provenance.verbatimVerified) return 'flagged';
+  if (n.flags && n.flags.length > 0) return 'flagged';
+  if (n.fragmentStatus) return 'flagged';
+  if (n.confidence === 'LOW') return 'flagged';
+  return 'pending';
+}
+
+// The model emits `governing_factors` (Section M markers an L instruction / SOW task feeds) but the
+// pure HRLR node type (utils/dara/hrlr/types.ts) does not carry it, so read it straight off the raw
+// JSON, keyed by the node's `key`. Best-effort: on a truncated/salvaged response we simply get no
+// links for this run (an optional enrichment, never a hard dependency).
+function extractGoverningByKey(modelText: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  try {
+    const data = JSON.parse(stripFences(modelText));
+    const arr: any[] = Array.isArray(data) ? data : Array.isArray(data?.nodes) ? data.nodes : [];
+    for (const n of arr) {
+      const key = String(n?.key ?? '').trim();
+      if (!key) continue;
+      const gf = Array.isArray(n?.governing_factors)
+        ? n.governing_factors.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 12)
+        : [];
+      if (gf.length) out.set(key, Array.from(new Set(gf)));
+    }
+  } catch {
+    /* truncated JSON → no governance links this run */
+  }
+  return out;
+}
 
 export interface ShredSummary {
   ok: boolean;
@@ -148,9 +199,9 @@ export async function shredRequirements(
       const structured = pr ? joinParagraphs(pr) : '';
       if (pr && structured.trim() !== '') {
         structuredResults.push(pr);
-        return { id: d.id, name: d.originalFilename, text: structured };
+        return { id: d.id, name: d.originalFilename, text: cleanSourceText(structured) };
       }
-      return { id: d.id, name: d.originalFilename, text: flat };
+      return { id: d.id, name: d.originalFilename, text: cleanSourceText(flat) };
     })
     .filter((d) => d.text.trim() !== '');
 
@@ -199,6 +250,8 @@ export async function shredRequirements(
   const nodes = parseHrlrNodes(ai.text, solText, loaded.solicitation.title ?? 'solicitation', 'solicitation');
   if (nodes.length === 0) return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
   const graph = resolveGraph(nodes, 'solicitation', loaded.solicitation.title ?? 'solicitation', solText);
+  // L→M governance links live on the raw JSON (not the pure node type) — read them keyed by node key.
+  const govByKey = extractGoverningByKey(ai.text);
 
   const capped = graph.nodes.slice(0, MAX_REQUIREMENTS);
 
@@ -224,8 +277,12 @@ export async function shredRequirements(
   const rows = capped.map((n, i) => {
     const isParent = n.state === 'PARENT_WITH_CHILDREN' || n.state === 'PARENT_AND_CHILD';
     const anchor = anchorOf(n.exactText);
-    const citation = (n.provenance.originalMarker || '').slice(0, 200);
+    // Reject a Modal parser handle that leaked into source_marker (D5) — treat as no marker.
+    const rawMarker = (n.provenance.originalMarker || '').trim();
+    const citation = PARSER_HANDLE.test(rawMarker) ? '' : rawMarker.slice(0, 200);
     const far = citation.match(CLAUSE_NUM);
+    // Governance links belong on L instructions / SOW tasks, not on the M factors themselves.
+    const governingFactors = n.source === 'evaluation_factor' ? [] : (govByKey.get(n.key) ?? []);
     return {
       companyId,
       solicitationId,
@@ -238,6 +295,10 @@ export async function shredRequirements(
       citation,
       citationSynthesized: citation === '',
       weight: 0,
+      // Parse-QA review state — flagged when the pipeline is unsure it read the node correctly.
+      reviewStatus: reviewStatusFor(n),
+      // L→M linkage: Section M factor markers this instruction/task is evaluated under.
+      governingFactors,
       // Containers/parents are a rollup, not a directly-graded unit — keep them OUT of the compliance
       // sweep (which grades disposition='compliance' + status='not_assessed'). Leaves grade normally.
       complianceStatus: isParent

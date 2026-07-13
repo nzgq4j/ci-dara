@@ -33,7 +33,7 @@ const NODE_SCHEMA = `{
   "state": "STANDALONE | PARENT_WITH_CHILDREN | CHILD | PARENT_AND_CHILD | UNRESOLVED",
   "exact_text": "<VERBATIM text of THIS unit copied character-for-character from the document. Do NOT include the text of children. Do NOT paraphrase, fix typos, or reformat.>",
   "normalized_meaning": "<plain-language restatement of what THIS unit requires/claims — YOUR interpretation, separate from the verbatim text>",
-  "source_marker": "<the document's own label for this unit, EXACTLY as printed — e.g. \\"3.2.1\\", \\"4.2\\", \\"(a)\\", \\"L.4.2\\", \\"52.204-7012\\". Empty string if the unit is unnumbered.>",
+  "source_marker": "<the document's own label for this unit, EXACTLY as printed in the SOURCE DOCUMENT TEXT — e.g. \\"3.2.1\\", \\"4.2\\", \\"(a)\\", \\"L.4.2\\", \\"52.204-7012\\". Empty string if the unit is unnumbered. NEVER use a bracketed handle from the pre-analysis (e.g. [cand-…], [trigger-…], TABLE t1) — those are internal parser IDs, not document labels.>",
   "section_path": "<breadcrumb of enclosing headings, e.g. \\"3 Technical > 3.2 Requirements\\"; best effort>",
   "page": <page number if discernible, else null>,
   "mandatory": "MANDATORY | NON_MANDATORY | CONDITIONAL",
@@ -48,7 +48,8 @@ const NODE_SCHEMA = `{
   "eval_scope": "SELF | EACH_CHILD | PARENT_COLLECTIVE | AGGREGATE_SET | UNRESOLVED",
   "applicability": "<scope/conditions this unit sets over its descendants; empty string if none>",
   "confidence": "HIGH | MEDIUM | LOW",
-  "confidence_rationale": "<one clause>"${'' /* response-only fields appended below when docKind==='response' */}
+  "confidence_rationale": "<one clause>",
+  "governing_factors": ["<for a Section L instruction or SOW/PWS task: the Section M evaluation-factor marker(s) or name(s), EXACTLY as the document labels them (e.g. \\"Factor 1\\", \\"M.2\\", \\"Technical Approach\\"), that this unit will be EVALUATED under, when the solicitation connects them. [] for Section M factors themselves and whenever no evaluation linkage is stated or inferable.>"]${'' /* response-only fields appended below when docKind==='response' */}
 }`;
 
 const RESPONSE_FIELDS = `,
@@ -95,6 +96,31 @@ relying on YOUR keys for links; put whatever the document shows (or "") in sourc
   sow_pws = SOW/PWS/SOO task; far_clause = FAR/DFARS clause/provision; other.
 - disposition: scored = a Section M factor the Government scores; compliance = pass/fail the proposal
   must demonstrate; administrative = complied with but not written up (SAM/CAGE, reps & certs, logistics).
+
+### Section M evaluation factors — recognize them, do NOT bury them as SOW/PWS tasks
+Section M defines WHAT THE GOVERNMENT WILL EVALUATE AND SCORE. It is the most commonly MIS-classified
+section: an evaluation factor that names a technical topic (e.g. "Technical Approach", "Management
+Approach", "Past Performance") gets wrongly tagged sow_pws just because it mentions a capability. The
+giveaway is EVALUATION language, not task language. Classify as source=evaluation_factor,
+disposition=scored (even without the word "shall") when you see any of:
+- "will be evaluated", "the Government will evaluate", "evaluated on the basis of", "the following
+  factors/subfactors will be considered";
+- an enumerated "Factor 1 / Factor 2", "Subfactor", or "Evaluation Factor" list;
+- adjectival/rating or basis-for-award language (Outstanding/Acceptable/Marginal, "most advantageous",
+  "best value", relative importance of factors).
+A SOW/PWS "shall"/"will perform" TASK the contractor executes is sow_pws (compliance), NOT
+evaluation_factor. A Section L "how to prepare/format your proposal" directive is instruction. When the
+document places a requirement in a section explicitly titled or numbered as Section M / "Evaluation
+Factors for Award", trust that placement over surface wording.
+
+### L→M linkage (populate "governing_factors")
+Proposal teams must see which Section L instructions and SOW/PWS tasks feed each scored Section M
+factor. For every instruction / sow_pws node, set "governing_factors" to the Section M factor label(s)
+it will be evaluated under WHEN the solicitation connects them — explicitly (Section L cross-references
+a factor, or a factor cites the instruction it scores) or by unambiguous subject-matter correspondence
+(a factor "Technical Approach" evaluated against the Section L "Technical Volume" instruction). Use the
+document's own factor labels. Leave it [] for Section M factor nodes themselves, for administrative
+items, and whenever no evaluation linkage is stated or safely inferable — do not manufacture a link.
 
 ### Exclude
 The scoring METHODOLOGY (rating scales, weighting, best-value process), acronym lists, and pure
@@ -215,7 +241,9 @@ export function buildStructuredPreamble(results: ParseResult[]): string {
       `PRE-IDENTIFIED OBLIGATION SENTENCES (${modals.length} candidates)\n` +
         'These sentences were flagged as potential obligations by modal-verb detection. Verify the ' +
         'subject-verb-object reading, classify each as an HRLR node, and do NOT limit extraction to ' +
-        'this list — identify any obligations it missed.\n' +
+        'this list — identify any obligations it missed. The leading [cand-…] identifier is an internal ' +
+        'parser handle, NOT the document\'s label — never copy it into "source_marker" or any output ' +
+        'field; take the real marker from the SOURCE DOCUMENT TEXT below.\n' +
         modals.slice(0, CAP.modals).map(fmtModal).join('\n') +
         truncNote(modals, CAP.modals)
     );

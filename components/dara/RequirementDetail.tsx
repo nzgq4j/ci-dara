@@ -19,6 +19,9 @@ export type RequirementDetailData = {
   complianceStatus: string;
   proposalRef: string;
   notes: string;
+  // Parse-QA review state (pending / approved / rejected / flagged) + L→M governance.
+  reviewStatus?: string;
+  governingFactors?: string[]; // Section M factor markers this instruction/task is evaluated under
   // Source provenance.
   sourceDocument: string; // filename the requirement was extracted from ('' if unknown)
   sectionPath?: string;
@@ -57,6 +60,15 @@ const STATUS_LABEL: Record<string, string> = {
   not_applicable: 'N/A'
 };
 
+// Parse-QA review states, shown as a header badge + reviewer control.
+const REVIEW_STATUS_META: Record<string, { label: string; chip: string }> = {
+  pending: { label: 'Pending review', chip: 'bg-line text-t4' },
+  approved: { label: 'Approved', chip: 'bg-[#DCFCE7] text-[#166534]' },
+  rejected: { label: 'Rejected', chip: 'bg-[#FEE2E2] text-[#991B1B]' },
+  flagged: { label: 'Flagged', chip: 'bg-[#FEF3C7] text-[#92400E]' }
+};
+const REVIEW_STATUS_OPTIONS = ['pending', 'approved', 'rejected', 'flagged'] as const;
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   if (value === null || value === undefined || value === '') return null;
   return (
@@ -78,13 +90,19 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function RequirementDetail({
   detail,
-  children
+  children,
+  onSetReviewStatus
 }: {
   detail: RequirementDetailData;
   children: React.ReactNode;
+  // When provided, the modal shows reviewer controls that set the parse-QA review status.
+  onSetReviewStatus?: (status: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState(detail.reviewStatus ?? 'pending');
   const d = detail;
+  const reviewMeta = REVIEW_STATUS_META[reviewStatus] ?? REVIEW_STATUS_META.pending;
+  const governs = (d.governingFactors ?? []).filter(Boolean);
 
   const satisfaction =
     d.satisfactionKind && d.satisfactionKind !== 'NONE'
@@ -139,6 +157,9 @@ export default function RequirementDetail({
                       </span>
                     )}
                     {d.logicalId && <span className="font-mono text-[10px] text-t5">{d.logicalId}</span>}
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${reviewMeta.chip}`}>
+                      {reviewMeta.label}
+                    </span>
                   </div>
                   <h2 className="text-[15px] font-bold leading-snug text-t1">{d.name}</h2>
                 </div>
@@ -188,7 +209,50 @@ export default function RequirementDetail({
                 <Field label="Status" value={STATUS_LABEL[d.complianceStatus] ?? d.complianceStatus} />
                 <Field label="Response loc." value={d.proposalRef} />
                 <Field label="Notes" value={d.notes} />
+                <Field
+                  label="Evaluated under"
+                  value={
+                    governs.length ? (
+                      <span className="flex flex-wrap gap-1">
+                        {governs.map((f, i) => (
+                          <span key={i} className="rounded bg-navy/10 px-1.5 py-0.5 font-mono text-[10px] text-navy">
+                            {f}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      ''
+                    )
+                  }
+                />
               </Section>
+
+              {/* Parse-QA reviewer control */}
+              {onSetReviewStatus && (
+                <Section title="Parse review">
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {REVIEW_STATUS_OPTIONS.map((s) => {
+                      const active = reviewStatus === s;
+                      const m = REVIEW_STATUS_META[s];
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => {
+                            setReviewStatus(s);
+                            onSetReviewStatus(s);
+                          }}
+                          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                            active ? m.chip : 'border border-line bg-surf text-t4 hover:text-t1'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Section>
+              )}
 
               {/* Source & provenance */}
               {hasProvenance && (

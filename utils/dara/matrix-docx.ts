@@ -22,8 +22,10 @@ import {
 const NAVY = '1B2A4A';
 const BORDER = '999999';
 
-// Landscape Letter usable width (15840 twips − 2×720 margin) split across the 9 columns.
-const COL_WIDTHS = [400, 2200, 3000, 1100, 1300, 1500, 1500, 1200, 2200];
+// Landscape Letter usable width (15840 twips − 2×720 margin = 14400) split across the 11 columns:
+// # · Requirement · Detail · Source · Type · Citation · Evaluated Under · Response Location · Status ·
+// Review · Notes.
+const COL_WIDTHS = [380, 1900, 2600, 950, 1050, 1150, 1250, 1250, 950, 950, 1970];
 
 const cellBorder = { style: BorderStyle.SINGLE, size: 4, color: BORDER };
 const TABLE_BORDERS = {

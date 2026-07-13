@@ -16,26 +16,104 @@ Start-here doc. **Everything below is committed, pushed, + live on production** 
 
 ---
 
-## 0 (2026-07-13). Modal structural parser integration — NOT YET DEPLOYED
+## 0 (2026-07-13, LATEST). Increment-1 + L→M wiring — BUILT + verified, DEPLOY PENDING
 
-Code + migration + RLS authored and locally verified (`tsc --noEmit` + `next build` exit 0; offline
-serializer/preamble smoke test passes). **No commit/push/deploy this session.** Full decision log:
-`BUILD_STATUS.md` §-6.
+The build inspected-and-deferred below was completed. **Code done + verified (`tsc`/`pnpm build` clean; 16/16
+deterministic unit checks); NOT deployed** (one additive migration pending). `MODAL_PARSER_SECRET` is **rotated**
+(done — do not re-flag) and the §0 (2026-07-13) Modal commit is **pushed** (`origin/main == 57c4e8d`). Full log:
+`BUILD_STATUS.md` §-8. Memory: `increment1-lm-wiring.md`. Scope the user chose: fix Section M extraction AND
+build the L→M link, computed in the shred.
+
+- **Fix 1** `requirements.ts` `cleanSourceText()` (NFKC + strip soft-hyphen/zero-width/BOM, no single-letter
+  regex) on source text before extraction+verification → fixes the 99/278 `verbatimVerified=false` class,
+  app-side (not Modal; `parse.ts` is protected), retroactive on regenerate.
+- **Fix 2** enum `RequirementReviewStatus` + `review_status` column (migration
+  `20260713140000_requirement_review_status_governance`, additive) auto-set at shred; matrix flagged badge +
+  "Needs review" filter + approve/reject/flag in the detail modal (`setReviewStatusAction`, BOLA-safe).
+- **D5 FIXED** — `hrlr/prompt.ts` + `PARSER_HANDLE` reject `cand-`/`trigger-`/`t\d+` markers.
+- **Section M** — `SOLICITATION_GUIDANCE` recognizes evaluation factors as `evaluation_factor`/`scored`.
+- **L→M** — model emits `governing_factors`; `requirements.ts` reads it off raw JSON → `governing_factors text[]`
+  column; "Evaluated under" in the modal + export. Unblocks backlog item 9 (Evaluation-Only view).
+
+**Deploy when asked:** `pnpm prisma migrate deploy` → `vercel deploy --prod --yes` → `git push`. The live
+dense-RFP shred (Section M classification + governance links) is the untested "true test".
+
+---
+
+## 0 (2026-07-13, earlier). Increment-1 + L→M wiring — INSPECTION ONLY, NOT STARTED (deferred by user)
+
+A three-part prompt (Fix 1 Modal text cleaning · Fix 2 parse-QA `reviewStatus` · L→M wiring) was **inspected but
+NOT implemented** — user chose to stop after Phase 1 and defer the build to a future session. **No feature code
+written.** Phase 1 surfaced several places where the prompt's "Confirmed Facts" diverge from the actual repo/prod,
+which the next session MUST account for. Full detail: `BUILD_STATUS.md` §-7. Verified data-model facts are now
+also pinned in `CLAUDE.md`.
+
+**Divergences found (prompt "Confirmed Facts" vs reality):**
+- **D1 `source` values** — actual enum is `instruction` / `evaluation_factor` / `sow_pws` / `far_clause` /
+  `other`. **Section L = `source='instruction'`, Section M = `source='evaluation_factor'`.** The prompt's
+  `'Section L instruction'`/`'M factor'` are labels, not DB values (any query using them returns 0 rows).
+- **D2 `reviewStatus` does NOT exist on the Requirement model** (only `complianceStatus`). The prompt's claim it
+  "was added last session" is false. The existing `ReviewStatus` enum (`draft/in_progress/complete`) is the
+  color-team **Review** table's workflow status — a DIFFERENT concept from Fix 2's **parse-QA** status (user
+  confirmed). → **Fix 2 must ADD a new column + enum** (name it to avoid colliding with `ReviewStatus`, e.g. field
+  `reviewStatus` + enum `RequirementReviewStatus` with pending/approved/rejected/flagged).
+- **D3 `evalScope` cannot drive DIRECT L→M mapping** — it is a 5-value STRUCTURAL enum
+  (`SELF/EACH_CHILD/PARENT_COLLECTIVE/AGGREGATE_SET/UNRESOLVED`), never a Section M cross-reference. The prompt's
+  `buildDirectMappings` (scan evalScope for an M citation) yields **exactly 0** mappings. Prod confirms: all L
+  rows are `SELF`(8)/`PARENT_COLLECTIVE`(2)/`EACH_CHILD`(1). **The DIRECT mechanism must be redefined** (e.g.
+  explicit M citation/factor-name found in the L instruction TEXT / `applicability` / `sectionPath`).
+- **D4 almost no Section M data exists** — prod-wide: **11 Section L rows, 1 Section M row**; only sol id 30 has
+  both (4 L, 1 M). Matrix is 237 `sow_pws` + 25 `other` + 11 `instruction` + 4 `far_clause` + **1
+  `evaluation_factor`**. L→M has ~nothing to wire until the shred actually extracts Section M factors (the real
+  blocker).
+- **D5 (discovered regression) `citation` polluted by Modal artifacts** — many L rows have
+  `citation='cand-sent-para-p1-1'` (a Modal `candidate_id`). The structured preamble added last session formats
+  candidates as `[cand-…] SOURCE:…` and the model is copying that bracket ID into `source_marker`→`citation`. Fix
+  lives in `utils/dara/hrlr/prompt.ts` — which THIS prompt barred from editing (unresolved constraint conflict).
+
+**What the data validates:**
+- **Fix 1 (Modal text cleaning) is well-motivated:** 99/278 hrlr rows are `verbatimVerified=false`, **82 of them
+  HIGH confidence** — the soft-hyphen/zero-width/NFKC false-positive class. ⚠️ Drop the prompt's stray
+  single-uppercase-letter regex — it would eat legitimate tokens ("Section A", "Part B", "Exhibit C").
+- **flags present on 153/278 (55%)** → under Fix 2's rules a majority would be `flagged`; intentional but high.
+
+**Feasibility:** Fix 1 ✅ (drop single-letter rule). Fix 2 ✅ but needs the D2 schema add. L→M ⚠️ infra buildable
+(table/RLS/UI/exports/gap-report) but must replace the dead evalScope-DIRECT premise, and its VALUE is blocked on
+Section M extraction (D4) + citation pollution (D5).
+
+**Open decisions for next session (were about to be asked when user deferred):**
+1. **L→M approach** — (a) build infra + INFERRED-only now (DIRECT = explicit M citation/name in L text), data-thin;
+   (b) defer L→M, ship Fix 1+2 only; (c) fix Section M extraction first (higher-leverage, needs hrlr/prompt.ts).
+2. **Constraint conflicts** — the D5 citation fix needs `hrlr/prompt.ts` (barred this prompt); and confirm dropping
+   the Fix-1 single-letter regex.
+
+**Key build anchors (already located):** shred write `utils/dara/requirements.ts` (`createMany` rows object, ~L176);
+Modal parse `modal/app.py` (`_parse_pdf` page_text→paragraphs+`_process_sentences`; `_parse_docx`; table
+`reconstructed_text`; Python 3.12 / spaCy 3.8.14; NO `clean_extracted_text` yet); matrix export cols
+`[id]/page.tsx` `exportMatrixAction` (~L522, 9 cols) → `matrix-docx.ts` (generic cols/rows, 9 `COL_WIDTHS`);
+`AiActionButton` pattern `[id]/page.tsx` ~L1743; matrix render `components/dara/ComplianceMatrix.tsx` (CSS-grid:
+Requirement · Source · Response Location · Status · Notes + detail modal).
+
+---
+
+## 0 (2026-07-13). Modal structural parser integration — ✅ DEPLOYED
+
+**Deployed to prod this session.** Migration `20260713120000_parse_results` applied → RLS
+`2026-07-13_parse_results_rls.sql` applied (owner) → `vercel deploy --prod` (`dpl_CSjJmb4PtMarptZYbnJHQnWsfkCw`,
+READY, aliased `dara.crucibleinsight.com`). Live Modal endpoint smoke-tested 200 / `quality_gate_passed=true`.
+Committed as `57c4e8d` (**not pushed** — `main` is 1 ahead of `origin/main`). ⚠️ **`MODAL_PARSER_SECRET` rotation
+pending before go-live** (it was exposed in a smoke-test command). Full decision log: `BUILD_STATUS.md` §-6.
 
 **What it is.** The deployed Modal `dara-parser` (pdfplumber + spaCy) is wired into the app. Document uploads
-call Modal synchronously, store the structured `ParseResult` in a new versioned `dara_parse_results` table, and
-the HRLR shred reads that structured output (rich preamble: obligations, CDRL tables, IbR, conditionals) instead
+call Modal synchronously, store the structured `ParseResult` in the versioned `dara_parse_results` table, and
+the HRLR shred reads that structured output (preamble: obligations, CDRL tables, IbR, conditionals) instead
 of flat text — **the `hrlr` JSONB output format is unchanged**. Fully fallback-safe: no Modal / any error → flat
-unpdf/mammoth path, exactly as before. Pre-feature documents (no parse row) are unaffected. A platform-admin-only
-parse-history viewer + async re-parse job round it out.
+unpdf/mammoth path. Pre-feature documents (no parse row) are unaffected. Platform-admin-only parse-history
+viewer + async re-parse job included.
 
-**⚠️ To deploy (owner, IN ORDER):**
-1. `pnpm prisma migrate deploy`  (migration `20260713120000_parse_results`)
-2. `npx tsx prisma/security/apply-sql.ts prisma/security/2026-07-13_parse_results_rls.sql`  ← BEFORE code deploy
-3. `vercel deploy --prod --yes` → `git push`
-
-`MODAL_PARSER_URL`/`MODAL_PARSER_SECRET` already set in Vercel + `.env.local`. New/re-parsed docs get structured
-input; existing docs keep flat text until re-parsed. Untracked new file: `components/dara/ParseHistory.tsx`.
+**Follow-ups:** rotate `MODAL_PARSER_SECRET` (Modal `dara-parser-secret` AUTH_TOKEN + Vercel all-envs + `.env.local`,
+must match), then `vercel deploy --prod --yes` so the app picks it up; `git push` to sync `origin/main`. NOTE: the
+structured preamble is the source of the D5 citation pollution (see the inspection entry above).
 
 ---
 
@@ -465,6 +543,18 @@ migrations applied that session** (`20260706000000_user_mfa`, `20260706010000_us
    on demand and exported (persist as a new `dara_*` table only if we want them saved/edited/tracked — decide
    at design time). Coordinate with the requirements pre-processor redesign (currently held) since both read
    the same shredded matrix.
+9. **Evaluation-Only view (NEW 2026-07-13, requested by user — HOLD, come back later).** A limited/filtered
+   view of the compliance matrix that presents requirements **by evaluation criteria only** — i.e. the Section M
+   evaluation factors and the Section L instructions that are *called out for evaluation*, without the full
+   administrative detail. Strips the admin/compliance bulk (SAM/CAGE, reps & certs, format/logistics —
+   `disposition='administrative'`, and likely most `disposition='compliance'` rows) so a proposal lead sees only
+   what actually **scores** plus the L instructions governing those factors. **Depends on** the Section L → M
+   wiring (three-capability session, item under active work) — the "governing factor" link is what lets this view
+   show each scored factor with its contributing L instructions and hide everything else. Likely a view toggle on
+   the Compliance tab (e.g. "Evaluation only" vs "Full matrix"), filtering `matrixRows` to `disposition='scored'`
+   (Section M factors) + their linked Section L instruction rows; no schema change beyond the L→M link. Reuses the
+   existing `ComplianceMatrix` rendering with a narrower row set / fewer columns. **Do not build yet** — revisit
+   after L→M wiring lands.
 
 ---
 

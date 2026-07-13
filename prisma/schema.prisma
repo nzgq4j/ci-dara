@@ -96,6 +96,17 @@ enum RequirementDisposition {
   administrative
 }
 
+// Parse-QA review state of a single shredded requirement — how much a human reviewer trusts the
+// extraction. Set automatically by the shred (flagged when provenance is unverified, the resolver
+// raised flags, a same-marker fragment was detected, or confidence is LOW; pending otherwise), then
+// advanced by a reviewer. DISTINCT from `ReviewStatus`, which is the color-team Review workflow state.
+enum RequirementReviewStatus {
+  pending // awaiting human confirmation
+  approved // reviewer confirmed the extraction is correct
+  rejected // reviewer marked the extraction wrong / not a real requirement
+  flagged // auto- or human-flagged as needing attention before it can be trusted
+}
+
 // Internal structure of a requirement, set by span extraction (mirrors the `Composition`
 // union in utils/dara/spans.ts). 'unclassified' is a real state — a pure classifier must not
 // manufacture certainty from a soft signal (see classifyComposition).
@@ -619,6 +630,17 @@ model Requirement {
   // One flag is defensible because both cases mean the same thing to a reader: don't trust it as
   // a quoted source citation.
   citationSynthesized Boolean   @default(false) @map("citation_synthesized")
+
+  // ── Parse-QA review state (set by the shred, advanced by a reviewer) ──
+  // Independent of `complianceStatus` (proposal coverage) and the color-team `ReviewStatus`.
+  reviewStatus RequirementReviewStatus @default(pending) @map("review_status")
+
+  // ── L→M governance linkage ──
+  // For a Section L instruction / SOW-PWS task: the Section M evaluation-factor markers or names this
+  // requirement contributes evidence toward (the "which instructions feed which scored factor" link the
+  // proposal team needs). Populated by the HRLR shred from the document's own factor labels; empty for
+  // Section M factors themselves and where no evaluation linkage is stated/inferable.
+  governingFactors String[] @default([]) @map("governing_factors")
 
   // ── HRLR (Hierarchical Requirement Logic Resolution) semantic bundle ──
   // The rich, mostly-display/review metadata the HRLR shred produces that has no dedicated column:

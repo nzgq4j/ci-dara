@@ -484,6 +484,30 @@ async function deleteRequirement(formData: FormData) {
   revalidatePath(`/app/solicitations/${solId}`);
 }
 
+const VALID_REVIEW_STATUSES = new Set(['pending', 'approved', 'rejected', 'flagged']);
+
+// Set a requirement's parse-QA review status (pending/approved/rejected/flagged) from the matrix
+// detail modal. Distinct from complianceStatus (proposal coverage) and the color-team ReviewStatus.
+async function setReviewStatusAction(formData: FormData): Promise<{ ok: boolean }> {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('requirementId')));
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const next = String(formData.get('reviewStatus') ?? '');
+  if (!VALID_REVIEW_STATUSES.has(next)) return { ok: false };
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    // DARA-025: scope the requirement to the gated solicitation, not just the company.
+    const owned = await tx.requirement.findFirst({ where: { id, companyId: daraUser.companyId, solicitationId: solId } });
+    if (!owned) return false;
+    await tx.requirement.update({ where: { id }, data: { reviewStatus: next as any } });
+    return true;
+  });
+  if (!ok) return { ok: false };
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
+}
+
 // ---- Compliance matrix export (CSV / Word) ----
 async function exportMatrixAction(
   formData: FormData
@@ -519,7 +543,7 @@ async function exportMatrixAction(
     metadata: { format, requirementCount: loaded.requirements.length }
   });
 
-  const cols = ['#', 'Requirement', 'Detail', 'Source', 'Type', 'Citation', 'Response Location', 'Status', 'Notes'];
+  const cols = ['#', 'Requirement', 'Detail', 'Source', 'Type', 'Citation', 'Evaluated Under', 'Response Location', 'Status', 'Review', 'Notes'];
   const rows = loaded.requirements.map((r, i) => [
     String(i + 1),
     r.name,
@@ -527,8 +551,10 @@ async function exportMatrixAction(
     SOURCE_LABEL[r.source] ?? r.source,
     DISPOSITION_LABEL[r.disposition] ?? r.disposition,
     r.citation,
+    (r.governingFactors ?? []).join(', '),
     r.proposalRef,
     COMPLIANCE_LABEL[r.complianceStatus] ?? r.complianceStatus,
+    r.reviewStatus,
     r.notes ?? ''
   ]);
 
@@ -1633,6 +1659,7 @@ export default async function SolicitationDetailPage({
       isNew: !!r.addedByAmendmentId,
       isAmended: !!r.changedByAmendmentId,
       version: r.version,
+      reviewStatus: r.reviewStatus,
       detail: {
         name: r.name,
         description: r.description ?? '',
@@ -1643,6 +1670,8 @@ export default async function SolicitationDetailPage({
         complianceStatus: r.complianceStatus,
         proposalRef: r.proposalRef,
         notes: r.notes ?? '',
+        reviewStatus: r.reviewStatus,
+        governingFactors: r.governingFactors ?? [],
         // Source provenance.
         sourceDocument: r.documentId ? docNameById.get(r.documentId.toString()) ?? '' : '',
         sectionPath: h.sectionPath ?? '',
@@ -1778,7 +1807,12 @@ export default async function SolicitationDetailPage({
         </div>
       ) : (
         <div className={`${card} p-4`}>
-          <ComplianceMatrix solId={sid} rows={matrixRows} saveAction={saveMatrixRow} />
+          <ComplianceMatrix
+            solId={sid}
+            rows={matrixRows}
+            saveAction={saveMatrixRow}
+            setReviewStatusAction={setReviewStatusAction}
+          />
         </div>
       )}
 

@@ -21,6 +21,8 @@ export type MatrixRowData = {
   isNew?: boolean;
   isAmended?: boolean;
   version?: number;
+  // Parse-QA review state — drives the "flagged" badge + the Needs-review filter.
+  reviewStatus?: string;
   // Full requirement detail for the click-to-open modal (source doc + HRLR logic). Optional so a
   // row without it still renders as plain text.
   detail?: RequirementDetailData;
@@ -47,13 +49,17 @@ const FILTERS: { key: string; label: string; match: (s: string) => boolean; chip
 export default function ComplianceMatrix({
   solId,
   rows,
-  saveAction
+  saveAction,
+  setReviewStatusAction
 }: {
   solId: string;
   rows: MatrixRowData[];
   saveAction: (fd: FormData) => Promise<{ ok: boolean }>;
+  // Optional: sets a requirement's parse-QA review status from the detail modal.
+  setReviewStatusAction?: (fd: FormData) => Promise<{ ok: boolean }>;
 }) {
   const [filter, setFilter] = useState('all');
+  const [needsReview, setNeedsReview] = useState(false);
   const [query, setQuery] = useState('');
 
   const counts = useMemo(() => {
@@ -61,11 +67,13 @@ export default function ComplianceMatrix({
     for (const f of FILTERS) if (f.key !== 'all') c[f.key] = rows.filter((r) => f.match(r.complianceStatus)).length;
     return c;
   }, [rows]);
+  const flaggedCount = useMemo(() => rows.filter((r) => r.reviewStatus === 'flagged').length, [rows]);
 
   const q = query.trim().toLowerCase();
   const visible = rows.filter((r) => {
     const f = FILTERS.find((x) => x.key === filter)!;
     if (!f.match(r.complianceStatus)) return false;
+    if (needsReview && r.reviewStatus !== 'flagged') return false;
     if (!q) return true;
     return (
       r.name.toLowerCase().includes(q) ||
@@ -96,14 +104,28 @@ export default function ComplianceMatrix({
             );
           })}
         </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t5" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search requirements…"
-            className="w-56 rounded-md border border-line bg-bg py-1.5 pl-8 pr-2.5 text-[12px] text-t2 placeholder:text-t5 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-          />
+        <div className="flex items-center gap-2">
+          {flaggedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setNeedsReview((v) => !v)}
+              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-semibold transition-colors ${
+                needsReview ? 'bg-[#FEF3C7] text-[#92400E]' : 'border border-line bg-surf text-t4 hover:text-t1'
+              }`}
+              title="Show only requirements the shred flagged for review"
+            >
+              Needs review <span className={needsReview ? 'opacity-80' : 'text-t5'}>{flaggedCount}</span>
+            </button>
+          )}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t5" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search requirements…"
+              className="w-56 rounded-md border border-line bg-bg py-1.5 pl-8 pr-2.5 text-[12px] text-t2 placeholder:text-t5 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            />
+          </div>
         </div>
       </div>
 
@@ -119,7 +141,14 @@ export default function ComplianceMatrix({
             <span>Notes</span>
           </div>
           {visible.map((r, i) => (
-            <MatrixRow key={r.id} solId={solId} row={r} index={i + 1} saveAction={saveAction} />
+            <MatrixRow
+              key={r.id}
+              solId={solId}
+              row={r}
+              index={i + 1}
+              saveAction={saveAction}
+              setReviewStatusAction={setReviewStatusAction}
+            />
           ))}
           {visible.length === 0 && (
             <div className="px-4 py-6 text-center text-[13px] text-t5">
@@ -139,12 +168,14 @@ function MatrixRow({
   solId,
   row,
   index,
-  saveAction
+  saveAction,
+  setReviewStatusAction
 }: {
   solId: string;
   row: MatrixRowData;
   index: number;
   saveAction: (fd: FormData) => Promise<{ ok: boolean }>;
+  setReviewStatusAction?: (fd: FormData) => Promise<{ ok: boolean }>;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(row.complianceStatus);
@@ -172,6 +203,18 @@ function MatrixRow({
     });
   };
 
+  const setReview = (reviewStatus: string) => {
+    if (!setReviewStatusAction) return;
+    const fd = new FormData();
+    fd.set('solId', solId);
+    fd.set('requirementId', row.id);
+    fd.set('reviewStatus', reviewStatus);
+    startTransition(async () => {
+      const res = await setReviewStatusAction(fd);
+      if (res?.ok) router.refresh();
+    });
+  };
+
   return (
     <div
       className={`grid grid-cols-[36px_minmax(0,1.4fr)_96px_minmax(0,0.9fr)_130px_minmax(0,1fr)] items-start gap-3 border-t border-line px-4 py-2.5 ${meta.row}`}
@@ -180,13 +223,19 @@ function MatrixRow({
 
       <div className="min-w-0">
         {row.detail ? (
-          <RequirementDetail detail={row.detail}>
+          <RequirementDetail
+            detail={row.detail}
+            onSetReviewStatus={setReviewStatusAction ? setReview : undefined}
+          >
             <span className="text-[12.5px] leading-snug text-t2 hover:underline">{row.name}</span>
           </RequirementDetail>
         ) : (
           <div className="text-[12.5px] leading-snug text-t2">{row.name}</div>
         )}
         <div className="mt-0.5 flex items-center gap-1.5">
+          {row.reviewStatus === 'flagged' && (
+            <span className="rounded bg-[#FEF3C7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#92400E]">flagged</span>
+          )}
           {row.isNew && (
             <span className="rounded bg-[#DCFCE7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#166534]">new</span>
           )}

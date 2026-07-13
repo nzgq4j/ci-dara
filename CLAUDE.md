@@ -44,7 +44,35 @@ modify `modal/app.py`** unless a confirmed bug is found. See memory `modal-parse
 - **Deploy order:** `pnpm prisma migrate deploy` (owner) → apply RLS SQL → `vercel deploy --prod --yes` →
   `git push`. GitHub→Vercel auto-deploy is broken; deploy manually. Commit/push/deploy only when asked.
 
+## Verified data-model facts (compliance matrix / HRLR)
+
+Pasted prompts sometimes assert "confirmed facts" that are wrong — **always verify against the schema/DB
+before building on them.** Ground truth as of 2026-07-13 (`dara_requirements`):
+
+- **`source` enum** = `instruction` · `evaluation_factor` · `sow_pws` · `far_clause` · `other`.
+  **Section L = `source='instruction'`**, **Section M = `source='evaluation_factor'`**. ("Section L
+  instruction"/"M factor" are display labels via `SOURCE_LABEL`, NOT DB values.)
+- **`disposition` enum** = `scored` · `compliance` · `administrative`. `complianceStatus` enum =
+  `not_assessed` · `compliant` · `partial` · `non_compliant` · `not_applicable`.
+- **`Requirement.reviewStatus`** (enum `RequirementReviewStatus` = `pending`·`approved`·`rejected`·`flagged`,
+  added 2026-07-13) is the per-requirement **parse-QA** status, set by the shred (`flagged` when
+  unverified/flagged/fragmented/LOW-confidence) and advanced by a reviewer in the matrix detail modal. It is
+  DISTINCT from `complianceStatus` (proposal coverage) and from the color-team **`Review`** table's
+  `ReviewStatus` enum (`draft`/`in_progress`/`complete`, a workflow status). Also new:
+  `Requirement.governingFactors` (`text[]`) = Section M factor markers each Section L instruction / SOW task is
+  evaluated under (L→M link, populated by the shred).
+- **`hrlr` JSONB** (flattened at persist time in `requirements.ts`) carries: `verbatimVerified` (bool),
+  `confidence` (HIGH/MEDIUM/LOW), `flags` (string[]), `state`, `syntheticPath`, `sectionPath`,
+  `normalizedMeaning`, `satisfaction`, `applicability`, and **`evalScope`**. `evalScope` is a STRUCTURAL enum
+  (`SELF`/`EACH_CHILD`/`PARENT_COLLECTIVE`/`AGGREGATE_SET`/`UNRESOLVED`) — it does NOT cross-reference other
+  requirements/Section M.
+- All requirement ids and `companyId` are **BigInt**; `createdBy`/`uploadedBy` are `@db.Uuid`.
+- D5 FIXED (2026-07-13): the Modal `candidate_id` leak into `citation` (`cand-sent-para-p1-1`) is closed —
+  `hrlr/prompt.ts` now tells the model those bracket handles are internal IDs, and `requirements.ts` rejects
+  any `cand-`/`trigger-`/`t\d+` marker at persist (`PARSER_HANDLE`). Existing polluted rows clear on regenerate.
+
 ## Do not modify
 
 `modal/app.py`; the HRLR core `utils/dara/hrlr/{types,parse,resolve,run}.ts`; the `hrlr` JSONB output
-format on `dara_requirements`.
+format on `dara_requirements`. (Individual sessions may explicitly lift one of these — e.g. a Modal PDF-cleaning
+task authorizes editing `modal/app.py`. Follow the current session's stated scope.)
