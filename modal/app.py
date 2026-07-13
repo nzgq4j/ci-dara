@@ -10,15 +10,20 @@ import re
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")
     .pip_install([
         "pdfplumber==0.11.4",
         "python-docx==1.1.2",
         "spacy==3.8.14",
+        "sentence-transformers==2.7.0",
+        "lxml",
         "httpx",
         "fastapi[standard]",
     ])
     .run_commands(
-        "python -m spacy download en_core_web_md"
+        "python -m spacy download en_core_web_md",
+        # Bake the embedding model into the image so dedup doesn't download it on a cold start.
+        "python -c \"from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')\"",
     )
 )
 
@@ -69,6 +74,53 @@ CONDITION_TYPE_MAP = {
 }
 
 _flag_counter = 0
+
+# Modal-class classification by verb (was hardcoded MANDATORY). PROHIBITION = negated obligation,
+# PERMISSION = discretionary, MANDATORY = binding obligation. Order matters (check negations first).
+def classify_modal_class(sentence_text: str, modal_verb: str) -> str:
+    s = (sentence_text or "").lower()
+    v = (modal_verb or "").lower()
+    if "shall not" in s or "must not" in s or "may not" in s or "will not" in s or v in ("shall not", "must not", "may not"):
+        return "PROHIBITION"
+    if v in ("may", "can", "should") or "should" in s and "shall" not in s:
+        return "PERMISSION" if v in ("may", "can") else "PREDICTIVE"
+    if v in ("shall", "must", "will", "is required to", "are required to", "is to be", "are to be"):
+        return "MANDATORY"
+    return "MANDATORY"
+
+
+def deduplicate_candidates(candidates):
+    """Merge near-duplicate obligation sentences (cosine >= 0.92 on MiniLM embeddings AND same modal
+    verb). The surviving candidate records the merged ids in `duplicate_source_ids`. Deterministic for a
+    fixed candidate order + model version."""
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+
+    if len(candidates) <= 1:
+        for c in candidates:
+            c.setdefault("duplicate_source_ids", [])
+        return candidates
+
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    texts = [c.get("source_text", "") for c in candidates]
+    embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+
+    merged = set()
+    result = []
+    for i, ci in enumerate(candidates):
+        if i in merged:
+            continue
+        ci["duplicate_source_ids"] = []
+        for j in range(i + 1, len(candidates)):
+            if j in merged:
+                continue
+            sim = float(np.dot(embeddings[i], embeddings[j]))
+            if sim >= 0.92 and ci.get("modal_verb") == candidates[j].get("modal_verb"):
+                ci["duplicate_source_ids"].append(candidates[j]["candidate_id"])
+                merged.add(j)
+        merged.add(i)
+        result.append(ci)
+    return result
 
 # ── Text cleaning ─────────────────────────────────────────────────────────────
 
@@ -169,7 +221,7 @@ def _extract_conditional_trigger(text: str, sentence_id: str) -> dict | None:
     return None
 
 
-def _extract_modal_candidate(sent, sent_id: str, para_id: str, section_id) -> dict:
+def _extract_modal_candidate(sent, sent_id: str, para_id: str, section_id, para_text: str = "") -> dict:
     subject      = None
     verb_phrase  = None
     obj          = None
@@ -207,7 +259,7 @@ def _extract_modal_candidate(sent, sent_id: str, para_id: str, section_id) -> di
         "section_id":            section_id,
         "source_text":           sent.text.strip(),
         "modal_verb":            final_modal,
-        "modal_class":           "MANDATORY",
+        "modal_class":           classify_modal_class(sent.text, final_modal),
         "subject":               subject,
         "subject_inferred":      subject_inferred,
         "subject_confidence":    "LOW" if subject_inferred else "HIGH",
@@ -216,7 +268,8 @@ def _extract_modal_candidate(sent, sent_id: str, para_id: str, section_id) -> di
         "is_passive":            is_passive,
         "svo_confidence":        svo_confidence,
         "section_context":       None,
-        "parent_paragraph_text": None,
+        # The enclosing paragraph text — used downstream to resolve passive-voice subjects.
+        "parent_paragraph_text": ((para_text or "").strip()[:500] or None),
     }
 
 
@@ -278,7 +331,7 @@ def _process_sentences(nlp, text: str, para_id: str, section_id):
 
         if has_modal:
             modal_candidates.append(
-                _extract_modal_candidate(sent, sent_id, para_id, section_id)
+                _extract_modal_candidate(sent, sent_id, para_id, section_id, text)
             )
 
         if is_cond:
@@ -424,6 +477,8 @@ def _parse_pdf(doc_bytes: bytes, document_id: str) -> dict:
         f["gate"] == "structure_detection" for f in quality_gate_failures
     )
 
+    deduplicated_candidates = deduplicate_candidates(modal_candidates)
+
     return {
         "page_count":            page_count,
         "word_count":            total_words,
@@ -435,6 +490,7 @@ def _parse_pdf(doc_bytes: bytes, document_id: str) -> dict:
         "paragraphs":            paragraphs,
         "sentences":             sentences,
         "modal_candidates":      modal_candidates,
+        "deduplicated_candidates": deduplicated_candidates,
         "conditional_triggers":  conditional_triggers,
         "named_entities":        named_entities,
         "ibr_flags":             ibr_flags,
@@ -560,6 +616,8 @@ def _parse_docx(doc_bytes: bytes, document_id: str) -> dict:
 
     total_words = sum(len(p["text"].split()) for p in paragraphs)
 
+    deduplicated_candidates = deduplicate_candidates(modal_candidates)
+
     return {
         "page_count":            None,
         "word_count":            total_words,
@@ -571,6 +629,7 @@ def _parse_docx(doc_bytes: bytes, document_id: str) -> dict:
         "paragraphs":            paragraphs,
         "sentences":             sentences,
         "modal_candidates":      modal_candidates,
+        "deduplicated_candidates": deduplicated_candidates,
         "conditional_triggers":  conditional_triggers,
         "named_entities":        named_entities,
         "ibr_flags":             ibr_flags,
@@ -579,3 +638,132 @@ def _parse_docx(doc_bytes: bytes, document_id: str) -> dict:
         "ibr_flag_count":        len(ibr_flags),
         "image_page_count":      0,
     }
+
+
+# ── Clause library sync ───────────────────────────────────────────────────────
+
+# Public GSA acquisition-regulation repositories (DITA XML). Cloned shallow; the plain text + FAC
+# effective dates are returned for upsert into dara_clause_library / dara_clause_versions.
+_GSA_REPOS = [
+    ("FAR",       "https://github.com/GSA/GSA-Acquisition-FAR"),
+    ("DFARS",     "https://github.com/GSA/GSA-Acquisition-DFARS"),
+    ("HHSAR",     "https://github.com/GSA/GSA-Acquisition-HHSAR"),
+    ("AGAR",      "https://github.com/GSA/GSA-Acquisition-AGAR"),
+    ("GSAM",      "https://github.com/GSA/GSA-Acquisition-GSAM"),
+    ("DOSAR",     "https://github.com/GSA/GSA-Acquisition-DOSAR"),
+    ("AIDAR",     "https://github.com/GSA/GSA-Acquisition-AIDAR"),
+    ("VAAR",      "https://github.com/GSA/GSA-Acquisition-VAAR"),
+    ("DEAR",      "https://github.com/GSA/GSA-Acquisition-DEAR"),
+    ("DTAR",      "https://github.com/GSA/GSA-Acquisition-DTAR"),
+    ("TAR",       "https://github.com/GSA/GSA-Acquisition-TAR"),
+    ("CAR",       "https://github.com/GSA/GSA-Acquisition-CAR"),
+    ("DIAR",      "https://github.com/GSA/GSA-Acquisition-DIAR"),
+    ("EPAAR",     "https://github.com/GSA/GSA-Acquisition-EPAAR"),
+    ("FEHBAR",    "https://github.com/GSA/GSA-Acquisition-FEHBAR"),
+    ("NFS",       "https://github.com/GSA/GSA-Acquisition-NFS"),
+    ("IAAR",      "https://github.com/GSA/GSA-Acquisition-IAAR"),
+    ("NRCAR",     "https://github.com/GSA/GSA-Acquisition-NRCAR"),
+    ("LIFAR",     "https://github.com/GSA/GSA-Acquisition-LIFAR"),
+    ("HUDAR",     "https://github.com/GSA/GSA-Acquisition-HUDAR"),
+    ("JAR",       "https://github.com/GSA/GSA-Acquisition-JAR"),
+    ("DOLAR",     "https://github.com/GSA/GSA-Acquisition-DOLAR"),
+    ("HSAR",      "https://github.com/GSA/GSA-Acquisition-HSAR"),
+    ("EDAR",      "https://github.com/GSA/GSA-Acquisition-EDAR"),
+    ("AFARS",     "https://github.com/GSA/GSA-Acquisition-AFARS"),
+    ("NMCARS",    "https://github.com/GSA/GSA-Acquisition-NMCARS"),
+    ("DAFFARS",   "https://github.com/GSA/GSA-Acquisition-DAFFARS"),
+    ("DLAD",      "https://github.com/GSA/GSA-Acquisition-DLAD"),
+    ("TRANSFARS", "https://github.com/GSA/GSA-Acquisition-TRANSFARS"),
+    ("SOFARS",    "https://github.com/GSA/GSA-Acquisition-SOFARS"),
+    ("DARS",      "https://github.com/GSA/GSA-Acquisition-DARS"),
+    ("CASBAR",    "https://github.com/GSA/GSA-Acquisition-CASBAR"),
+]
+
+_FAC_DATE_RE = re.compile(r'FAC\s+\d{4}-\d{2}\s+(\w+\s+\d{1,2},\s+\d{4})')
+
+
+@app.function(
+    cpu=2,
+    memory=4096,
+    timeout=1800,
+    secrets=[modal.Secret.from_name("dara-parser-secret")],
+)
+@modal.fastapi_endpoint(method="POST")
+async def sync_clause_library(
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Clone every GSA acquisition-regulation repo, parse the DITA clause files, and return structured
+    clause data (plain text + effective-dated versions) for upsert into the DARA clause library."""
+    import subprocess, tempfile, os, hashlib
+    from lxml import etree
+
+    def extract_plain_text(dita_path):
+        try:
+            tree = etree.parse(dita_path)
+            return " ".join(tree.getroot().itertext()).strip()
+        except Exception:
+            return None
+
+    def extract_effective_dates(dita_path):
+        dates = []
+        try:
+            tree = etree.parse(dita_path)
+            for elem in tree.getroot().iter():
+                rev = elem.get("rev", "")
+                if not rev:
+                    continue
+                m = _FAC_DATE_RE.search(rev)
+                if m:
+                    parts = rev.split(" ")
+                    fac = (parts[0] + " " + parts[1]) if len(parts) >= 2 else None
+                    dates.append((m.group(1), fac))
+        except Exception:
+            pass
+        return sorted(set(dates))
+
+    all_clauses = []
+    for citation_type, repo_url in _GSA_REPOS:
+        repo_name = repo_url.split("/")[-1]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                subprocess.run(
+                    ["git", "clone", "--depth=1", repo_url, tmpdir],
+                    check=True, capture_output=True, timeout=180,
+                )
+            except Exception as e:
+                print(f"Failed to clone {repo_url}: {e}")
+                continue
+
+            for root_dir, _dirs, files in os.walk(tmpdir):
+                for fname in files:
+                    if not fname.endswith(".dita"):
+                        continue
+                    fpath = os.path.join(root_dir, fname)
+                    rel_path = os.path.relpath(fpath, tmpdir)
+                    plain_text = extract_plain_text(fpath)
+                    if not plain_text or len(plain_text) < 50:
+                        continue
+                    content_hash = hashlib.sha256(plain_text.encode("utf-8")).hexdigest()
+                    base = fname[:-len(".dita")]
+                    identifier = f"{citation_type} {base}"
+                    dates = extract_effective_dates(fpath)
+                    if not dates:
+                        dates = [("January 1, 1984", None)]
+                    all_clauses.append({
+                        "citation_type": citation_type,
+                        "identifier":    identifier,
+                        "github_repo":   f"GSA/{repo_name}",
+                        "github_path":   rel_path,
+                        "versions": [
+                            {
+                                "effective_date": d[0],
+                                "fac_number":     d[1],
+                                "content_hash":   content_hash,
+                                "plain_text":     plain_text,
+                            }
+                            for d in dates
+                        ],
+                    })
+
+    return {"clauses": all_clauses, "total": len(all_clauses)}

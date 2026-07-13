@@ -26,6 +26,9 @@ export interface ParseResult {
   paragraphs: Paragraph[];
   sentences: Sentence[];
   modal_candidates: ModalCandidate[];
+  // Present only on parse results produced after the Modal dedup change (2026-07-13). When present the
+  // extraction pipeline reads it in preference to `modal_candidates`; older rows fall back.
+  deduplicated_candidates?: ModalCandidate[];
   conditional_triggers: ConditionalTrigger[];
   named_entities: NamedEntity[];
   ibr_flags: IbrFlag[];
@@ -124,6 +127,9 @@ export interface ModalCandidate {
   svo_confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   section_context: string | null;
   parent_paragraph_text: string | null;
+  // Set by the Modal dedup pass: candidate_ids of near-duplicates merged into this one. Absent on
+  // pre-dedup parse results.
+  duplicate_source_ids?: string[];
 }
 
 export interface ConditionalTrigger {

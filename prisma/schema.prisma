@@ -566,6 +566,45 @@ model DaraParseResult {
   @@map("dara_parse_results")
 }
 
+// Local regulatory clause library — the deterministic source of truth for IbR (incorporation-by-
+// reference) traversal (Pass 3). Populated ONLY by the admin sync job from the public GSA DITA
+// GitHub repositories (FAR/DFARS/agency supplements); never live-fetched from government sites (live
+// retrieval would break shred idempotency). GLOBAL/shared reference data — no company_id, no tenant
+// scoping; RLS grants dara_app read-only and dara_admin full (see prisma/security clause_library RLS).
+model DaraClauseLibrary {
+  id           BigInt              @id @default(autoincrement())
+  citationType String              @map("citation_type")
+  identifier   String
+  title        String?
+  githubRepo   String              @map("github_repo")
+  githubPath   String              @map("github_path")
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  versions     DaraClauseVersion[]
+
+  @@unique([citationType, identifier])
+  @@index([citationType, identifier], map: "ix_clause_lib_type")
+  @@map("dara_clause_library")
+}
+
+// A single effective-dated version of a clause's plain text. Version resolution picks the row with the
+// greatest effective_date <= the solicitation's as-of date (see ibr-traversal.ts).
+model DaraClauseVersion {
+  id            BigInt            @id @default(autoincrement())
+  clauseId      BigInt            @map("clause_id")
+  effectiveDate DateTime          @map("effective_date") @db.Date
+  facNumber     String?           @map("fac_number")
+  contentHash   String            @map("content_hash")
+  plainText     String            @map("plain_text")
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  clause        DaraClauseLibrary @relation(fields: [clauseId], references: [id], onDelete: Cascade)
+
+  @@unique([clauseId, effectiveDate])
+  @@index([effectiveDate], map: "ix_clause_ver_date")
+  @@index([clauseId], map: "ix_clause_ver_clause")
+  @@map("dara_clause_versions")
+}
+
 // A single discrete requirement shredded from the solicitation — the row unit of
 // the compliance matrix. Evolved from the former Criterion model: `source` records
 // where it came from, `isScored` marks the Section M factors a review scores, and

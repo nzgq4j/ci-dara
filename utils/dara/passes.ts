@@ -27,6 +27,7 @@ import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { shredRequirements } from '@/utils/dara/requirements';
+import { fetchClauseSync, upsertClauses } from '@/utils/dara/extraction/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
 import { parseAndPersist } from '@/utils/dara/modal-parser';
@@ -224,6 +225,21 @@ export async function getShredStatus(
 /** Enqueue an async structural re-parse (Modal) of a single solicitation document. */
 export function enqueueReparse(solDocId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
   return enqueueUniqueJob(companyId, 'reparse', 'solDocId', solDocId);
+}
+
+/**
+ * Enqueue the global clause-library sync (admin). Modal clones the GSA DITA repos; the worker upserts
+ * the result into dara_clause_library / dara_clause_versions. No entity id — deduped on the `kind`.
+ */
+export async function enqueueClauseSync(companyId: bigint): Promise<{ ok: boolean; error?: string }> {
+  return withTenant(companyId, async (tx) => {
+    const active = await tx.jobQueue.findMany({ where: { status: { in: ['pending', 'running'] } } });
+    if (active.some((j) => (j.payload as { kind?: string } | null)?.kind === 'sync_clauses')) return { ok: true };
+    await tx.jobQueue.create({
+      data: { companyId, jobType: 'evaluate', payload: { kind: 'sync_clauses' }, status: 'pending' }
+    });
+    return { ok: true };
+  });
 }
 
 /** True when a re-parse is queued/running for this document. */
@@ -806,6 +822,12 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.kind === 'reparse' && payload.solDocId) {
         // Structural re-parse (Modal) — one-shot; enqueues its own follow-on shred.
         await runReparse(BigInt(payload.solDocId), companyId);
+      } else if (payload.kind === 'sync_clauses') {
+        // Global clause-library sync — Modal clones the GSA repos + parses DITA; we upsert into the
+        // shared library (prismaAdmin). One-shot; throw surfaces a hard failure through the retry path.
+        const sync = await fetchClauseSync();
+        if ('error' in sync) throw new Error(`Clause sync failed: ${sync.error}`);
+        await upsertClauses(sync.clauses);
       } else if (payload.reviewId) {
         ({ done } = await runReviewPasses(BigInt(payload.reviewId), companyId, deadlineMs));
       }

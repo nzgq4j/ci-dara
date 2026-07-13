@@ -109,15 +109,18 @@ export async function complete(
   user: string,
   model: string,
   apiKey: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  // Optional sampling temperature. Omit to keep each provider's prior default (Anthropic/OpenAI
+  // provider default, Google 0.3). Deterministic paths (the extraction classify pass) pass 0.
+  temperature?: number
 ): Promise<AIResult> {
   if (!apiKey) {
     throw new Error(`No API key configured for provider "${provider}".`);
   }
   const capped = Math.max(256, Math.min(maxTokens, providerMaxOutput(provider)));
-  if (provider === 'openai') return openaiComplete(system, user, model, apiKey, capped);
-  if (provider === 'google') return googleComplete(system, user, model, apiKey, capped);
-  return anthropicComplete(system, user, model, apiKey, capped);
+  if (provider === 'openai') return openaiComplete(system, user, model, apiKey, capped, temperature);
+  if (provider === 'google') return googleComplete(system, user, model, apiKey, capped, temperature);
+  return anthropicComplete(system, user, model, apiKey, capped, temperature);
 }
 
 async function anthropicComplete(
@@ -125,7 +128,8 @@ async function anthropicComplete(
   user: string,
   model: string,
   apiKey: string,
-  maxTokens: number
+  maxTokens: number,
+  temperature?: number
 ): Promise<AIResult> {
   const res = await aiFetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -137,6 +141,7 @@ async function anthropicComplete(
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
+      ...(temperature === undefined ? {} : { temperature }),
       system,
       messages: [{ role: 'user', content: user }]
     })
@@ -158,7 +163,8 @@ async function openaiComplete(
   user: string,
   model: string,
   apiKey: string,
-  maxTokens: number
+  maxTokens: number,
+  temperature?: number
 ): Promise<AIResult> {
   const res = await aiFetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -169,6 +175,7 @@ async function openaiComplete(
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
+      ...(temperature === undefined ? {} : { temperature }),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user }
@@ -192,7 +199,8 @@ async function googleComplete(
   user: string,
   model: string,
   apiKey: string,
-  maxTokens: number
+  maxTokens: number,
+  temperature?: number
 ): Promise<AIResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model
@@ -204,7 +212,7 @@ async function googleComplete(
     body: JSON.stringify({
       system_instruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: maxTokens }
+      generationConfig: { temperature: temperature ?? 0.3, maxOutputTokens: maxTokens }
     })
   });
 

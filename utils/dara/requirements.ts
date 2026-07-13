@@ -22,6 +22,13 @@ import { parseHrlrNodes, buildSourceIndex, locateSpan, stripFences } from '@/uti
 import { resolveGraph } from '@/utils/dara/hrlr/resolve';
 import type { RequirementNode } from '@/utils/dara/hrlr/types';
 import { asParseResult, joinParagraphs, type ParseResult } from '@/utils/dara/parse-result';
+import { buildCandidates } from '@/utils/dara/extraction/candidate-builder';
+import { classifyCandidates } from '@/utils/dara/extraction/classify-prompt';
+import { annotateConditionals } from '@/utils/dara/extraction/conditional-annotator';
+import { verifyAgainstParseResult } from '@/utils/dara/extraction/verifier';
+import { traverseIbr } from '@/utils/dara/extraction/ibr-traversal';
+import { verifiedToExtracted, persistRequirements } from '@/utils/dara/extraction/persist';
+import type { ExtractedRequirement } from '@/utils/dara/extraction/types';
 
 // Output budget for the whole graph in one generation. Anthropic caps far above this; a dense RFP
 // of ~150 requirement nodes is well under.
@@ -128,12 +135,122 @@ function compositionFor(state: RequirementNode['state']): 'atomic' | 'compound' 
 }
 
 /**
- * HRLR-shred a solicitation's RFP documents into a requirement graph via one whole-document AI call.
- * `deadlineMs`/`jobId` are accepted for the worker's call signature; the shred is one-shot and
- * reports `exhausted: true`. Runs only into an EMPTY matrix — if the solicitation already has
- * (non-removed) requirements it no-ops, so user edits and prior graphs are never clobbered.
+ * Shred a solicitation's RFP documents into the compliance matrix.
+ *
+ * Dispatch: when EVERY rfp document has a current `dara_parse_results` row, run the deterministic
+ * three-pass pipeline (Pass 1 obligation extraction from the parse output → temperature=0 LLM classify
+ * → Pass 2 conditional annotation → verbatim verification → Pass 3 IbR traversal against the clause
+ * library). When no parse results exist, fall back to the legacy whole-document HRLR shred unchanged.
+ * (Docs missing a parse row while others have one are skipped with a warning — re-parse them.)
+ *
+ * One-shot (`exhausted:true`). Runs only into an EMPTY matrix — no-ops if the solicitation already has
+ * (non-removed) requirements, so user edits / prior graphs are never clobbered.
  */
 export async function shredRequirements(
+  solicitationId: bigint,
+  companyId: bigint,
+  deadlineMs = Infinity,
+  jobId?: bigint
+): Promise<ShredSummary> {
+  const loaded = await withTenant(companyId, async (tx) => {
+    const solicitation = await tx.solicitation.findFirst({
+      where: { id: solicitationId, companyId },
+      include: { solDocs: true }
+    });
+    if (!solicitation) return null;
+    const company = await tx.company.findUnique({ where: { id: companyId } });
+    const existingCount = await tx.requirement.count({ where: { solicitationId, companyId, removedAt: null } });
+    return { solicitation, company, existingCount };
+  });
+  if (!loaded?.solicitation) return { ok: false, count: 0, error: 'Solicitation not found.' };
+  if (!loaded.company) return { ok: false, count: 0, error: 'Company not found.' };
+  // No-clobber guard: a populated matrix means a re-trigger; regeneration must clear first.
+  if (loaded.existingCount > 0) return { ok: true, count: 0, exhausted: true };
+
+  const rfpDocRows = (loaded.solicitation.solDocs as DocRow[]).filter(
+    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete'
+  );
+  if (rfpDocRows.length === 0) {
+    return { ok: false, count: 0, error: 'No extracted RFP text. Upload the solicitation (RFP) documents on the Documents tab and wait for extraction.' };
+  }
+
+  // Load the current parse result for each rfp doc.
+  const parseByDoc = new Map<string, ParseResult>();
+  const rfpDocIds = rfpDocRows.map((d) => d.id);
+  try {
+    const parseRows = await withTenant(companyId, (tx) =>
+      tx.daraParseResult.findMany({
+        where: { solDocId: { in: rfpDocIds }, companyId, supersededAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { solDocId: true, result: true }
+      })
+    );
+    for (const row of parseRows) {
+      const key = row.solDocId.toString();
+      if (parseByDoc.has(key)) continue;
+      const pr = asParseResult(row.result);
+      if (pr) parseByDoc.set(key, pr);
+    }
+  } catch (e) {
+    console.warn('[shred] parse-result lookup failed; using legacy HRLR shred', e);
+  }
+
+  // No structured parse output anywhere → legacy path unchanged.
+  if (parseByDoc.size === 0) return legacyHrlrShred(solicitationId, companyId, deadlineMs, jobId);
+
+  // Resolve the AI config for the temperature=0 classify pass.
+  const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
+  const { provider, model, apiKey } = applyCapabilityOverride(
+    resolveCompanyAI(loaded.company, platform),
+    'shred',
+    loaded.company,
+    platform,
+    await getCapabilityOverrides()
+  );
+  if (!apiKey) return { ok: false, count: 0, error: `No API key configured for provider "${provider}".` };
+
+  const ctx = { provider, model, apiKey, companyId };
+  const asOf = loaded.solicitation.createdAt ?? new Date();
+  const allRows: ExtractedRequirement[] = [];
+  const skipped: string[] = [];
+
+  for (const doc of rfpDocRows) {
+    const pr = parseByDoc.get(doc.id.toString());
+    if (!pr) {
+      skipped.push(doc.originalFilename);
+      continue;
+    }
+    // Pass 1 → classify → Pass 2 → verify.
+    const candidates = buildCandidates(pr);
+    const classified = await classifyCandidates(candidates, ctx);
+    const annotated = annotateConditionals(classified, pr);
+    const verified = verifyAgainstParseResult(annotated, pr);
+    const base = verified
+      .filter((v) => v.classification.isRequirement)
+      .map((v) => ({ ...verifiedToExtracted(v), documentId: doc.id }));
+    // Pass 3 — IbR traversal against the clause library (deterministic).
+    const ibr = (await traverseIbr(pr, asOf)).map((r) => ({ ...r, documentId: doc.id }));
+    allRows.push(...base, ...ibr);
+  }
+
+  if (skipped.length) {
+    console.warn(`[shred] ${skipped.length} rfp doc(s) skipped (no parse result; re-parse to include): ${skipped.join(', ')}`);
+  }
+
+  if (allRows.length === 0) return { ok: true, count: 0, exhausted: true };
+
+  const { count } = await persistRequirements(allRows, solicitationId, companyId);
+  return { ok: true, count, exhausted: true };
+}
+
+/**
+ * LEGACY HRLR shred — one whole-document AI call that reconstructs a requirement graph. Retained as the
+ * fallback for documents with NO structured `dara_parse_results` row (the multipass pipeline needs the
+ * Modal parse output). Reached via `shredRequirements` below when no parse results exist.
+ * `deadlineMs`/`jobId` are accepted for the worker's call signature; one-shot, reports `exhausted:true`.
+ * Runs only into an EMPTY matrix — no-ops if the solicitation already has (non-removed) requirements.
+ */
+async function legacyHrlrShred(
   solicitationId: bigint,
   companyId: bigint,
   _deadlineMs = Infinity,
