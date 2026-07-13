@@ -16,13 +16,15 @@ Start-here doc. **Everything below is committed, pushed, + live on production** 
 
 ---
 
-## 0 (2026-07-13, LATEST). Increment-1 + L→M wiring — BUILT + verified, DEPLOY PENDING
+## 0 (2026-07-13, LATEST). Increment-1 + L→M wiring — BUILT + verified + DEPLOYED
 
-The build inspected-and-deferred below was completed. **Code done + verified (`tsc`/`pnpm build` clean; 16/16
-deterministic unit checks); NOT deployed** (one additive migration pending). `MODAL_PARSER_SECRET` is **rotated**
-(done — do not re-flag) and the §0 (2026-07-13) Modal commit is **pushed** (`origin/main == 57c4e8d`). Full log:
-`BUILD_STATUS.md` §-8. Memory: `increment1-lm-wiring.md`. Scope the user chose: fix Section M extraction AND
-build the L→M link, computed in the shred.
+The build inspected-and-deferred below was completed and shipped. **Code done + verified (`tsc`/`pnpm build`
+clean; 16/16 deterministic unit checks) + DEPLOYED** — commit `4796114`, migration `20260713140000` applied,
+`vercel deploy --prod` (`dpl_EBECSnw7uSLAdCnoqU694UeeKrNA`, READY, production), `origin/main == 4796114`.
+`MODAL_PARSER_SECRET` is **rotated** (done — do not re-flag). Full log: `BUILD_STATUS.md` §-8. Memory:
+`increment1-lm-wiring.md`. Scope the user chose: fix Section M extraction AND build the L→M link, in the shred.
+**Untested: the live dense-RFP shred** (Section M classification + `governing_factors`) — regenerate a sol with
+an empty matrix to confirm; existing matrices don't backfill until regenerated.
 
 - **Fix 1** `requirements.ts` `cleanSourceText()` (NFKC + strip soft-hyphen/zero-width/BOM, no single-letter
   regex) on source text before extraction+verification → fixes the 99/278 `verbatimVerified=false` class,

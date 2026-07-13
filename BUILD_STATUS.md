@@ -24,11 +24,15 @@ _Last updated: 2026-07-11_
 
 ---
 
-## -8. Latest session (2026-07-13, latest) — Increment-1 + L→M wiring: BUILT + verified (deploy pending)
+## -8. Latest session (2026-07-13, latest) — Increment-1 + L→M wiring: BUILT + verified + DEPLOYED
 
 The build deferred in §-7 was completed this session. Scope confirmed with the user: **fix Section M
 extraction AND build the L→M link, computed in the shred.** `MODAL_PARSER_SECRET` is **rotated** (user
-confirmed) and §-6's Modal commit is **pushed** (`origin/main == 57c4e8d`). Memory: `increment1-lm-wiring.md`.
+confirmed) and §-6's Modal commit is **pushed**. **✅ DEPLOYED** — commit **`4796114`**; migration
+`20260713140000` applied (owner) → `vercel deploy --prod` (`dpl_EBECSnw7uSLAdCnoqU694UeeKrNA`, READY,
+production) → pushed (`origin/main == 4796114`). Memory: `increment1-lm-wiring.md`. **Still unrun: the live
+dense-RFP shred** (Section M classification + `governing_factors`) — the real test — needs a regenerate on a
+sol with an empty matrix.
 
 **Verified:** `tsc --noEmit` + `pnpm build` both clean; a standalone deterministic test (no API) exercised the
 real `hrlr/parse.ts` verification path + the new helpers — **16/16 checks green** (dirty ligature/soft-hyphen/
