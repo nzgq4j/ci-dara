@@ -41,6 +41,10 @@ import MatrixExport from '@/components/dara/MatrixExport';
 import ReviewPassPanel from '@/components/dara/ReviewPassPanel';
 import DirectReviewPanel from '@/components/dara/DirectReviewPanel';
 import DocUploader from '@/components/dara/DocUploader';
+import SolDocRoleUploader from '@/components/dara/SolDocRoleUploader';
+import DocRoleSelect from '@/components/dara/DocRoleSelect';
+import { isValidRole, isExtractedRole, roleBadge } from '@/utils/dara/document-roles';
+import { classifyDocumentRole } from '@/utils/dara/classify-document';
 import AnnotatedExportButton from '@/components/dara/AnnotatedExportButton';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
@@ -767,32 +771,63 @@ async function uploadSolDoc(formData: FormData) {
           })
         ))?.id ?? null
       : null;
+  // A file may carry an explicit manual role ("Auto-detect" sends none); proposal/amendment uploads
+  // carry none. Text is always extracted (also needed to classify); the role then governs whether
+  // the doc enters the requirements pipeline.
+  const rawRole = String(formData.get('role') ?? '');
+  const manualRole = isValidRole(rawRole) ? rawRole : null;
   // Upload + extraction (Storage + CPU) outside any transaction.
   const doc = await uploadAndExtract(file, daraUser.companyId, 'sol', Date.now());
+
+  // Content-based classification for solicitation (rfp) docs left on Auto-detect. Fail-open.
+  let documentRole: string | null = manualRole;
+  let documentRoleSuggested = false;
+  if (docType === 'rfp' && !manualRole) {
+    const guess = await classifyDocumentRole({
+      text: doc.plainText,
+      filename: doc.originalFilename,
+      company: daraUser.company,
+      companyId: daraUser.companyId
+    });
+    if (guess) {
+      documentRole = guess;
+      documentRoleSuggested = true;
+    }
+  }
+
+  // Stored-only role → keep the file + its text but hold it out of the pipeline (status 'skipped'
+  // → excluded from the shred; no Modal structural parse).
+  const storedOnly = documentRole != null && !isExtractedRole(documentRole);
+  const extractionStatus = storedOnly ? 'skipped' : doc.extractionStatus;
+
   const created = await withTenant(daraUser.companyId, (tx) =>
     tx.solDocument.create({
       data: {
         companyId: daraUser.companyId,
         solicitationId: solId,
         docType,
+        documentRole: documentRole as any,
+        documentRoleSuggested,
         amendmentId,
         originalFilename: doc.originalFilename,
         storedFilename: doc.storedFilename,
         fileSize: doc.fileSize,
-        extractionStatus: doc.extractionStatus,
+        extractionStatus,
         extractedText: doc.extractedText || null,
         uploadedBy: daraUser.id
       }
     })
   );
-  // Structural pre-processing (Modal). Best-effort + synchronous: on any failure the shred falls
-  // back to the flat extracted text. Never blocks the upload (parseAndPersist never throws).
-  await parseAndPersist({
-    storedFilename: doc.storedFilename,
-    solDocId: created.id,
-    companyId: daraUser.companyId,
-    createdBy: daraUser.id
-  });
+  // Structural pre-processing (Modal) — only for pipeline docs that actually extracted text.
+  // Best-effort + synchronous: on failure the shred falls back to flat text. Never blocks upload.
+  if (!storedOnly && extractionStatus === 'complete') {
+    await parseAndPersist({
+      storedFilename: doc.storedFilename,
+      solDocId: created.id,
+      companyId: daraUser.companyId,
+      createdBy: daraUser.id
+    });
+  }
   await recordAudit({
     action: 'document.upload',
     companyId: daraUser.companyId,
@@ -800,7 +835,7 @@ async function uploadSolDoc(formData: FormData) {
     actorEmail: daraUser.email,
     entityType: 'sol_document',
     entityId: created.id,
-    metadata: { solicitationId: solId.toString(), filename: doc.originalFilename, docType }
+    metadata: { solicitationId: solId.toString(), filename: doc.originalFilename, docType, documentRole }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -826,6 +861,45 @@ async function deleteSolDoc(formData: FormData) {
     entityType: 'sol_document',
     entityId: id,
     metadata: { filename: owned.originalFilename }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+}
+
+// Confirm or override a solicitation document's role (the doc-list control on AI-suggested roles).
+// Setting the role also re-gates the pipeline: stored-only → 'skipped' (out of the shred); an
+// extracted role → 'complete' if text is present ('failed' if extraction produced nothing).
+async function setDocumentRole(formData: FormData) {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('docId')));
+  const solId = BigInt(String(formData.get('solId')));
+  const role = String(formData.get('role') ?? '');
+  if (!isValidRole(role)) return;
+  await requireViewableSolicitation(solId, daraUser);
+  // DARA-025: the document must belong to the gated solicitation, not just the company.
+  const owned = await withTenant(daraUser.companyId, (tx) =>
+    tx.solDocument.findFirst({
+      where: { id, companyId: daraUser.companyId, solicitationId: solId },
+      select: { id: true, extractedText: true }
+    })
+  );
+  if (!owned) return;
+  const hasText = !!owned.extractedText;
+  const extractionStatus = !isExtractedRole(role) ? 'skipped' : hasText ? 'complete' : 'failed';
+  await withTenant(daraUser.companyId, (tx) =>
+    tx.solDocument.update({
+      where: { id },
+      data: { documentRole: role as any, documentRoleSuggested: false, extractionStatus }
+    })
+  );
+  await recordAudit({
+    action: 'document.role.set',
+    companyId: daraUser.companyId,
+    actorId: daraUser.id,
+    actorEmail: daraUser.email,
+    entityType: 'sol_document',
+    entityId: id,
+    metadata: { solicitationId: solId.toString(), documentRole: role }
   });
   revalidatePath(`/app/solicitations/${solId}`);
 }
@@ -1256,9 +1330,11 @@ async function archiveResultAction(formData: FormData) {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  // "skipped" is the stored-only state (supporting docs not extracted/parsed) — label it clearly.
+  const label = status === 'skipped' ? 'stored' : status;
   return (
     <span className={`${badgeBase} ${statusBadge[status] ?? statusBadge.pending}`}>
-      {status}
+      {label}
     </span>
   );
 }
@@ -1557,16 +1633,29 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const docList = (docs: typeof solicitation.solDocs, empty: string) =>
+  const docList = (docs: typeof solicitation.solDocs, empty: string, showRole = false) =>
     docs.length > 0 ? (
       <ul className="mb-4 space-y-2">
         {docs.map((d) => (
           <li key={d.id.toString()} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg px-3 py-2.5">
-            <span className="flex min-w-0 items-center gap-2.5">
+            <span className="flex min-w-0 flex-1 items-center gap-2.5">
               <FileText className="h-4 w-4 flex-shrink-0 text-t5" />
-              <span className="truncate text-[13px] text-t2">{d.originalFilename}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-t2">{d.originalFilename}</span>
               <span className="flex-shrink-0 text-[11px] text-t5">{fmtSize(d.fileSize)}</span>
               <StatusBadge status={d.extractionStatus} />
+              {showRole ? (
+                <DocRoleSelect
+                  docId={d.id.toString()}
+                  solId={sid}
+                  role={d.documentRole}
+                  suggested={d.documentRoleSuggested}
+                  action={setDocumentRole}
+                />
+              ) : (
+                roleBadge(d.documentRole) && (
+                  <span className={`flex-shrink-0 ${badgeBase} bg-navy/10 text-navy`}>{roleBadge(d.documentRole)}</span>
+                )
+              )}
             </span>
             <form action={deleteSolDoc}>
               <input type="hidden" name="solId" value={sid} />
@@ -1588,13 +1677,12 @@ export default async function SolicitationDetailPage({
         <p className="mb-4 text-[13px] text-t4">
           The solicitation itself — the compliance matrix is generated from these.
         </p>
-        {docList(rfpDocs, 'No solicitation documents uploaded yet.')}
-        <DocUploader
+        {docList(rfpDocs, 'No solicitation documents uploaded yet.', true)}
+        <SolDocRoleUploader
           solId={sid}
-          docType="rfp"
           uploadAction={uploadSolDoc}
           label="Drop solicitation files here"
-          sub="PDF, Word, or text · Section L, M, and PWS auto-detected · max 20 MB"
+          sub="PDF or Word · AI detects each document's type (override anytime) · max 20 MB"
         />
       </div>
 

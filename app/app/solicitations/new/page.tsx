@@ -10,6 +10,8 @@ import { parseAndPersist } from '@/utils/dara/modal-parser';
 import { enqueueDirectReview } from '@/utils/dara/direct-review';
 import { triggerWorker } from '@/utils/dara/passes';
 import { requireTrialCapacity, isTrialLimitError, trialLimitMessage } from '@/utils/dara/trial';
+import { isValidRole, isExtractedRole } from '@/utils/dara/document-roles';
+import { classifyDocumentRole } from '@/utils/dara/classify-document';
 import UploadAndReview from '@/components/dara/UploadAndReview';
 
 type ShellResult = { ok: boolean; error?: string; solId?: string };
@@ -169,7 +171,36 @@ async function uploadDocToSol(formData: FormData): Promise<StepResult> {
     const rawType = String(formData.get('docType') ?? 'rfp');
     const docType = (['rfp', 'proposal'].includes(rawType) ? rawType : 'rfp') as 'rfp' | 'proposal';
 
+    // A file may carry an explicit manual role ("Auto-detect" sends none). Text is always
+    // extracted (also needed to classify); the role then governs whether the doc enters the
+    // requirements pipeline.
+    const rawRole = String(formData.get('role') ?? '');
+    const manualRole = isValidRole(rawRole) ? rawRole : null;
+
     const doc = await uploadAndExtract(file, companyId, 'sol', Date.now());
+
+    // Content-based classification for solicitation (rfp) docs left on Auto-detect. Fail-open:
+    // a null guess leaves the doc unclassified (treated as a pipeline doc; user can set it later).
+    let documentRole: string | null = manualRole;
+    let documentRoleSuggested = false;
+    if (docType === 'rfp' && !manualRole) {
+      const guess = await classifyDocumentRole({
+        text: doc.plainText,
+        filename: doc.originalFilename,
+        company: daraUser.company,
+        companyId
+      });
+      if (guess) {
+        documentRole = guess;
+        documentRoleSuggested = true;
+      }
+    }
+
+    // Stored-only role → keep the file + its (encrypted) text but hold it out of the pipeline
+    // (status 'skipped' → excluded from the shred; no Modal structural parse).
+    const storedOnly = documentRole != null && !isExtractedRole(documentRole);
+    const extractionStatus = storedOnly ? 'skipped' : doc.extractionStatus;
+
     const created = await withDbRetry('record document', () =>
       withTenant(companyId, (tx) =>
         tx.solDocument.create({
@@ -177,23 +208,28 @@ async function uploadDocToSol(formData: FormData): Promise<StepResult> {
             companyId,
             solicitationId: solId,
             docType,
+            documentRole: documentRole as any,
+            documentRoleSuggested,
             originalFilename: doc.originalFilename,
             storedFilename: doc.storedFilename,
             fileSize: doc.fileSize,
-            extractionStatus: doc.extractionStatus,
+            extractionStatus,
             extractedText: doc.extractedText || null,
             uploadedBy: daraUser.id
           }
         })
       )
     );
-    // Structural pre-processing (Modal). Best-effort; the shred falls back to flat text on failure.
-    await parseAndPersist({
-      storedFilename: doc.storedFilename,
-      solDocId: created.id,
-      companyId,
-      createdBy: daraUser.id
-    });
+    // Structural pre-processing (Modal) — only for pipeline docs that actually extracted text.
+    // Best-effort; the shred falls back to flat text on failure.
+    if (!storedOnly && extractionStatus === 'complete') {
+      await parseAndPersist({
+        storedFilename: doc.storedFilename,
+        solDocId: created.id,
+        companyId,
+        createdBy: daraUser.id
+      });
+    }
     await recordAudit({
       action: 'document.upload',
       companyId,
@@ -201,7 +237,7 @@ async function uploadDocToSol(formData: FormData): Promise<StepResult> {
       actorEmail: daraUser.email,
       entityType: 'sol_document',
       entityId: created.id,
-      metadata: { solicitationId: solId.toString(), filename: doc.originalFilename, docType }
+      metadata: { solicitationId: solId.toString(), filename: doc.originalFilename, docType, documentRole }
     });
     return { ok: true };
   } catch (e) {

@@ -92,20 +92,33 @@ export interface StoredDoc {
   originalFilename: string;
   storedFilename: string;
   fileSize: number;
+  /** Extracted text, ENCRYPTED at rest (empty string when extraction was skipped/failed). */
   extractedText: string;
-  extractionStatus: 'complete' | 'failed';
+  /**
+   * Extracted text in PLAINTEXT — in-memory only, for the caller to classify by content at upload.
+   * Never persisted or logged. Empty string when extraction was skipped.
+   */
+  plainText: string;
+  extractionStatus: 'complete' | 'failed' | 'skipped';
 }
 
 /**
  * Upload a file to storage and extract its text. `prefix` namespaces the object
  * path (e.g. "sol" or "response"). Throws on storage upload failure.
+ *
+ * When `opts.extract === false` (a stored-only supporting document — e.g. a wage determination
+ * whose role is not extracted) the file is still uploaded + validated, but text extraction and
+ * structural parsing are skipped: no extracted text is stored and the status is 'skipped', which
+ * keeps the document out of the shred (which requires status 'complete').
  */
 export async function uploadAndExtract(
   file: File,
   companyId: bigint,
   prefix: string,
-  stamp: number
+  stamp: number,
+  opts: { extract?: boolean } = {}
 ): Promise<StoredDoc> {
+  const extract = opts.extract !== false;
   const buffer = Buffer.from(await file.arrayBuffer());
   const ext = fileExt(file.name);
   assertValidUpload(buffer, ext);
@@ -122,6 +135,18 @@ export async function uploadAndExtract(
     });
   if (error) throw new Error(`Upload failed: ${error.message}`);
 
+  // Stored-only supporting document: keep the bytes, skip extraction + parsing.
+  if (!extract) {
+    return {
+      originalFilename: file.name,
+      storedFilename,
+      fileSize: buffer.length,
+      extractedText: '',
+      plainText: '',
+      extractionStatus: 'skipped'
+    };
+  }
+
   const text = await extractText(file.name, buffer);
   // Status reflects whether text was extracted (from plaintext); the stored value
   // is encrypted at rest (DARA-009). The evaluator decrypts it via decryptField.
@@ -131,6 +156,7 @@ export async function uploadAndExtract(
     storedFilename,
     fileSize: buffer.length,
     extractedText: encryptField(text),
+    plainText: text,
     extractionStatus
   };
 }

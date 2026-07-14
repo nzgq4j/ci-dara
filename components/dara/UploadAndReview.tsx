@@ -18,6 +18,8 @@ import Link from 'next/link';
 import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, FileText, Sparkles, Users, Check } from 'lucide-react';
 import { card, fieldClasses, labelClasses, btnGhost } from '@/components/dara/theme';
 import FileDropzone from '@/components/dara/FileDropzone';
+import RoleStagingList, { type StagedDoc } from '@/components/dara/RoleStagingList';
+import { roleBadge } from '@/utils/dara/document-roles';
 
 type ShellResult = { ok: boolean; error?: string; solId?: string };
 type StepResult = { ok: boolean; error?: string; redirect?: string };
@@ -40,7 +42,9 @@ export default function UploadAndReview({
   // mode === null → the path-selection screen (shown first). Choosing a card advances to step 1.
   const [mode, setMode] = useState<Mode | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
-  const [rfpFiles, setRfpFiles] = useState<File[]>([]);
+  // Solicitation files are staged with a per-file role (assigned before upload). The proposal
+  // draft (Direct AI) is a distinct category with no role, so it keeps a plain File[] dropzone.
+  const [rfpStaged, setRfpStaged] = useState<StagedDoc[]>([]);
   const [proposalFiles, setProposalFiles] = useState<File[]>([]);
   const [solNumber, setSolNumber] = useState('');
   const [agency, setAgency] = useState('');
@@ -54,18 +58,31 @@ export default function UploadAndReview({
 
   const colorTeam = mode === 'color_team';
   const hasProposal = proposalFiles.length > 0;
-  const canSubmit = rfpFiles.length > 0 || hasProposal || solNumber.trim() !== '';
+  const canSubmit = rfpStaged.length > 0 || hasProposal || solNumber.trim() !== '';
   const willRun = mode === 'direct_ai' && hasProposal;
 
-  // Real progress across the three-step flow (create shell → upload each file → start review),
-  // driven by actual completions rather than a timer. Total steps = 1 shell + N files + 1 start.
-  const totalFiles = rfpFiles.length + proposalFiles.length;
+  // Real progress across the flow (create shell → upload files → start review), driven by actual
+  // completions rather than a timer. Total steps = 1 shell + N files + 1 start.
+  const totalFiles = rfpStaged.length + proposalFiles.length;
   const totalSteps = totalFiles + 2;
   const [progress, setProgress] = useState<{ label: string; done: number }>({ label: '', done: 0 });
 
   // Any single file over the per-request ceiling would fail its own upload (a Function request
   // body is capped near 4.5 MB), so flag it up front instead of failing mid-flow.
-  const oversized = [...rfpFiles, ...proposalFiles].filter((f) => f.size > MAX_FILE_BYTES);
+  const oversized = [...rfpStaged.map((s) => s.file), ...proposalFiles].filter((f) => f.size > MAX_FILE_BYTES);
+
+  // Merge newly picked solicitation files into the staging list (role unassigned), de-duping by
+  // name+size. FileDropzone is rendered with an empty list so onChange hands us only new picks.
+  const addRfp = (added: File[]) => {
+    setError(null);
+    setRfpStaged((prev) => {
+      const seen = new Set(prev.map((s) => `${s.file.name}:${s.file.size}`));
+      const fresh = added
+        .filter((f) => !seen.has(`${f.name}:${f.size}`))
+        .map((f) => ({ file: f, role: '' })); // '' = Auto-detect (server classifies by content).
+      return [...prev, ...fresh];
+    });
+  };
 
   // Pick a review path. Color Team doesn't take a response draft during creation, so drop any
   // proposal files that were staged before a switch — they'd otherwise silently ride along.
@@ -90,7 +107,7 @@ export default function UploadAndReview({
       meta.set('agency', agency);
       meta.set('naics', naics);
       meta.set('dueDate', dueDate);
-      meta.set('titleHint', rfpFiles[0]?.name || proposalFiles[0]?.name || '');
+      meta.set('titleHint', rfpStaged[0]?.file.name || proposalFiles[0]?.name || '');
       const shell = await createShell(meta);
       if (!shell.ok || !shell.solId) {
         setError(shell.error ?? 'Could not create the solicitation. Please try again.');
@@ -100,24 +117,36 @@ export default function UploadAndReview({
       const solId = shell.solId;
       setProgress({ label: 'Solicitation created', done: ++done });
 
-      // 2) Upload each file in its own request so no single request exceeds the body limit.
+      // 2) Upload every file — one request each (so no single request exceeds the ~4.5 MB body
+      // limit) but all in parallel (Promise.all), so they upload simultaneously. Each solicitation
+      // file carries its assigned role; the proposal draft carries none.
       const jobs = [
-        ...rfpFiles.map((f) => ({ f, docType: 'rfp' as const })),
-        ...proposalFiles.map((f) => ({ f, docType: 'proposal' as const }))
+        ...rfpStaged.map((s) => ({ f: s.file, role: s.role, docType: 'rfp' as const })),
+        ...proposalFiles.map((f) => ({ f, role: '', docType: 'proposal' as const }))
       ];
-      for (const { f, docType } of jobs) {
-        setProgress({ label: `Uploading ${f.name}…`, done });
-        const fd = new FormData();
-        fd.set('solId', solId);
-        fd.set('docType', docType);
-        fd.set('file', f);
-        const res = await uploadDoc(fd);
-        if (!res.ok) {
-          setError(res.error ?? `Couldn’t upload ${f.name}. The solicitation was created — you can add this file from the workspace.`);
-          setPending(false);
-          return;
-        }
-        setProgress({ label: `Uploaded ${f.name}`, done: ++done });
+      if (jobs.length > 0) {
+        setProgress({ label: `Uploading ${jobs.length} document${jobs.length > 1 ? 's' : ''}…`, done });
+      }
+      let firstError: string | null = null;
+      await Promise.all(
+        jobs.map(async ({ f, role, docType }) => {
+          const fd = new FormData();
+          fd.set('solId', solId);
+          fd.set('docType', docType);
+          if (role) fd.set('role', role);
+          fd.set('file', f);
+          const res = await uploadDoc(fd);
+          if (!res.ok && !firstError) {
+            firstError = res.error ?? `Couldn’t upload ${f.name}. The solicitation was created — you can add this file from the workspace.`;
+          }
+          done += 1;
+          setProgress({ label: `Uploaded ${done} of ${jobs.length}…`, done });
+        })
+      );
+      if (firstError) {
+        setError(firstError);
+        setPending(false);
+        return;
       }
 
       // 3) Start the unified review (if applicable) and move into the workspace. finalize hands
@@ -137,7 +166,7 @@ export default function UploadAndReview({
   };
 
   const allFiles = [
-    ...rfpFiles.map((f) => ({ f, kind: 'Solicitation' })),
+    ...rfpStaged.map((s) => ({ f: s.file, kind: roleBadge(s.role) || 'Solicitation' })),
     ...proposalFiles.map((f) => ({ f, kind: 'Proposal draft' }))
   ];
 
@@ -207,11 +236,19 @@ export default function UploadAndReview({
         </div>
 
         <FileDropzone
-          files={rfpFiles}
-          onChange={setRfpFiles}
+          files={[]}
+          onChange={addRfp}
           label="Drop solicitation files here"
-          sub="PDF, Word, or text · Section L, M, and PWS auto-detected · max 20 MB"
+          sub="PDF or Word · AI detects each document's type · max 20 MB"
+          accept=".pdf,.docx"
         />
+        <RoleStagingList items={rfpStaged} onChange={setRfpStaged} disabled={pending} />
+        {rfpStaged.length > 0 && (
+          <p className="mt-2 text-[12px] text-t5">
+            Leave a file on “Auto-detect” to have the AI classify its document type — you can confirm or
+            change it in the workspace afterward.
+          </p>
+        )}
 
         {/* Response draft — Direct AI only. Color Team attaches per-review drafts later. */}
         {mode === 'direct_ai' && (

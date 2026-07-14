@@ -50,6 +50,10 @@ enum ExtractionStatus {
   processing
   complete
   failed
+  // Stored-only supporting document (a documentRole whose text is intentionally NOT extracted
+  // or structurally parsed — e.g. wage determinations, past-performance templates). The file is
+  // kept in storage; it never feeds the shred (which requires status = complete).
+  skipped
 }
 
 enum EvaluationStatus {
@@ -211,6 +215,25 @@ enum DocType {
   proposal
 }
 
+// Fine-grained classification of a solicitation-package document, assigned per-file at upload.
+// Orthogonal to DocType (all of these except proposal-side files ride under docType=rfp): it
+// tells the pipeline WHICH solicitation documents to extract + structurally parse (the base RFP,
+// PWS/SOW, CDRLs, incorporated Section J attachments, amendments) versus which to merely store as
+// supporting reference material (wage determinations, past-performance templates, questionnaires,
+// market research). Null on pre-feature rows → treated as an extracted document (legacy default).
+enum DocumentRole {
+  rfp_base
+  pws_sow
+  cdrl
+  section_j_attachment
+  amendment
+  wage_determination
+  past_performance_template
+  questionnaire
+  market_research
+  other_supporting
+}
+
 // Lifecycle of an amendment's AI reconciliation against the compliance matrix.
 enum ReconciliationStatus {
   pending // uploaded, not yet reconciled
@@ -249,6 +272,7 @@ enum AICapability {
   amendment_diff // amendment impact/diff analysis
   evaluation // per-requirement persona evaluation
   annotated_export // finding-anchoring for the annotated proposal/response export
+  document_classify // content-based document-role classification at upload
 }
 
 model Company {
@@ -504,6 +528,12 @@ model SolDocument {
   // rfp = the solicitation itself, amendment = an amendment to it,
   // proposal = our own working draft that reviews snapshot.
   docType          DocType          @default(rfp) @map("doc_type")
+  // Fine-grained per-file role (base RFP, PWS, CDRL, wage determination, …). Drives whether the
+  // file is structurally parsed + fed to the shred or merely stored. Null = legacy/unclassified.
+  documentRole     DocumentRole?    @map("document_role")
+  // true = the role was assigned by the content classifier and not yet confirmed by a human
+  // (shown as "Suggested" in the doc list). Cleared when a user sets/confirms the role.
+  documentRoleSuggested Boolean     @default(false) @map("document_role_suggested")
   // When docType = amendment, the amendment this file belongs to.
   amendmentId      BigInt?          @map("amendment_id")
   originalFilename String           @map("original_filename") @db.VarChar(500)

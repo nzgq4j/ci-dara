@@ -46,7 +46,9 @@ export const statusBadge: Record<string, string> = {
   processing: 'bg-navy/10 text-navy/70',
   running: 'bg-navy/10 text-navy/70',
   complete: 'bg-[#DCFCE7] text-[#166534]',
-  failed: 'bg-[#FEE2E2] text-[#991B1B]'
+  failed: 'bg-[#FEE2E2] text-[#991B1B]',
+  // Stored-only supporting document — kept in storage, intentionally not extracted/parsed.
+  skipped: 'bg-[#FEF3C7] text-[#92400E]'
 };
 
 // A faint accent mono "eyebrow" used inside panels (e.g. plan label)

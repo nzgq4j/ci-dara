@@ -20,7 +20,8 @@ export const AI_CAPABILITIES: AICapability[] = [
   'direct_review',
   'amendment_diff',
   'evaluation',
-  'annotated_export'
+  'annotated_export',
+  'document_classify'
 ];
 
 export const CAPABILITY_LABELS: Record<AICapability, string> = {
@@ -30,7 +31,8 @@ export const CAPABILITY_LABELS: Record<AICapability, string> = {
   direct_review: 'Direct AI review',
   amendment_diff: 'Amendment diff',
   evaluation: 'Requirement evaluation',
-  annotated_export: 'Annotated export'
+  annotated_export: 'Annotated export',
+  document_classify: 'Document-role classifier'
 };
 
 export interface CapabilityModel {
