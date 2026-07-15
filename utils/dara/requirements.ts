@@ -443,7 +443,7 @@ async function legacyHrlrShred(
     const nodes = parseHrlrNodes(ai.text, docText, docLabel, 'solicitation');
     const graph = resolveGraph(nodes, 'solicitation', docLabel, docText);
     const govByKey = extractGoverningByKey(ai.text);
-    for (const [k, v] of govByKey) allGovByKey.set(k, v);
+    govByKey.forEach((v, k) => allGovByKey.set(k, v));
 
     // Tag each node with its source document id so anchorOf below resolves correctly.
     for (const n of graph.nodes) (n as any)._sourceDocId = doc.id;
