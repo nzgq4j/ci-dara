@@ -70,6 +70,9 @@ export interface Classification {
   normalizedMeaning: string;
   parentCandidateId: string | null;
   confidence: Confidence;
+  // L→M linkage: for Section L instructions and SOW/PWS tasks, the Section M factor label(s) this
+  // item will be evaluated under. Empty array for Section M factors themselves and unlinked items.
+  governingFactors: string[];
 }
 
 export interface ClassifiedCandidate extends RequirementCandidate {
@@ -124,6 +127,8 @@ export interface ExtractedRequirement {
   mergedCount?: number;
   // Source solicitation document this row was extracted from (stamped per-doc by the orchestrator).
   documentId?: bigint | null;
+  // L→M linkage: Section M factor labels this instruction/task feeds (empty for factors themselves).
+  governingFactors: string[];
 }
 
 // ── Deterministic enum mapping ─────────────────────────────────────────────────

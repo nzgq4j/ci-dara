@@ -56,7 +56,8 @@ export function verifiedToExtracted(v: VerifiedCandidate): ExtractedRequirement 
     passOrigin: 1,
     subjectInferred: v.subjectInferred,
     mergedCount: v.duplicateSourceIds.length,
-    documentId: null
+    documentId: null,
+    governingFactors: v.classification.governingFactors ?? []
   };
 }
 
@@ -97,7 +98,7 @@ export async function persistRequirements(
       weight: 0,
       complianceStatus: (r.disposition === 'administrative' ? 'not_applicable' : 'not_assessed') as any,
       reviewStatus: r.reviewStatus as any,
-      governingFactors: [] as string[],
+      governingFactors: (r.governingFactors ?? []) as string[],
       documentId: r.documentId ?? null,
       composition: null,
       rollupMode: null,

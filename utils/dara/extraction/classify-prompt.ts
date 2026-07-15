@@ -42,6 +42,7 @@ YOUR ONLY TASKS:
 5. Generate normalized_meaning (one active-voice sentence).
 6. Identify parent-child relationships within this batch.
 7. Assign confidence.
+8. For SECTION_L_INSTRUCTION and SOW_PWS_REQUIREMENT candidates: identify the Section M evaluation factor label(s) this item feeds, using the exact label as it appears in the solicitation (e.g. "Factor 1 – Technical", "Technical Approach", "M.3 Past Performance"). Leave [] when no evaluation linkage is stated or clearly inferable.
 
 YOU CANNOT ADD CANDIDATES. Return exactly the candidates given, by id.
 
@@ -54,7 +55,8 @@ Return ONLY a JSON array. Each element:
   "title": "<4-8 word noun phrase>",
   "normalized_meaning": "<one active-voice sentence>",
   "parent_candidate_id": "<id or null>",
-  "confidence": "HIGH" | "MEDIUM" | "LOW"
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "governing_factors": ["<Section M factor label>"] or []
 }`;
 
 function pick<T>(v: any, allowed: Set<T>, fallback: T): T {
@@ -142,7 +144,8 @@ function defaultClassification(c: RequirementCandidate): Classification {
     title: c.sourceText.split(/\s+/).slice(0, 8).join(' '),
     normalizedMeaning: c.sourceText,
     parentCandidateId: null,
-    confidence: 'LOW'
+    confidence: 'LOW',
+    governingFactors: []
   };
 }
 
@@ -152,6 +155,12 @@ function toClassification(raw: any, c: RequirementCandidate): Classification {
   // A non-Section-M row can never be `scored` (scored ⇔ evaluation_factor).
   if (disposition === 'scored' && source !== 'SECTION_M_EVALUATION_FACTOR') disposition = 'compliance';
   const title = String(raw?.title ?? '').trim() || c.sourceText.split(/\s+/).slice(0, 8).join(' ');
+  // governing_factors: only meaningful for instructions and SOW/PWS tasks; strip from M factors.
+  const rawGf = Array.isArray(raw?.governing_factors) ? raw.governing_factors : [];
+  const governingFactors: string[] =
+    source === 'SECTION_M_EVALUATION_FACTOR'
+      ? []
+      : rawGf.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 12);
   return {
     id: c.candidateId,
     isRequirement: raw?.is_requirement !== false,
@@ -160,7 +169,8 @@ function toClassification(raw: any, c: RequirementCandidate): Classification {
     title: title.slice(0, 300),
     normalizedMeaning: String(raw?.normalized_meaning ?? '').trim() || c.sourceText,
     parentCandidateId: raw?.parent_candidate_id ? String(raw.parent_candidate_id).trim() || null : null,
-    confidence: pick<Confidence>(raw?.confidence, new Set<Confidence>(['HIGH', 'MEDIUM', 'LOW']), 'MEDIUM')
+    confidence: pick<Confidence>(raw?.confidence, new Set<Confidence>(['HIGH', 'MEDIUM', 'LOW']), 'MEDIUM'),
+    governingFactors
   };
 }
 

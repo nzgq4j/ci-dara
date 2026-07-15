@@ -83,7 +83,8 @@ export async function traverseIbr(
     citationChain: chain,
     traversalDepth: depth,
     versionResolved: true,
-    passOrigin: 3
+    passOrigin: 3,
+    governingFactors: []
   });
 
   const emitUnavailable = (
@@ -115,7 +116,8 @@ export async function traverseIbr(
     citationChain: chain,
     traversalDepth: depth,
     versionResolved: false,
-    passOrigin: 3
+    passOrigin: 3,
+    governingFactors: []
   });
 
   // Depth-first traversal of one citation.
