@@ -157,9 +157,11 @@ export default function EvaluationPanel({ rows }: { rows: EvalRow[] }) {
       const key = label.trim().toLowerCase();
       if (factorByLabel.has(key)) return factorByLabel.get(key);
       // Substring fallback — "Technical Approach" matches "Factor 1 – Technical Approach"
-      for (const [k, v] of factorByLabel) {
-        if (k.includes(key) || key.includes(k)) return v;
-      }
+      let found: EvalRow | undefined;
+      factorByLabel.forEach((v, k) => {
+        if (!found && (k.includes(key) || key.includes(k))) found = v;
+      });
+      if (found) return found;
       return undefined;
     };
 
