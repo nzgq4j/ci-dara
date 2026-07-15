@@ -411,6 +411,7 @@ async function legacyHrlrShred(
   const allGovByKey = new Map<string, string[]>();
   const docIndexes: { id: bigint; idx: ReturnType<typeof buildSourceIndex> }[] = [];
   const legacyTotal = rfpDocs.length;
+  let totalCoverageGaps = 0;
 
   for (let di = 0; di < rfpDocs.length; di++) {
     const doc = rfpDocs[di];
@@ -442,6 +443,7 @@ async function legacyHrlrShred(
     const docLabel = `${doc.name}${doc.role ? ` [${doc.role}]` : ''}`;
     const nodes = parseHrlrNodes(ai.text, docText, docLabel, 'solicitation');
     const graph = resolveGraph(nodes, 'solicitation', docLabel, docText);
+    totalCoverageGaps += graph.coverageGaps.length;
     const govByKey = extractGoverningByKey(ai.text);
     govByKey.forEach((v, k) => allGovByKey.set(k, v));
 
@@ -581,5 +583,5 @@ async function legacyHrlrShred(
     return inserted.length;
   });
 
-  return { ok: true, count: written, exhausted: true, coverageGaps: graph.coverageGaps.length };
+  return { ok: true, count: written, exhausted: true, coverageGaps: totalCoverageGaps };
 }
