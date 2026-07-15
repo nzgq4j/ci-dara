@@ -528,7 +528,14 @@ async function exportMatrixAction(
       select: { solNumber: true, title: true }
     });
     const requirements = await tx.requirement.findMany({
-      where: { solicitationId: solId, companyId: daraUser.companyId, removedAt: null },
+      where: {
+        solicitationId: solId,
+        companyId: daraUser.companyId,
+        removedAt: null,
+        // Compliance matrix includes only Section L instructions and Section M evaluation factors.
+        // PWS/SOW tasks, FAR clauses, and administrative items are excluded from the matrix export.
+        source: { in: ['instruction', 'evaluation_factor'] }
+      },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
     return { sol, requirements };
@@ -1500,7 +1507,11 @@ export default async function SolicitationDetailPage({
 
   const sid = solicitation.id.toString();
   // Active matrix excludes requirements struck by an amendment (retained, not deleted).
-  const activeRequirements = solicitation.requirements.filter((r) => !r.removedAt);
+  // The compliance matrix shows only Section L instructions and Section M evaluation factors —
+  // PWS/SOW tasks, FAR clauses, and administrative items are reference data, not matrix rows.
+  const activeRequirements = solicitation.requirements.filter(
+    (r) => !r.removedAt && (r.source === 'instruction' || r.source === 'evaluation_factor')
+  );
   const removedRequirements = solicitation.requirements.filter((r) => r.removedAt);
   // The Review-tab scorecard covers only the EVALUATION FACTORS (scored) — the holistic
   // review. The pass/fail administrative bulk lives in the Compliance tab, not here.

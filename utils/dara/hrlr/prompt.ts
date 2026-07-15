@@ -310,16 +310,46 @@ export function buildStructuredPreamble(results: ParseResult[]): string {
   return parts.join('\n\n');
 }
 
+// Role-specific extraction focus injected into the solicitation prompt when the shred knows which
+// document type it is processing. This narrows the extraction target so a PWS/SOW document does not
+// produce spurious Section L/M nodes, and an RFP base document explicitly hunts both Sec L
+// instructions and Sec M evaluation factors.
+const RFP_BASE_FOCUS = `
+### Document role: Base RFP (Sections A–M)
+This document is the BASE SOLICITATION. It contains Section L (proposal preparation instructions)
+and Section M (evaluation factors for award). Extract BOTH:
+- Section L instructions: source=instruction, disposition=compliance (unless purely administrative).
+- Section M evaluation factors and subfactors: source=evaluation_factor, disposition=scored.
+Do NOT extract performance work statement tasks (sow_pws) from this document unless a PWS is
+physically embedded in the RFP base. Ignore FAR/DFARS boilerplate clauses in Section I unless they
+impose a direct proposal-preparation or evaluation obligation.
+For every Section L instruction node, populate governing_factors with the Section M factor label(s)
+that instruction feeds (e.g. "Factor 1 – Technical Approach", "M.2", "Past Performance").`;
+
+const PWS_SOW_FOCUS = `
+### Document role: Performance Work Statement / Statement of Work / Statement of Objectives
+This document defines WHAT THE CONTRACTOR MUST PERFORM. Extract only performance obligations:
+source=sow_pws, disposition=compliance. Do NOT extract Section L proposal instructions or Section M
+evaluation factors — those live in the base solicitation. FAR/DFARS clauses incorporated by
+reference in the PWS body are far_clause nodes. Populate governing_factors when the solicitation
+explicitly cross-references a Section M factor that scores this PWS task.`;
+
 /**
  * Build the HRLR extraction prompt for one whole document.
  * `docText` is the concatenated document(s), structure preserved. When `structured` ParseResults
  * are provided (the shred found Modal parse output), a structural pre-analysis preamble is
  * prepended as an extraction hint — the output schema and all HRLR rules are unchanged.
+ *
+ * `docRole` narrows extraction focus when the document's role is known:
+ *   'rfp_base'  → targets Section L instructions + Section M evaluation factors
+ *   'pws_sow'   → targets PWS/SOW performance obligations only
+ *   undefined   → full-solicitation extraction (legacy / concatenated multi-doc path)
  */
 export function buildHrlrPrompt(
   docText: string,
   docKind: DocKind,
-  structured?: ParseResult[]
+  structured?: ParseResult[],
+  docRole?: string
 ): { system: string; user: string } {
   const token = fenceToken();
   const label = docKind === 'response' ? 'PROPOSAL' : 'SOLICITATION';
@@ -328,6 +358,16 @@ export function buildHrlrPrompt(
   const guidance = docKind === 'response' ? RESPONSE_GUIDANCE : SOLICITATION_GUIDANCE;
   // Solicitation-only: the pre-analysis vocabulary (obligations, CDRL tables, IbR) is RFP-shaped.
   const preamble = docKind === 'solicitation' && structured && structured.length ? buildStructuredPreamble(structured) : '';
+
+  // Role-specific focus block appended after the main guidance when the role is known.
+  const roleFocus =
+    docKind === 'solicitation'
+      ? docRole === 'rfp_base'
+        ? RFP_BASE_FOCUS
+        : docRole === 'pws_sow'
+          ? PWS_SOW_FOCUS
+          : ''
+      : '';
 
   const system =
     'You are a senior U.S. Government proposal manager performing Hierarchical Requirement Logic ' +
@@ -343,7 +383,7 @@ export function buildHrlrPrompt(
     (preamble ? `${preamble}\n\nSOURCE DOCUMENT TEXT (for verification and additional extraction)\n\n` : '') +
     `## Document (${label.toLowerCase()})\n\n${fenced}\n\n` +
     `## Instructions\n\n${INJECTION_GUARD}\n\n` +
-    `Reconstruct the requirement graph.${guidance}\n\n` +
+    `Reconstruct the requirement graph.${guidance}${roleFocus}\n\n` +
     `### Output\nReturn ONLY a JSON object of the form:\n` +
     `{ "nodes": [ ${schema} ] }\n\n` +
     `Rules:\n` +

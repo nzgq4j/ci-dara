@@ -120,6 +120,23 @@ interface DocRow {
   extractedText: string | null;
   extractionStatus: string;
   docType: string;
+  documentRole: string | null;
+}
+
+// Document roles that feed the shred. Only rfp_base and pws_sow contain Section L/M instructions
+// and PWS performance obligations. Section J attachments, templates, wage determinations, and other
+// supporting material are reference-only and must never be shredded into the compliance matrix.
+const SHRED_ELIGIBLE_ROLES = new Set(['rfp_base', 'pws_sow']);
+
+/**
+ * Whether a solDoc should be included in the shred.
+ * - If the document has an assigned role, it must be rfp_base or pws_sow.
+ * - If the document has NO role (legacy rows uploaded before the role feature), it is included as
+ *   before so existing solicitations are not silently broken.
+ */
+function isShredEligible(doc: DocRow): boolean {
+  if (!doc.documentRole) return true; // legacy: no role assigned, preserve prior behaviour
+  return SHRED_ELIGIBLE_ROLES.has(doc.documentRole);
 }
 
 function shortName(n: RequirementNode): string {
@@ -168,10 +185,16 @@ export async function shredRequirements(
   if (loaded.existingCount > 0) return { ok: true, count: 0, exhausted: true };
 
   const rfpDocRows = (loaded.solicitation.solDocs as DocRow[]).filter(
-    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete'
+    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete' && isShredEligible(d)
   );
+  const skippedRoles = (loaded.solicitation.solDocs as DocRow[])
+    .filter((d) => d.docType === 'rfp' && d.extractionStatus === 'complete' && !isShredEligible(d))
+    .map((d) => `${d.originalFilename} [${d.documentRole}]`);
+  if (skippedRoles.length) {
+    console.log(`[shred] skipping ${skippedRoles.length} ineligible document(s): ${skippedRoles.join(', ')}`);
+  }
   if (rfpDocRows.length === 0) {
-    return { ok: false, count: 0, error: 'No extracted RFP text. Upload the solicitation (RFP) documents on the Documents tab and wait for extraction.' };
+    return { ok: false, count: 0, error: 'No shred-eligible documents found. Upload the base RFP (role: Base RFP) or PWS/SOW (role: PWS / SOW) and wait for extraction. Section J attachments and supporting documents are not shredded.' };
   }
 
   // Load the current parse result for each rfp doc.
@@ -288,8 +311,14 @@ async function legacyHrlrShred(
   // lookup is isolated in its own try/catch: if the parse table is unreadable for any reason, the
   // shred degrades to flat text rather than failing (fallback is guaranteed).
   const rfpDocRows = (loaded.solicitation.solDocs as DocRow[]).filter(
-    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete'
+    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete' && isShredEligible(d)
   );
+  const legacySkippedRoles = (loaded.solicitation.solDocs as DocRow[])
+    .filter((d) => d.docType === 'rfp' && d.extractionStatus === 'complete' && !isShredEligible(d))
+    .map((d) => `${d.originalFilename} [${d.documentRole}]`);
+  if (legacySkippedRoles.length) {
+    console.log(`[shred/legacy] skipping ${legacySkippedRoles.length} ineligible document(s): ${legacySkippedRoles.join(', ')}`);
+  }
   const parseByDoc = new Map<string, ParseResult>();
   const rfpDocIds = rfpDocRows.map((d) => d.id);
   if (rfpDocIds.length > 0) {
@@ -312,20 +341,15 @@ async function legacyHrlrShred(
     }
   }
 
-  // Decrypt the RFP documents; keep them individually so provenance can be anchored to a specific
-  // document, and concatenate (structure preserved) for the whole-document model call. Collect the
-  // ParseResults actually used so the prompt can add a structural pre-analysis preamble.
-  const structuredResults: ParseResult[] = [];
-  const rfpDocs: { id: bigint; name: string; text: string }[] = rfpDocRows
+  // Decrypt the RFP documents; keep them individually so each gets a role-aware prompt and
+  // provenance can be anchored per-document. Collect ParseResults for each doc separately.
+  const rfpDocs: { id: bigint; name: string; text: string; role: string | null; pr: ParseResult | undefined }[] = rfpDocRows
     .map((d) => {
       const flat = decryptField(d.extractedText);
       const pr = parseByDoc.get(d.id.toString());
       const structured = pr ? joinParagraphs(pr) : '';
-      if (pr && structured.trim() !== '') {
-        structuredResults.push(pr);
-        return { id: d.id, name: d.originalFilename, text: cleanSourceText(structured) };
-      }
-      return { id: d.id, name: d.originalFilename, text: cleanSourceText(flat) };
+      const text = pr && structured.trim() !== '' ? cleanSourceText(structured) : cleanSourceText(flat);
+      return { id: d.id, name: d.originalFilename, text, role: d.documentRole, pr };
     })
     .filter((d) => d.text.trim() !== '');
 
@@ -333,13 +357,8 @@ async function legacyHrlrShred(
     return {
       ok: false,
       count: 0,
-      error: 'No extracted RFP text. Upload the solicitation (RFP) documents on the Documents tab and wait for extraction.'
+      error: 'No shred-eligible documents found. Upload the base RFP (role: Base RFP) or PWS/SOW (role: PWS / SOW) and wait for extraction. Section J attachments and supporting documents are not shredded.'
     };
-  }
-
-  let solText = rfpDocs.map((d) => `=== DOCUMENT: ${d.name} ===\n\n${d.text}`).join('\n\n');
-  if (solText.length > MAX_INPUT_CHARS) {
-    solText = solText.slice(0, MAX_INPUT_CHARS) + '\n\n[Solicitation truncated to fit context limit]';
   }
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;
@@ -352,38 +371,60 @@ async function legacyHrlrShred(
   );
   if (!apiKey) return { ok: false, count: 0, error: `No API key configured for provider "${provider}".` };
 
-  // One whole-document HRLR call — the slow network hop, OUTSIDE any transaction. When any RFP doc
-  // came from the Modal parser, the prompt gains a structural pre-analysis preamble (hint only; the
-  // output schema and HRLR rules are unchanged).
-  const { system, user } = buildHrlrPrompt(
-    solText,
-    'solicitation',
-    structuredResults.length ? structuredResults : undefined
-  );
-  let ai;
-  try {
-    ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
-  } catch (e) {
-    await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
-    return { ok: false, count: 0, error: e instanceof Error ? e.message : 'AI request failed.' };
+  // Per-document HRLR calls — each document gets its role-aware prompt so rfp_base targets
+  // Section L/M and pws_sow targets performance obligations. The corpus assembled per-doc for
+  // span-anchoring uses the same text passed to the prompt.
+  const allNodes: RequirementNode[] = [];
+  const allGovByKey = new Map<string, string[]>();
+  const docIndexes: { id: bigint; idx: ReturnType<typeof buildSourceIndex> }[] = [];
+
+  for (const doc of rfpDocs) {
+    let docText = doc.text;
+    if (docText.length > MAX_INPUT_CHARS) {
+      docText = docText.slice(0, MAX_INPUT_CHARS) + '\n\n[Document truncated to fit context limit]';
+    }
+    const structuredArr = doc.pr ? [doc.pr] : undefined;
+    const { system, user } = buildHrlrPrompt(docText, 'solicitation', structuredArr, doc.role ?? undefined);
+    let ai;
+    try {
+      ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
+    } catch (e) {
+      await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
+      console.warn(`[shred/legacy] doc "${doc.name}" failed:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+    await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
+
+    const docLabel = `${doc.name}${doc.role ? ` [${doc.role}]` : ''}`;
+    const nodes = parseHrlrNodes(ai.text, docText, docLabel, 'solicitation');
+    const graph = resolveGraph(nodes, 'solicitation', docLabel, docText);
+    const govByKey = extractGoverningByKey(ai.text);
+    for (const [k, v] of govByKey) allGovByKey.set(k, v);
+
+    // Tag each node with its source document id so anchorOf below resolves correctly.
+    for (const n of graph.nodes) (n as any)._sourceDocId = doc.id;
+
+    allNodes.push(...graph.nodes);
+    docIndexes.push({ id: doc.id, idx: buildSourceIndex(docText) });
   }
-  await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
-  // Parse (verifying provenance against the whole corpus) and resolve the graph (identities,
-  // tree repair, satisfaction sanity, numbering-conflict detection).
-  const nodes = parseHrlrNodes(ai.text, solText, loaded.solicitation.title ?? 'solicitation', 'solicitation');
-  if (nodes.length === 0) return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
-  const graph = resolveGraph(nodes, 'solicitation', loaded.solicitation.title ?? 'solicitation', solText);
-  // L→M governance links live on the raw JSON (not the pure node type) — read them keyed by node key.
-  const govByKey = extractGoverningByKey(ai.text);
+  if (allNodes.length === 0) return { ok: false, count: 0, error: 'The AI returned no parseable requirements.' };
 
-  const capped = graph.nodes.slice(0, MAX_REQUIREMENTS);
+  // Honour the per-solicitation cap across all documents combined.
+  const capped = allNodes.slice(0, MAX_REQUIREMENTS);
+  // govByKey is already merged above.
+  const govByKey = allGovByKey;
 
-  // Anchor each node's verbatim text to a SPECIFIC source document (per-doc offsets), independent of
-  // the concatenated corpus offsets used for the corpus-level verification.
-  const docIndexes = rfpDocs.map((d) => ({ id: d.id, idx: buildSourceIndex(d.text) }));
-  const anchorOf = (exactText: string): { documentId: bigint; start: number; end: number } | null => {
-    for (const { id, idx } of docIndexes) {
+  // Anchor each node's verbatim text to a SPECIFIC source document. The per-doc call tagged each node
+  // with _sourceDocId; use that first, then fall back to a full scan across all doc indexes.
+  const anchorOf = (
+    exactText: string,
+    preferDocId?: bigint
+  ): { documentId: bigint; start: number; end: number } | null => {
+    const ordered = preferDocId
+      ? [docIndexes.find((d) => d.id === preferDocId), ...docIndexes.filter((d) => d.id !== preferDocId)].filter(Boolean) as typeof docIndexes
+      : docIndexes;
+    for (const { id, idx } of ordered) {
       const s = locateSpan(idx, exactText);
       if (s) return { documentId: id, start: s.start, end: s.end };
     }
@@ -400,7 +441,7 @@ async function legacyHrlrShred(
   // Build the insert rows (parentId is set in a second pass once ids exist).
   const rows = capped.map((n, i) => {
     const isParent = n.state === 'PARENT_WITH_CHILDREN' || n.state === 'PARENT_AND_CHILD';
-    const anchor = anchorOf(n.exactText);
+    const anchor = anchorOf(n.exactText, (n as any)._sourceDocId as bigint | undefined);
     // Reject a Modal parser handle that leaked into source_marker (D5) — treat as no marker.
     const rawMarker = (n.provenance.originalMarker || '').trim();
     const citation = PARSER_HANDLE.test(rawMarker) ? '' : rawMarker.slice(0, 200);
