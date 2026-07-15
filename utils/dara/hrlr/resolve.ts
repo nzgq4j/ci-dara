@@ -27,13 +27,15 @@ function normalizeMarker(marker: string): string {
 }
 
 // Scan the raw source for its own structural markers (decimal outline, lettered items, parenthetical
-// clause numbers). Returns each normalized marker mapped to the char offset of its first occurrence
-// (used to slice review context for a gap).
+// clause numbers, bullet-list items, and roman numeral section headers). Returns each normalized
+// marker mapped to the char offset of its first occurrence (used to slice review context for a gap).
 function scanSourceMarkers(sourceText: string): Map<string, number> {
   const patterns = [
-    /^\s*\d+(\.\d+)+[.\s]/gm, // decimal outline numbers, e.g. "2.4.1."
-    /^\s*\(?[a-z]\)[.\s]/gm, // lettered list items, e.g. "(a)" / "a)"
-    /^\s*\(\d+\)/gm // parenthetical clause numbers, e.g. "(1)"
+    /^\s*\d+(\.\d+)+[.\s]/gm,      // decimal outline numbers, e.g. "2.4.1."
+    /^\s*\(?[a-z]\)[.\s]/gm,        // lettered list items, e.g. "(a)" / "a)"
+    /^\s*\(\d+\)/gm,                // parenthetical clause numbers, e.g. "(1)"
+    /^\s*[•\-–]\s+.{10,}/gm,       // bullet items with substantive text (10+ chars after bullet)
+    /^\s*(?:I{1,3}|IV|VI{0,3}|IX|X{0,3}I{0,3})[.\s]+[A-Z]/gm // Roman numeral sections
   ];
   const markers = new Map<string, number>();
   for (const re of patterns) {

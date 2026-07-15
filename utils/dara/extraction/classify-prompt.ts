@@ -116,7 +116,8 @@ function candidateLine(c: RequirementCandidate): Record<string, unknown> {
     modal_verb: c.modalVerb,
     subject: c.subject,
     ucf_section: c.ucfSectionType,
-    section_path: c.sectionPath,
+    section_path: c.sectionPath || undefined,
+    page: c.pageNumber ?? undefined,
     is_table_row: c.isTableDerived,
     is_cdrl: c.isCdrl
   };
@@ -186,8 +187,16 @@ export async function classifyCandidates(
 
   for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
     const batch = candidates.slice(i, i + BATCH_SIZE);
+    const allOther = batch.every((c) => c.ucfSectionType === 'OTHER');
+    const contextNote = allOther
+      ? 'NOTE: This document had no parseable section structure. ucf_section is OTHER for all candidates — ' +
+        'YOU must infer the correct source classification from the text content and page number. ' +
+        'Use "will be evaluated", "evaluation criteria", "factor" language → SECTION_M_EVALUATION_FACTOR. ' +
+        'Use "shall", "must", submission/format/volume instructions → SECTION_L_INSTRUCTION. ' +
+        'Use task/performance language → SOW_PWS_REQUIREMENT. Use FAR/DFARS clause numbers → FAR_DFARS_CLAUSE.'
+      : 'SECTION CONTEXT: candidates below carry their own ucf_section + section_path.';
     const user =
-      `SECTION CONTEXT: candidates below carry their own ucf_section + section_path.\n\n` +
+      `${contextNote}\n\n` +
       `CANDIDATES:\n${JSON.stringify(batch.map(candidateLine), null, 0)}`;
     try {
       const ai = await complete(ctx.provider, SYSTEM, user, ctx.model, ctx.apiKey, CLASSIFY_MAX_TOKENS, 0);

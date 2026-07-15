@@ -5,7 +5,7 @@
 // invent obligations — it only reshapes what the Modal parser already found.
 
 import type { ParseResult, ModalCandidate } from '@/utils/dara/parse-result';
-import { buildSectionClassMap, sectionPathOf } from './section-classifier';
+import { buildSectionClassMap, buildPageClassMap, sectionPathOf } from './section-classifier';
 import type { RequirementCandidate, UCFSectionType, Confidence } from './types';
 
 function conf(v: string | null | undefined): Confidence {
@@ -23,9 +23,42 @@ function resolveSubject(c: ModalCandidate, ucf: UCFSectionType): { subject: stri
   return { subject: c.subject ?? (govSection ? 'Government' : 'Contractor'), inferred: true };
 }
 
+// Split a source_text that contains multiple bullet-prefixed obligations into individual items.
+// Returns the original single string when it doesn't look like a multi-bullet list.
+// Bullet patterns: • – * at line start, or numbered "1." / "(1)" items on separate lines.
+const BULLET_SPLIT_RE = /\n\s*(?:[•\-–*]|\d+[.)]\s|\([a-z\d]\)\s)/;
+function splitBullets(text: string): string[] {
+  if (!BULLET_SPLIT_RE.test(text)) return [text];
+  const lines = text.split(/\n/);
+  const items: string[] = [];
+  let current = '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^[•\-–*]|\d+[.)]\s|\([a-z\d]\)\s/.test(trimmed)) {
+      if (current.trim()) items.push(current.trim());
+      current = trimmed.replace(/^[•\-–*]\s*/, '');
+    } else {
+      current = current ? `${current} ${trimmed}` : trimmed;
+    }
+  }
+  if (current.trim()) items.push(current.trim());
+  // Only split when we found at least 2 distinct bullets; otherwise return original.
+  return items.length >= 2 ? items : [text];
+}
+
 export function buildCandidates(result: ParseResult): RequirementCandidate[] {
   const sectionClass = buildSectionClassMap(result.sections);
+  const pageClass = buildPageClassMap(result); // fallback when sections[] is empty
   const sections = result.sections ?? [];
+  const hasSections = sections.length > 0;
+
+  // Resolve UCF type: prefer section-id classification, fall back to page-level when no sections.
+  const resolveUcf = (sectionId: string | null | undefined, pageNumber: number | null): UCFSectionType => {
+    if (sectionId) return sectionClass.get(sectionId) || 'OTHER';
+    if (!hasSections && pageNumber != null) return pageClass.get(pageNumber) || 'OTHER';
+    return 'OTHER';
+  };
 
   // paragraph_id → page_number, for candidates that carry no page directly.
   const pageByPara = new Map<string, number | null>();
@@ -54,8 +87,45 @@ export function buildCandidates(result: ParseResult): RequirementCandidate[] {
     : result.modal_candidates ?? [];
 
   for (const c of modalCandidates) {
-    const ucf = (c.section_id && sectionClass.get(c.section_id)) || 'OTHER';
+    const page = pageByPara.get(c.paragraph_id) ?? null;
+    const ucf = resolveUcf(c.section_id, page);
     const subj = resolveSubject(c, ucf);
+
+    // Split multi-obligation bullets: when a single candidate's source_text contains multiple
+    // bullet-prefixed lines (•, –, *, or numbered items), emit one sub-candidate per bullet so
+    // the classify pass can assess each obligation independently. This catches Section L lists
+    // like "• All pages shall be numbered. • Tables shall be at least 9-point font." that the
+    // Modal parser collapses into one sentence.
+    const bullets = splitBullets(c.source_text);
+    if (bullets.length > 1) {
+      bullets.forEach((bullet, bi) => {
+        out.push({
+          candidateId: `${c.candidate_id}-b${bi}`,
+          sourceText: bullet,
+          modalVerb: c.modal_verb,
+          modalClass: c.modal_class,
+          subject: subj.subject,
+          subjectInferred: subj.inferred,
+          verbPhrase: c.verb_phrase,
+          object: null,
+          svoConfidence: conf(c.svo_confidence),
+          ucfSectionType: ucf,
+          sectionPath: sectionPathOf(sections, c.section_id),
+          sectionId: c.section_id,
+          paragraphId: c.paragraph_id,
+          sentenceId: `${c.sentence_id}-b${bi}`,
+          pageNumber: page,
+          isPassive: !!c.is_passive,
+          isTableDerived: false,
+          isCdrl: false,
+          conditionalTriggerIds: triggersBySent.get(c.sentence_id) ?? [],
+          ibrFlagIds: ibrBySent.get(c.sentence_id) ?? [],
+          duplicateSourceIds: []
+        });
+      });
+      continue;
+    }
+
     out.push({
       candidateId: c.candidate_id,
       sourceText: c.source_text,
@@ -71,7 +141,7 @@ export function buildCandidates(result: ParseResult): RequirementCandidate[] {
       sectionId: c.section_id,
       paragraphId: c.paragraph_id,
       sentenceId: c.sentence_id,
-      pageNumber: pageByPara.get(c.paragraph_id) ?? null,
+      pageNumber: page,
       isPassive: !!c.is_passive,
       isTableDerived: false,
       isCdrl: false,
@@ -85,7 +155,9 @@ export function buildCandidates(result: ParseResult): RequirementCandidate[] {
   // in row.ibr_flags (the Modal parser scans reconstructed_text), so no extra flag is synthesized here.
   for (const tbl of result.tables ?? []) {
     if (!tbl.is_obligation_bearing) continue;
-    const ucf: UCFSectionType = (tbl.section_id && sectionClass.get(tbl.section_id)) || (tbl.is_cdrl ? 'CDRL' : 'OTHER');
+    const ucf: UCFSectionType = resolveUcf(tbl.section_id, tbl.page_number ?? null) !== 'OTHER'
+      ? resolveUcf(tbl.section_id, tbl.page_number ?? null)
+      : tbl.is_cdrl ? 'CDRL' : 'OTHER';
     for (const row of tbl.rows ?? []) {
       const text = (row.reconstructed_text || '').trim();
       if (!text || !(row.modal_verbs_found?.length || tbl.is_cdrl)) continue;
