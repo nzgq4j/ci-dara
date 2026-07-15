@@ -32,7 +32,7 @@ const LLM_SOURCES = new Set<LlmSource>([
 ]);
 const DISPOSITIONS = new Set<DbDisposition>(['scored', 'compliance', 'administrative']);
 
-const SYSTEM = `You are classifying pre-identified compliance requirement candidates from a government solicitation. These candidates were identified by rule-based modal-verb detection using spaCy's dependency parser.
+const SYSTEM = `You are classifying pre-identified compliance requirement candidates from a government solicitation. These candidates were identified by rule-based modal-verb detection using spaCy's dependency parser, supplemented by table-row extraction.
 
 YOUR ONLY TASKS:
 1. For each candidate, determine if it is a genuine compliance obligation (is_requirement: true) or background/definition/scoring methodology (is_requirement: false).
@@ -43,6 +43,11 @@ YOUR ONLY TASKS:
 6. Identify parent-child relationships within this batch.
 7. Assign confidence.
 8. For SECTION_L_INSTRUCTION and SOW_PWS_REQUIREMENT candidates: identify the Section M evaluation factor label(s) this item feeds, using the exact label as it appears in the solicitation (e.g. "Factor 1 – Technical", "Technical Approach", "M.3 Past Performance"). Leave [] when no evaluation linkage is stated or clearly inferable.
+
+SPECIAL TABLE-ROW RULES:
+- is_table_row=true candidates with ucf_section=SECTION_L are submission requirements even without a modal verb. Classify as SECTION_L_INSTRUCTION, is_requirement=true. A row stating "15-page limitation" or "Government Provided Enclosure 03" is a submission requirement.
+- is_table_row=true candidates with ucf_section=SECTION_M are evaluation criteria. Classify as SECTION_M_EVALUATION_FACTOR, is_requirement=true, disposition=scored. A row stating "Outstanding: exceptional level of expertise..." is an evaluation standard.
+- If table headers are present, use them to understand the row's column context.
 
 YOU CANNOT ADD CANDIDATES. Return exactly the candidates given, by id.
 
@@ -119,7 +124,8 @@ function candidateLine(c: RequirementCandidate): Record<string, unknown> {
     section_path: c.sectionPath || undefined,
     page: c.pageNumber ?? undefined,
     is_table_row: c.isTableDerived,
-    is_cdrl: c.isCdrl
+    is_cdrl: c.isCdrl,
+    table_headers: c.isTableDerived && c.tableHeaders?.length ? c.tableHeaders : undefined
   };
 }
 

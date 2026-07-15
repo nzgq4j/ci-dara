@@ -324,7 +324,28 @@ Do NOT extract performance work statement tasks (sow_pws) from this document unl
 physically embedded in the RFP base. Ignore FAR/DFARS boilerplate clauses in Section I unless they
 impose a direct proposal-preparation or evaluation obligation.
 For every Section L instruction node, populate governing_factors with the Section M factor label(s)
-that instruction feeds (e.g. "Factor 1 – Technical Approach", "M.2", "Past Performance").`;
+that instruction feeds (e.g. "Factor 1 – Technical Approach", "M.2", "Past Performance").
+
+### Table extraction (critical — do not skip)
+Federal solicitations embed requirements in tables that have no modal verbs. You MUST extract these:
+
+SUBMISSION-STRUCTURE TABLES (Section L): Tables with columns like "Part / Required Documentation /
+Format / Page Limitation" define volume structure requirements. Each row is a discrete instruction:
+what the offeror must submit, in what format, and with what page limit. Extract one node per row.
+Source=instruction, disposition=compliance. The page limit itself is the requirement — emit it even
+if the row contains no "shall."
+
+FORMAT REQUIREMENT LISTS (Section L): Bullet lists specifying margin size, font size, font face,
+paper size, file format, and similar submission format rules are Section L instructions. Extract each
+bullet as its own node even when stated as a constraint rather than a command.
+
+RATING-SCALE TABLES (Section M): Tables with columns like "Technical Ratings / Description" or
+"Factor / Rating / Criteria" define the Government's evaluation standards. Extract the ENTIRE rating
+scale as one node per factor (not one per rating level), with all rating levels and their descriptions
+in the exact_text. Source=evaluation_factor, disposition=scored.
+
+EVALUATION DEFINITION TABLES (Section M): Tables defining "Strength," "Weakness," and "Deficiency"
+are evaluation-methodology nodes. Extract as source=evaluation_factor, disposition=administrative.`;
 
 const PWS_SOW_FOCUS = `
 ### Document role: Performance Work Statement / Statement of Work / Statement of Objectives

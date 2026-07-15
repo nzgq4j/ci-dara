@@ -153,26 +153,76 @@ export function buildCandidates(result: ParseResult): RequirementCandidate[] {
 
   // Table-derived candidates: one per obligation-bearing row. CDRL rows already carry any DID IbR flags
   // in row.ibr_flags (the Modal parser scans reconstructed_text), so no extra flag is synthesized here.
+  //
+  // Modal-verb gate relaxation: the parser's is_obligation_bearing flag and row.modal_verbs_found are
+  // derived from grammar signals, which miss two important table types in federal solicitations:
+  //
+  //   1. SUBMISSION-STRUCTURE tables (Section L) — "Part / Required Documentation / Format / Page
+  //      Limitation" tables define volume structure requirements with no modal verbs. Every row is a
+  //      discrete requirement: what to submit, in what format, with what page limit.
+  //
+  //   2. RATING-SCALE tables (Section M) — "Technical Ratings / Description" or "Factor / Rating /
+  //      Definition" tables define evaluation criteria with no "shall". Each row (Outstanding, Good,
+  //      Acceptable, etc.) is a grading standard the offeror must target.
+  //
+  // Both types are identified by header-pattern matching and included regardless of modal-verb content.
+
+  // Detect a submission-structure table by its headers.
+  const isSubmissionTable = (headers: string[]): boolean => {
+    const joined = headers.join(' ').toLowerCase();
+    return /page.?limit|documentation|required.doc|submission|format.*page|part.*documentation/i.test(joined);
+  };
+
+  // Detect a rating-scale or evaluation-definition table by its headers.
+  const isRatingTable = (headers: string[]): boolean => {
+    const joined = headers.join(' ').toLowerCase();
+    return /technical.?rating|rating.*description|evaluation.*factor.*rating|adjectival|outstanding|definitions.*strength|rating.*scale/i.test(joined);
+  };
+
   for (const tbl of result.tables ?? []) {
-    if (!tbl.is_obligation_bearing) continue;
     const ucf: UCFSectionType = resolveUcf(tbl.section_id, tbl.page_number ?? null) !== 'OTHER'
       ? resolveUcf(tbl.section_id, tbl.page_number ?? null)
       : tbl.is_cdrl ? 'CDRL' : 'OTHER';
+
+    const headers = tbl.headers ?? [];
+    const submissionTable = isSubmissionTable(headers);
+    const ratingTable = isRatingTable(headers);
+
+    // Determine whether to include this table at all.
+    // Include when: is_obligation_bearing OR is a submission/rating table in an L/M context.
+    const inSectionLM = ucf === 'SECTION_L' || ucf === 'SECTION_M';
+    const includeTable = tbl.is_obligation_bearing || ((submissionTable || ratingTable) && inSectionLM);
+    if (!includeTable && !tbl.is_cdrl) continue;
+
+    // Determine the UCF override for special table types.
+    const effectiveUcf: UCFSectionType = ratingTable
+      ? 'SECTION_M'
+      : submissionTable
+        ? 'SECTION_L'
+        : ucf;
+
     for (const row of tbl.rows ?? []) {
       const text = (row.reconstructed_text || '').trim();
-      if (!text || !(row.modal_verbs_found?.length || tbl.is_cdrl)) continue;
+      if (!text) continue;
+
+      const hasModal = (row.modal_verbs_found?.length ?? 0) > 0;
+      // Row gate: pass if it has a modal verb, is a CDRL, is a submission-structure row,
+      // or is a rating-scale row (all rows matter regardless of grammar).
+      const includeRow = hasModal || tbl.is_cdrl || submissionTable || ratingTable;
+      if (!includeRow) continue;
+
       const rowId = `${tbl.table_id}-r${row.row_index}`;
       out.push({
         candidateId: rowId,
         sourceText: text,
         modalVerb: row.modal_verbs_found?.[0] ?? 'shall',
         modalClass: 'MANDATORY',
-        subject: 'Contractor',
+        subject: effectiveUcf === 'SECTION_M' ? 'Government' : 'Contractor',
         subjectInferred: true,
         verbPhrase: null,
         object: null,
-        svoConfidence: 'MEDIUM',
-        ucfSectionType: ucf,
+        svoConfidence: hasModal ? 'MEDIUM' : 'LOW',
+        ucfSectionType: effectiveUcf,
         sectionPath: sectionPathOf(sections, tbl.section_id),
         sectionId: tbl.section_id,
         paragraphId: tbl.table_id,
@@ -181,7 +231,7 @@ export function buildCandidates(result: ParseResult): RequirementCandidate[] {
         isPassive: false,
         isTableDerived: true,
         isCdrl: tbl.is_cdrl,
-        tableHeaders: tbl.headers,
+        tableHeaders: headers,
         conditionalTriggerIds: [],
         ibrFlagIds: row.ibr_flags ?? [],
         duplicateSourceIds: []
