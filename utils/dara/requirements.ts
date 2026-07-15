@@ -280,7 +280,21 @@ export async function shredRequirements(
     const verified = verifyAgainstParseResult(annotated, pr);
     const base = verified
       .filter((v) => v.classification.isRequirement)
-      .map((v) => ({ ...verifiedToExtracted(v), documentId: doc.id }));
+      .map((v) => {
+        const extracted = { ...verifiedToExtracted(v), documentId: doc.id };
+        // Hard enforcement: a pws_sow document must never produce evaluation_factor rows.
+        // The classify pass occasionally misclassifies performance obligation sentences that
+        // happen to mention evaluation language. Downgrade them to sow_pws.
+        if (doc.documentRole === 'pws_sow' && extracted.source === 'evaluation_factor') {
+          extracted.source = 'sow_pws';
+          extracted.disposition = 'compliance';
+        }
+        // Likewise, a pws_sow document must never produce instruction rows.
+        if (doc.documentRole === 'pws_sow' && extracted.source === 'instruction') {
+          extracted.source = 'sow_pws';
+        }
+        return extracted;
+      });
 
     // Pass 3 — IbR traversal against the clause library (deterministic).
     await setShredProgress(jobId, `Resolving clause references in ${roleLabel}: ${docShort}…`, docProgress + 14);
