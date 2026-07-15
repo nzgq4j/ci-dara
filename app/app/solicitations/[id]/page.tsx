@@ -48,6 +48,8 @@ import { classifyDocumentRole } from '@/utils/dara/classify-document';
 import AnnotatedExportButton from '@/components/dara/AnnotatedExportButton';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
+import EvaluationPanel, { type EvalRow } from '@/components/dara/EvaluationPanel';
+import ComplianceSubTabs from '@/components/dara/ComplianceSubTabs';
 import SolMetaEditor from '@/components/dara/SolMetaEditor';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
@@ -1803,6 +1805,19 @@ export default async function SolicitationDetailPage({
     };
   });
 
+  // Evaluation sub-panel rows — Section L instructions + Section M factors only.
+  // activeRequirements is already filtered to these two sources, so we just reshape.
+  const evalRows: EvalRow[] = activeRequirements.map((r) => ({
+    id: r.id.toString(),
+    name: r.name,
+    citation: r.citation,
+    source: r.source,
+    disposition: r.disposition,
+    governingFactors: (r.governingFactors ?? []) as string[],
+    notes: r.notes ?? '',
+    detail: matrixRows.find((m) => m.id === r.id.toString())?.detail
+  }));
+
   const compliancePanel = (
     <div className="space-y-4">
 
@@ -1896,24 +1911,15 @@ export default async function SolicitationDetailPage({
         )}
       </div>
 
-      {/* Compliance matrix — filterable, searchable, inline-editable */}
-      {requirements.length === 0 ? (
-        <div className={`${cardDashed} flex flex-col items-center justify-center px-6 py-10 text-center`}>
-          <Inbox className="h-8 w-8 text-t5" />
-          <p className="mt-3 text-[13px] text-t4">
-            No requirements yet. Generate them from the solicitation above, or add one manually below.
-          </p>
-        </div>
-      ) : (
-        <div className={`${card} p-4`}>
-          <ComplianceMatrix
-            solId={sid}
-            rows={matrixRows}
-            saveAction={saveMatrixRow}
-            setReviewStatusAction={setReviewStatusAction}
-          />
-        </div>
-      )}
+      {/* Sub-tabs: Compliance Matrix / Evaluation Criteria */}
+      <ComplianceSubTabs
+        sid={sid}
+        matrixRows={matrixRows}
+        evalRows={evalRows}
+        requirementsCount={requirements.length}
+        saveAction={saveMatrixRow}
+        setReviewStatusAction={setReviewStatusAction}
+      />
 
       {/* Removed by amendment (retained, excluded from the active matrix) */}
       {removedRequirements.length > 0 && (
