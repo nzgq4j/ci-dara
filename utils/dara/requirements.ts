@@ -11,7 +11,7 @@
 // This replaces the earlier flat whole-document list. The pure HRLR core lives in ./hrlr/* and is
 // deliberately app-free so it can be developed/tested standalone; here we bind it to the DB.
 
-import { withTenant } from '@/utils/prisma';
+import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
 import { complete, resolveCompanyAI } from '@/utils/dara/providers';
 import { getPlatformAI } from '@/utils/dara/platform-ai';
@@ -100,6 +100,23 @@ function extractGoverningByKey(modelText: string): Map<string, string[]> {
     /* truncated JSON → no governance links this run */
   }
   return out;
+}
+
+/**
+ * Write a human-readable progress label to the job queue row so the UI poll shows meaningful
+ * status instead of the static fallback string. Fire-and-forget — never throws; a write failure
+ * just means the label stays stale for one poll cycle.
+ */
+async function setShredProgress(jobId: bigint | undefined, label: string, progress = 0): Promise<void> {
+  if (!jobId) return;
+  try {
+    await prismaAdmin.jobQueue.update({
+      where: { id: jobId },
+      data: { progressLabel: label, progress }
+    });
+  } catch {
+    /* non-fatal — UI falls back to the static label */
+  }
 }
 
 export interface ShredSummary {
@@ -236,22 +253,37 @@ export async function shredRequirements(
   const asOf = loaded.solicitation.createdAt ?? new Date();
   const allRows: ExtractedRequirement[] = [];
   const skipped: string[] = [];
+  const total = rfpDocRows.length;
 
-  for (const doc of rfpDocRows) {
+  for (let di = 0; di < rfpDocRows.length; di++) {
+    const doc = rfpDocRows[di];
+    const docShort = doc.originalFilename.replace(/\.[^.]+$/, '').slice(0, 40);
+    const roleLabel = doc.documentRole === 'rfp_base' ? 'base RFP' : doc.documentRole === 'pws_sow' ? 'PWS/SOW' : 'document';
+    const docProgress = Math.round((di / total) * 80); // reserve last 20% for persist
+
     const pr = parseByDoc.get(doc.id.toString());
     if (!pr) {
       skipped.push(doc.originalFilename);
       continue;
     }
-    // Pass 1 → classify → Pass 2 → verify.
+    // Pass 1 — identify obligation candidates from the parse output.
+    await setShredProgress(jobId, `Identifying obligations in ${roleLabel}: ${docShort}…`, docProgress);
     const candidates = buildCandidates(pr);
+
+    // Pass 1.5 — LLM classify candidates (temperature=0).
+    await setShredProgress(jobId, `Classifying requirements in ${roleLabel}: ${docShort}…`, docProgress + 5);
     const classified = await classifyCandidates(candidates, ctx);
+
+    // Pass 2 — annotate conditionals + verbatim verify.
+    await setShredProgress(jobId, `Verifying requirements in ${roleLabel}: ${docShort}…`, docProgress + 10);
     const annotated = annotateConditionals(classified, pr);
     const verified = verifyAgainstParseResult(annotated, pr);
     const base = verified
       .filter((v) => v.classification.isRequirement)
       .map((v) => ({ ...verifiedToExtracted(v), documentId: doc.id }));
+
     // Pass 3 — IbR traversal against the clause library (deterministic).
+    await setShredProgress(jobId, `Resolving clause references in ${roleLabel}: ${docShort}…`, docProgress + 14);
     const ibr = (await traverseIbr(pr, asOf)).map((r) => ({ ...r, documentId: doc.id }));
     allRows.push(...base, ...ibr);
   }
@@ -262,6 +294,7 @@ export async function shredRequirements(
 
   if (allRows.length === 0) return { ok: true, count: 0, exhausted: true };
 
+  await setShredProgress(jobId, `Saving ${allRows.length} requirement${allRows.length === 1 ? '' : 's'} to the matrix…`, 85);
   const { count } = await persistRequirements(allRows, solicitationId, companyId);
   return { ok: true, count, exhausted: true };
 }
@@ -377,14 +410,24 @@ async function legacyHrlrShred(
   const allNodes: RequirementNode[] = [];
   const allGovByKey = new Map<string, string[]>();
   const docIndexes: { id: bigint; idx: ReturnType<typeof buildSourceIndex> }[] = [];
+  const legacyTotal = rfpDocs.length;
 
-  for (const doc of rfpDocs) {
+  for (let di = 0; di < rfpDocs.length; di++) {
+    const doc = rfpDocs[di];
+    const docShort = doc.name.replace(/\.[^.]+$/, '').slice(0, 40);
+    const roleLabel = doc.role === 'rfp_base' ? 'base RFP' : doc.role === 'pws_sow' ? 'PWS/SOW' : 'document';
+    const docProgress = Math.round((di / legacyTotal) * 75);
+
     let docText = doc.text;
     if (docText.length > MAX_INPUT_CHARS) {
       docText = docText.slice(0, MAX_INPUT_CHARS) + '\n\n[Document truncated to fit context limit]';
     }
     const structuredArr = doc.pr ? [doc.pr] : undefined;
+
+    await setShredProgress(_jobId, `Analyzing ${roleLabel}: ${docShort}…`, docProgress);
     const { system, user } = buildHrlrPrompt(docText, 'solicitation', structuredArr, doc.role ?? undefined);
+
+    await setShredProgress(_jobId, `Extracting requirements from ${roleLabel}: ${docShort}…`, docProgress + 5);
     let ai;
     try {
       ai = await complete(provider, system, user, model, apiKey, SHRED_MAX_TOKENS);
@@ -395,6 +438,7 @@ async function legacyHrlrShred(
     }
     await logUsage({ capability: 'shred', provider, model, companyId, tokenIn: ai.tokenIn, tokenOut: ai.tokenOut });
 
+    await setShredProgress(_jobId, `Resolving requirement graph for ${roleLabel}: ${docShort}…`, docProgress + 10);
     const docLabel = `${doc.name}${doc.role ? ` [${doc.role}]` : ''}`;
     const nodes = parseHrlrNodes(ai.text, docText, docLabel, 'solicitation');
     const graph = resolveGraph(nodes, 'solicitation', docLabel, docText);
@@ -510,6 +554,7 @@ async function legacyHrlrShred(
 
   // Burst B: insert the nodes, then wire parent links (parentId references generated ids, so it needs
   // a second pass — we correlate by sortOrder).
+  await setShredProgress(_jobId, `Saving ${capped.length} requirement${capped.length === 1 ? '' : 's'} to the matrix…`, 82);
   const written = await withTenant(companyId, async (tx) => {
     await tx.requirement.createMany({ data: rows });
     const inserted = await tx.requirement.findMany({
