@@ -188,27 +188,62 @@ export function buildCandidates(result: ParseResult): RequirementCandidate[] {
     const submissionTable = isSubmissionTable(headers);
     const ratingTable = isRatingTable(headers);
 
-    // Determine whether to include this table at all.
-    // Include when: is_obligation_bearing OR is a submission/rating table in an L/M context.
     const inSectionLM = ucf === 'SECTION_L' || ucf === 'SECTION_M';
     const includeTable = tbl.is_obligation_bearing || ((submissionTable || ratingTable) && inSectionLM);
     if (!includeTable && !tbl.is_cdrl) continue;
 
-    // Determine the UCF override for special table types.
     const effectiveUcf: UCFSectionType = ratingTable
       ? 'SECTION_M'
       : submissionTable
         ? 'SECTION_L'
         : ucf;
 
+    // Rating-scale tables: emit ONE grouped candidate containing the full scale rather than one
+    // per rating level. The five rating levels (Outstanding/Good/Acceptable/Marginal/Unacceptable)
+    // are sub-criteria of a single evaluation factor, not five independent factors. Grouping them
+    // keeps the compliance matrix clean and lets the EvaluationPanel display them correctly under
+    // their parent factor node.
+    if (ratingTable) {
+      const rows = tbl.rows ?? [];
+      if (rows.length === 0) continue;
+      const groupedText = rows
+        .map((row) => (row.reconstructed_text || '').trim())
+        .filter(Boolean)
+        .join('\n');
+      if (!groupedText) continue;
+      out.push({
+        candidateId: `${tbl.table_id}-grouped`,
+        sourceText: groupedText,
+        modalVerb: 'will',
+        modalClass: 'MANDATORY',
+        subject: 'Government',
+        subjectInferred: true,
+        verbPhrase: null,
+        object: null,
+        svoConfidence: 'MEDIUM',
+        ucfSectionType: 'SECTION_M',
+        sectionPath: sectionPathOf(sections, tbl.section_id),
+        sectionId: tbl.section_id,
+        paragraphId: tbl.table_id,
+        sentenceId: `${tbl.table_id}-grouped`,
+        pageNumber: tbl.page_number ?? null,
+        isPassive: false,
+        isTableDerived: true,
+        isCdrl: false,
+        tableHeaders: headers,
+        conditionalTriggerIds: [],
+        ibrFlagIds: [],
+        duplicateSourceIds: []
+      });
+      continue;
+    }
+
     for (const row of tbl.rows ?? []) {
       const text = (row.reconstructed_text || '').trim();
       if (!text) continue;
 
       const hasModal = (row.modal_verbs_found?.length ?? 0) > 0;
-      // Row gate: pass if it has a modal verb, is a CDRL, is a submission-structure row,
-      // or is a rating-scale row (all rows matter regardless of grammar).
-      const includeRow = hasModal || tbl.is_cdrl || submissionTable || ratingTable;
+      const includeRow = hasModal || tbl.is_cdrl || submissionTable;
       if (!includeRow) continue;
 
       const rowId = `${tbl.table_id}-r${row.row_index}`;

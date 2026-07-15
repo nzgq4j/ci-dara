@@ -139,6 +139,71 @@ function FactorCard({
 
 // ── Main panel ─────────────────────────────────────────────────────────────────
 
+// A factor card for a governing_factors label that has no matching evaluation_factor node.
+// This happens when the shred correctly identifies which Section M factor an instruction feeds
+// ("Factor 1 – Technical") but that factor wasn't extracted as a standalone evaluation_factor row
+// (e.g. because the rating-scale rows landed instead of the top-level factor node).
+function SyntheticFactorCard({ label, instructions }: { label: string; instructions: EvalRow[] }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className={`${card} overflow-hidden`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surf2"
+      >
+        <span className="mt-0.5 flex-shrink-0 text-t4">
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={FACTOR_CHIP}>
+              <BookOpen className="mr-1 h-2.5 w-2.5" />
+              Section M
+            </span>
+            <span className="rounded bg-[#FEF3C7] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]">
+              inferred
+            </span>
+          </div>
+          <p className="mt-1 text-[13px] font-semibold text-t1">{label}</p>
+          <p className="mt-0.5 text-[11px] text-t5">
+            Factor identified from instruction linkage — not extracted as a standalone evaluation criterion
+          </p>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <span className="font-mono text-[11px] text-t5">
+            {instructions.length} instruction{instructions.length === 1 ? '' : 's'}
+          </span>
+        </div>
+      </button>
+      {open && instructions.length > 0 && (
+        <div className="divide-y divide-line/60 border-t border-line">
+          {instructions.map((inst) => (
+            <div key={inst.id} className="flex items-start gap-3 px-4 py-2.5 pl-11">
+              <span className={`mt-0.5 flex-shrink-0 ${INST_CHIP}`}>
+                <ClipboardList className="mr-1 h-2.5 w-2.5" />
+                Sec L
+              </span>
+              <div className="min-w-0 flex-1">
+                <CitationBadge text={inst.citation} />
+                {inst.detail ? (
+                  <RequirementDetail detail={inst.detail}>
+                    <span className="mt-0.5 cursor-pointer text-[12.5px] leading-snug text-t2 hover:underline">
+                      {inst.name}
+                    </span>
+                  </RequirementDetail>
+                ) : (
+                  <p className="mt-0.5 text-[12.5px] leading-snug text-t2">{inst.name}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EvaluationPanel({ rows }: { rows: EvalRow[] }) {
   const { factors, instructionsByFactor, unlinked } = useMemo(() => {
     const evalFactors = rows.filter((r) => r.source === 'evaluation_factor');
@@ -167,26 +232,41 @@ export default function EvaluationPanel({ rows }: { rows: EvalRow[] }) {
 
     // Map each Section M factor to the instructions that govern it.
     const instByFactorId = new Map<string, EvalRow[]>();
+    // Synthetic buckets for governing_factors labels with no matching factor node.
+    // This handles the case where governing_factors says "Factor 1 – Technical" but the
+    // extracted evaluation_factor rows are rating-scale rows, not the top-level factor node.
+    const instBySyntheticLabel = new Map<string, EvalRow[]>();
     const linkedInstIds = new Set<string>();
 
     for (const inst of instructions) {
       if (!inst.governingFactors || inst.governingFactors.length === 0) continue;
       for (const gfLabel of inst.governingFactors) {
         const factor = resolve(gfLabel);
-        if (!factor) continue;
-        const bucket = instByFactorId.get(factor.id) ?? [];
-        if (!bucket.find((x) => x.id === inst.id)) bucket.push(inst);
-        instByFactorId.set(factor.id, bucket);
+        if (factor) {
+          const bucket = instByFactorId.get(factor.id) ?? [];
+          if (!bucket.find((x) => x.id === inst.id)) bucket.push(inst);
+          instByFactorId.set(factor.id, bucket);
+        } else {
+          const label = gfLabel.trim();
+          const bucket = instBySyntheticLabel.get(label) ?? [];
+          if (!bucket.find((x) => x.id === inst.id)) bucket.push(inst);
+          instBySyntheticLabel.set(label, bucket);
+        }
         linkedInstIds.add(inst.id);
       }
     }
 
     const unlinkedInstructions = instructions.filter((i) => !linkedInstIds.has(i.id));
+    const syntheticFactorEntries: { label: string; instructions: EvalRow[] }[] = [];
+    instBySyntheticLabel.forEach((insts, label) => {
+      syntheticFactorEntries.push({ label, instructions: insts });
+    });
 
     return {
       factors: evalFactors,
       instructionsByFactor: instByFactorId,
       unlinked: unlinkedInstructions,
+      syntheticFactors: syntheticFactorEntries,
     };
   }, [rows]);
 
@@ -263,6 +343,9 @@ export default function EvaluationPanel({ rows }: { rows: EvalRow[] }) {
             factor={f}
             instructions={instructionsByFactor.get(f.id) ?? []}
           />
+        ))}
+        {syntheticFactors.map(({ label, instructions: insts }) => (
+          <SyntheticFactorCard key={label} label={label} instructions={insts} />
         ))}
         {unlinked.length > 0 && (
           <FactorCard factor={null} instructions={unlinked} />
