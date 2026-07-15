@@ -1,12 +1,16 @@
 // Pass 2 — conditional annotation from the ParseResult (deterministic; no re-detection).
 //
-// Matches `conditional_triggers[]` to Pass-1 candidates by sentence_id, attaching each trigger as a
-// ConditionAnnotation. A nested exception stack (UNLESS/EXCEPT) links each exception to the condition
-// it modifies via parent_condition_id. Triggers that match no candidate become their own requirement,
-// flagged for human review (never silently dropped).
+// Matches `conditional_triggers[]` to Pass-1 candidates and ATTACHES each as a ConditionAnnotation.
+// A nested exception stack (UNLESS/EXCEPT) links each exception to the condition it modifies via
+// parent_condition_id.
+//
+// IMPORTANT (fix, 2026-07-13): this pass ANNOTATES ONLY — it never spawns a new requirement. An earlier
+// version created a requirement for every trigger that didn't exact-match a candidate, which produced
+// hundreds of generic "Conditional obligation (IF)" junk rows. Matching now falls back from exact
+// sentence_id to same-paragraph, and any trigger that still matches nothing is simply dropped (logged),
+// not turned into a row.
 
 import type { ParseResult, ConditionalTrigger } from '@/utils/dara/parse-result';
-import { sectionPathOf } from './section-classifier';
 import type { ClassifiedCandidate, AnnotatedCandidate, ConditionAnnotation } from './types';
 
 // Deterministic ordering for the exception stack: by sentence_id (document order).
@@ -20,8 +24,7 @@ export function annotateConditionals(
 ): AnnotatedCandidate[] {
   const triggers = orderTriggers(result.conditional_triggers ?? []);
 
-  // Stack-based parent linking for nested exceptions. A base condition (IF/WHEN/UPON) opens a scope; an
-  // exception (UNLESS/EXCEPT) attaches to the currently-open base condition.
+  // Stack-based parent linking for nested exceptions.
   const parentOf = new Map<string, string | null>();
   const stack: string[] = [];
   for (const t of triggers) {
@@ -42,71 +45,41 @@ export function annotateConditionals(
     parentConditionId: parentOf.get(t.trigger_id) ?? null
   });
 
-  // Candidates by sentence_id for exact matching.
+  // sentence_id → paragraph_id, so a trigger can fall back to annotating same-paragraph candidates.
+  const paraBySentence = new Map<string, string>();
+  for (const s of result.sentences ?? []) paraBySentence.set(s.sentence_id, s.paragraph_id);
+
+  // Candidate indexes for matching.
   const bySentence = new Map<string, ClassifiedCandidate[]>();
+  const byParagraph = new Map<string, ClassifiedCandidate[]>();
   for (const c of classified) {
-    const arr = bySentence.get(c.sentenceId) ?? [];
-    arr.push(c);
-    bySentence.set(c.sentenceId, arr);
+    const s = bySentence.get(c.sentenceId) ?? [];
+    s.push(c);
+    bySentence.set(c.sentenceId, s);
+    const p = byParagraph.get(c.paragraphId) ?? [];
+    p.push(c);
+    byParagraph.set(c.paragraphId, p);
   }
 
-  const matched = new Set<string>();
   const annotatedById = new Map<string, ConditionAnnotation[]>();
+  let dropped = 0;
   for (const t of triggers) {
-    const hits = bySentence.get(t.sentence_id);
-    if (hits && hits.length) {
-      matched.add(t.trigger_id);
-      for (const c of hits) {
-        const arr = annotatedById.get(c.candidateId) ?? [];
-        arr.push(toAnnotation(t));
-        annotatedById.set(c.candidateId, arr);
-      }
+    let hits = bySentence.get(t.sentence_id);
+    if (!hits || hits.length === 0) {
+      const para = paraBySentence.get(t.sentence_id);
+      hits = para ? byParagraph.get(para) : undefined;
+    }
+    if (!hits || hits.length === 0) {
+      dropped++;
+      continue;
+    }
+    for (const c of hits) {
+      const arr = annotatedById.get(c.candidateId) ?? [];
+      arr.push(toAnnotation(t));
+      annotatedById.set(c.candidateId, arr);
     }
   }
+  if (dropped > 0) console.warn(`[shred] Pass 2: ${dropped} conditional trigger(s) matched no requirement — dropped (not turned into rows)`);
 
-  const out: AnnotatedCandidate[] = classified.map((c) => ({
-    ...c,
-    conditions: annotatedById.get(c.candidateId) ?? []
-  }));
-
-  // Unmatched triggers → a flagged requirement of their own.
-  for (const t of triggers) {
-    if (matched.has(t.trigger_id)) continue;
-    out.push({
-      candidateId: `cond-${t.trigger_id}`,
-      sourceText: t.scope_text || t.trigger_text,
-      modalVerb: 'shall',
-      modalClass: 'MANDATORY',
-      subject: 'Contractor',
-      subjectInferred: true,
-      verbPhrase: null,
-      object: null,
-      svoConfidence: 'LOW',
-      ucfSectionType: 'OTHER',
-      sectionPath: sectionPathOf(result.sections, null),
-      sectionId: null,
-      paragraphId: '',
-      sentenceId: t.sentence_id,
-      pageNumber: null,
-      isPassive: false,
-      isTableDerived: false,
-      isCdrl: false,
-      conditionalTriggerIds: [t.trigger_id],
-      ibrFlagIds: [],
-      duplicateSourceIds: [],
-      classification: {
-        id: `cond-${t.trigger_id}`,
-        isRequirement: true,
-        source: 'OTHER',
-        disposition: 'compliance',
-        title: `Conditional obligation (${t.condition_type})`,
-        normalizedMeaning: t.scope_text || t.trigger_text,
-        parentCandidateId: null,
-        confidence: 'LOW'
-      },
-      conditions: [toAnnotation(t)]
-    });
-  }
-
-  return out;
+  return classified.map((c) => ({ ...c, conditions: annotatedById.get(c.candidateId) ?? [] }));
 }

@@ -61,7 +61,9 @@ export async function traverseIbr(
   ): ExtractedRequirement => ({
     candidateId: `ibr-${normalizeCitation(citationType, citationText).identifier}`.replace(/\s+/g, '_'),
     title: `Incorporated clause ${citationText}`.slice(0, 300),
-    description: plainText,
+    // Truncate the clause body for the matrix — full versions of a clause can be 100k+ chars. The
+    // complete text stays in the clause library (dara_clause_versions).
+    description: plainText.length > 2000 ? `${plainText.slice(0, 2000)}… [truncated — full text in clause library]` : plainText,
     normalizedMeaning: `Comply with the requirements of ${citationText} (${kind}).`,
     source: 'far_clause',
     disposition: 'compliance',

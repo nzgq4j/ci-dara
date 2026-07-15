@@ -11,14 +11,25 @@ import { llmSourceToDb, deriveReviewStatus } from './types';
 
 const CLAUSE_NUM = /\b(\d{2,3}\.\d{3}(?:-\d{1,4})?)\b/;
 
+// Derive a citation when the section path is empty (typical for PDFs with no parsed sections): use a
+// leading outline number ("4.1.2.2 ..."), else a FAR/DFARS clause number, else a page marker, else ''.
+function deriveCitation(sourceText: string, sectionPath: string, pageNumber: number | null): string {
+  if (sectionPath) return sectionPath.slice(0, 200);
+  const lead = sourceText.match(/^\s*((?:[A-Z]\.)?\d+(?:\.\d+){1,4})\b/);
+  if (lead) return lead[1];
+  const clause = sourceText.match(/\b((?:FAR|DFARS)\s+)?(\d{2,3}\.\d{3}(?:-\d{1,4})?)\b/);
+  if (clause) return `${clause[1] ?? ''}${clause[2]}`.trim();
+  return pageNumber != null ? `p.${pageNumber}` : '';
+}
+
 /** Map a verified (Pass 1/2) candidate to the persist row shape. Assumes classification.isRequirement. */
 export function verifiedToExtracted(v: VerifiedCandidate): ExtractedRequirement {
   const c = v.classification;
   const source = llmSourceToDb(c.source);
-  const flags: string[] = [];
-  if (v.subjectInferred) flags.push('subject_inferred');
-  if (v.duplicateSourceIds.length) flags.push(`merged:${v.duplicateSourceIds.length}`);
   const far = (v.sourceText.match(CLAUSE_NUM) ?? [''])[0];
+  // NOTE: `flags` drives reviewStatus, so it must hold ONLY genuine quality issues. subject_inferred
+  // (very common — passive voice) and dedup-merge are informational and live in hrlr, not flags.
+  const flags: string[] = [];
   return {
     candidateId: v.candidateId,
     title: c.title,
@@ -26,7 +37,7 @@ export function verifiedToExtracted(v: VerifiedCandidate): ExtractedRequirement 
     normalizedMeaning: c.normalizedMeaning,
     source,
     disposition: c.disposition,
-    citation: (v.sectionPath || '').slice(0, 200),
+    citation: deriveCitation(v.sourceText, v.sectionPath, v.pageNumber),
     farReference: source === 'far_clause' ? far : '',
     sourceAnchor: v.sentenceId || null,
     sectionId: v.sectionId,
@@ -42,7 +53,9 @@ export function verifiedToExtracted(v: VerifiedCandidate): ExtractedRequirement 
     citationChain: [],
     traversalDepth: 0,
     versionResolved: false,
-    passOrigin: v.candidateId.startsWith('cond-') ? 2 : 1,
+    passOrigin: 1,
+    subjectInferred: v.subjectInferred,
+    mergedCount: v.duplicateSourceIds.length,
     documentId: null
   };
 }
@@ -98,6 +111,8 @@ export async function persistRequirements(
         confidence: r.confidence,
         verbatimVerified: r.verbatimVerified,
         flags: r.flags,
+        subjectInferred: r.subjectInferred ?? false,
+        mergedCount: r.mergedCount ?? 0,
         conditionalTriggerIds: r.conditionalTriggerIds,
         conditions: r.conditions,
         ibrFlags: r.ibrFlags,

@@ -119,6 +119,9 @@ export interface ExtractedRequirement {
   traversalDepth: number;
   versionResolved: boolean;
   passOrigin: 1 | 2 | 3;
+  // Informational (stored in hrlr, NOT in `flags` — these must not force a review flag).
+  subjectInferred?: boolean;
+  mergedCount?: number;
   // Source solicitation document this row was extracted from (stamped per-doc by the orchestrator).
   documentId?: bigint | null;
 }
