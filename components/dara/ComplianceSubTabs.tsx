@@ -24,6 +24,7 @@ export default function ComplianceSubTabs({
   requirementsCount,
   saveAction,
   setReviewStatusAction,
+  saveGoverningFactorsAction,
 }: {
   sid: string;
   matrixRows: MatrixRowData[];
@@ -31,6 +32,7 @@ export default function ComplianceSubTabs({
   requirementsCount: number;
   saveAction: (fd: FormData) => Promise<{ ok: boolean }>;
   setReviewStatusAction?: (fd: FormData) => Promise<{ ok: boolean }>;
+  saveGoverningFactorsAction?: (fd: FormData) => Promise<{ ok: boolean }>;
 }) {
   const [active, setActive] = useState<TabId>('matrix');
 
@@ -77,7 +79,11 @@ export default function ComplianceSubTabs({
 
       {/* Evaluation Criteria tab */}
       {active === 'evaluation' && (
-        <EvaluationPanel rows={evalRows} />
+        <EvaluationPanel
+          rows={evalRows}
+          solId={sid}
+          saveGoverningFactorsAction={saveGoverningFactorsAction}
+        />
       )}
     </div>
   );

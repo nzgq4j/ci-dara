@@ -473,6 +473,38 @@ async function saveMatrixRow(formData: FormData): Promise<{ ok: boolean }> {
   return { ok: true };
 }
 
+// Update the governing_factors (L→M linkage) on a requirement row.
+// Called by the EvaluationPanel drag-and-drop assignment UI on auto-save.
+async function saveGoverningFactorsAction(formData: FormData): Promise<{ ok: boolean }> {
+  'use server';
+  const daraUser = await authedUser();
+  const id = BigInt(String(formData.get('requirementId')));
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  // governing_factors is a JSON-encoded string[] sent by the client.
+  let factors: string[] = [];
+  try {
+    const raw = String(formData.get('governingFactors') ?? '[]');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      factors = parsed.map((x: unknown) => String(x).trim()).filter(Boolean).slice(0, 12);
+    }
+  } catch {
+    return { ok: false };
+  }
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.requirement.findFirst({
+      where: { id, companyId: daraUser.companyId, solicitationId: solId }
+    });
+    if (!owned) return false;
+    await tx.requirement.update({ where: { id }, data: { governingFactors: factors } });
+    return true;
+  });
+  if (!ok) return { ok: false };
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
+}
+
 async function deleteRequirement(formData: FormData) {
   'use server';
   const daraUser = await authedUser();
@@ -1919,6 +1951,7 @@ export default async function SolicitationDetailPage({
         requirementsCount={requirements.length}
         saveAction={saveMatrixRow}
         setReviewStatusAction={setReviewStatusAction}
+        saveGoverningFactorsAction={saveGoverningFactorsAction}
       />
 
       {/* Removed by amendment (retained, excluded from the active matrix) */}
