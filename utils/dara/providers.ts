@@ -102,6 +102,133 @@ async function aiFetch(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
+// ── Anthropic Message Batches API ─────────────────────────────────────────────
+// Submits multiple requests in a single HTTP call; Anthropic processes them in
+// parallel server-side. Eliminates the Vercel serialization that was causing
+// Promise.all chunks to execute sequentially.
+
+export interface BatchRequest {
+  customId: string;
+  system: string;
+  user: string;
+}
+
+export interface BatchResult {
+  customId: string;
+  text: string;
+  tokenIn: number;
+  tokenOut: number;
+  error: string | null;
+}
+
+// Submit a batch and poll until all results are ready. Returns results in the
+// same order as requests. Polling interval backs off from 2s to 10s.
+export async function anthropicBatch(
+  requests: BatchRequest[],
+  model: string,
+  apiKey: string,
+  maxTokens: number,
+  timeoutMs = 240_000
+): Promise<BatchResult[]> {
+  // Submit batch
+  const submitRes = await aiFetch('https://api.anthropic.com/v1/messages/batches', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'message-batches-2024-09-24'
+    },
+    body: JSON.stringify({
+      requests: requests.map(r => ({
+        custom_id: r.customId,
+        params: {
+          model,
+          max_tokens: maxTokens,
+          system: r.system,
+          messages: [{ role: 'user', content: r.user }]
+        }
+      }))
+    })
+  });
+
+  const submitData: any = await submitRes.json().catch(() => ({}));
+  if (!submitRes.ok) {
+    throw new Error(submitData?.error?.message ?? `Anthropic Batch submit HTTP ${submitRes.status}`);
+  }
+
+  const batchId: string = submitData.id;
+  const deadline = Date.now() + timeoutMs;
+  let pollInterval = 2_000;
+
+  // Poll until processing_status === 'ended'
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, pollInterval));
+    pollInterval = Math.min(pollInterval * 1.5, 10_000);
+
+    const statusRes = await aiFetch(`https://api.anthropic.com/v1/messages/batches/${batchId}`, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'message-batches-2024-09-24'
+      }
+    });
+
+    const statusData: any = await statusRes.json().catch(() => ({}));
+    if (!statusRes.ok) continue; // transient — keep polling
+
+    if (statusData.processing_status !== 'ended') continue;
+
+    // Fetch results JSONL
+    const resultsRes = await aiFetch(statusData.results_url, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'message-batches-2024-09-24'
+      }
+    });
+
+    const resultsText = await resultsRes.text();
+    const lines = resultsText.trim().split('\n').filter(Boolean);
+    const resultMap = new Map<string, BatchResult>();
+
+    for (const line of lines) {
+      try {
+        const item: any = JSON.parse(line);
+        const customId: string = item.custom_id;
+        if (item.result?.type === 'succeeded') {
+          resultMap.set(customId, {
+            customId,
+            text: item.result.message?.content?.[0]?.text ?? '',
+            tokenIn: Number(item.result.message?.usage?.input_tokens ?? 0),
+            tokenOut: Number(item.result.message?.usage?.output_tokens ?? 0),
+            error: null
+          });
+        } else {
+          resultMap.set(customId, {
+            customId,
+            text: '',
+            tokenIn: 0,
+            tokenOut: 0,
+            error: item.result?.error?.message ?? 'Batch item failed'
+          });
+        }
+      } catch { /* skip malformed line */ }
+    }
+
+    // Return in request order, filling any missing results as errors
+    return requests.map(r => resultMap.get(r.customId) ?? {
+      customId: r.customId,
+      text: '',
+      tokenIn: 0,
+      tokenOut: 0,
+      error: 'Result missing from batch response'
+    });
+  }
+
+  throw new Error(`Anthropic batch ${batchId} did not complete within ${Math.round(timeoutMs / 1000)}s`);
+}
+
 /** Dispatch a completion to the configured provider. */
 export async function complete(
   provider: string,
