@@ -26,7 +26,7 @@ import { logUsage } from '@/utils/dara/usage';
 import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
-import { shredRequirements } from '@/utils/dara/requirements';
+import { runFSEA } from '@/utils/dara/fsea/orchestrator';
 import { fetchClauseSync, upsertClauses } from '@/utils/dara/extraction/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
@@ -809,14 +809,14 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
         // to mine so a dense solicitation finishes across ticks; only mark the job done once the
         // shred reports it's fully mined. Surface a hard failure (e.g. AI/API error) via throw so
         // it routes through the retry/fail path instead of silently leaving an empty matrix.
-        const shredRes = await shredRequirements(
+        const shredRes = await runFSEA(
           BigInt(payload.solicitationId),
           companyId,
           deadlineMs,
-          pending.id,          // ← pass job id so shredRequirements can write progress labels
+          pending.id,
         );
-        if (!shredRes.ok) throw new Error(shredRes.error ?? 'Requirements shred failed.');
-        done = shredRes.exhausted ?? true;
+        if (!shredRes.ok) throw new Error(shredRes.error ?? 'FSEA pipeline failed.');
+        done = true; // FSEA is single-pass; always done after one run
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.kind === 'reparse' && payload.solDocId) {
