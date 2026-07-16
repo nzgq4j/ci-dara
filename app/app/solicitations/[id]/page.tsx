@@ -49,7 +49,8 @@ import AnnotatedExportButton from '@/components/dara/AnnotatedExportButton';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
 import EvaluationPanel, { type EvalRow } from '@/components/dara/EvaluationPanel';
-import ComplianceSubTabs from '@/components/dara/ComplianceSubTabs';
+import ComplianceSubTabs, { type FseaOutput } from '@/components/dara/ComplianceSubTabs';
+import type { P10MatrixRow } from '@/utils/dara/fsea/types';
 import SolMetaEditor from '@/components/dara/SolMetaEditor';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
@@ -1850,6 +1851,43 @@ export default async function SolicitationDetailPage({
     detail: matrixRows.find((m) => m.id === r.id.toString())?.detail
   }));
 
+  // Parse FSEA pipeline output stored in solicitation notes (written by writeFseaResults).
+  // Safe to fail — if notes is absent or malformed the sub-tabs show empty states.
+  let fseaOutput: FseaOutput | null = null;
+  let sectionARows: P10MatrixRow[] = [];
+  try {
+    if (solicitation.notes) {
+      const parsed = JSON.parse(solicitation.notes as string);
+      if (parsed?.fseaOutput) {
+        fseaOutput = parsed.fseaOutput as FseaOutput;
+        // Build Section A rows from dara_requirements hrlr metadata
+        // (the writing plan needs the proposalResponseObligation from description)
+        sectionARows = requirements
+          .filter(r => r.hrlr && (r.hrlr as Record<string, unknown>)?.fseaPassRow === true
+            && (r.hrlr as Record<string, unknown>)?.isChecklist !== true)
+          .map((r, i) => {
+            const h = r.hrlr as Record<string, unknown>;
+            return {
+              reqId: r.citation ?? `req-${i}`,
+              paragraphId: (h?.paragraphId as string) ?? 'Other',
+              requirement: r.name,
+              proposalResponseObligation: r.description ?? '',
+              evaluationCriterion: (h?.evaluationCriterion as string) ?? '',
+              strengthGate: (h?.strengthGate as string) ?? null,
+              crossReference: (h?.crossReference as string) ?? null,
+              pageSignal: (h?.pageSignal as string) ?? 'Medium',
+              priority: (h?.priority as P10MatrixRow['priority']) ?? 'medium',
+              writingSequenceOrder: (h?.writingSequenceOrder as number) ?? i,
+              pageBudgetMin: (h?.pageBudgetMin as number) ?? null,
+              pageBudgetMax: (h?.pageBudgetMax as number) ?? null,
+            } satisfies P10MatrixRow;
+          });
+      }
+    }
+  } catch {
+    // Notes parse failed — sub-tabs show empty states gracefully
+  }
+
   const compliancePanel = (
     <div className="space-y-4">
 
@@ -1947,11 +1985,13 @@ export default async function SolicitationDetailPage({
       <ComplianceSubTabs
         sid={sid}
         matrixRows={matrixRows}
+        sectionARows={sectionARows}
         evalRows={evalRows}
         requirementsCount={requirements.length}
         saveAction={saveMatrixRow}
         setReviewStatusAction={setReviewStatusAction}
         saveGoverningFactorsAction={saveGoverningFactorsAction}
+        fseaOutput={fseaOutput}
       />
 
       {/* Removed by amendment (retained, excluded from the active matrix) */}

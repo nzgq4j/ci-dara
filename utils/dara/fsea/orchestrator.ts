@@ -3,8 +3,17 @@
 // Replaces shredRequirements(). Sequences all 10 passes, writes progress labels to the
 // job queue row after each pass, validates output at each stage, and persists results.
 //
-// Each pass is a focused LLM call at temperature 0. The output of each pass is passed as
-// context to the next. No pass attempts to do more than its defined scope.
+// Error handling strategy:
+//   - Passes 2 and 3 are hard gates: without candidates and without an evaluation model
+//     the entire pipeline is meaningless. Failure here aborts with a clear user-facing error.
+//   - Passes 4 and 5 are soft-retryable: if JSON parse fails, one retry with a shorter
+//     context is attempted before aborting.
+//   - Passes 6-9 are graceful-degradable: failure saves what exists and flags the gap.
+//     The matrix is still written; the missing pass is noted in the executive summary.
+//   - Pass 10 is hard: without the matrix there is nothing to save. On failure, partial
+//     data from passes 2-9 is saved directly so the run is not a total loss.
+//   - Every pass timeout (deadline exceeded) saves current state and marks the job done
+//     rather than failing — the UI shows partial output with a resume option.
 
 import { withTenant, prismaAdmin } from '@/utils/prisma';
 import { decryptField } from '@/utils/dara/crypto';
@@ -21,10 +30,13 @@ import type {
   FSEAResult, P1DocumentStructure, P2Output, P3Output, P4Output,
   P5Output, P6Output, P7Output, P8Output, P9Output, P10Output
 } from './types';
-import { writeFseaResults } from './persist/write-results';
+import { writeFseaResults, writeFseaPartial } from './persist/write-results';
 
 const MAX_TOKENS = 32000;
 const MAX_DOC_CHARS = 500_000;
+// Context budget per pass — each pass gets full doc plus prior outputs.
+// Trim prior outputs to this many chars when building user message.
+const MAX_PRIOR_CONTEXT_CHARS = 80_000;
 
 // ── Progress helper ────────────────────────────────────────────────────────────
 
@@ -35,74 +47,191 @@ async function setProgress(jobId: bigint | undefined, label: string, progress: n
       where: { id: jobId },
       data: { progressLabel: label, progress }
     });
-  } catch { /* non-fatal */ }
+  } catch { /* non-fatal — progress label is cosmetic */ }
 }
 
-// ── JSON parse helper ──────────────────────────────────────────────────────────
+// ── JSON parse helper with retry ───────────────────────────────────────────────
 
-function parsePassOutput<T>(raw: string, passName: string): T | null {
+function parsePassOutput<T>(raw: string, passName: string): { data: T; error: null } | { data: null; error: string } {
+  // Strip markdown fences the model occasionally adds despite instructions
+  const clean = raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/, '')
+    .trim();
+
+  // Attempt 1: direct parse
   try {
-    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-    return JSON.parse(clean) as T;
-  } catch (e) {
-    console.error(`[fsea] ${passName} JSON parse failed:`, e instanceof Error ? e.message : e);
-    console.error(`[fsea] ${passName} raw output (first 500 chars):`, raw.slice(0, 500));
-    return null;
+    return { data: JSON.parse(clean) as T, error: null };
+  } catch (e1) {
+    // Attempt 2: extract the outermost JSON object or array
+    const objMatch = clean.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+    if (objMatch) {
+      try {
+        return { data: JSON.parse(objMatch[1]) as T, error: null };
+      } catch { /* fall through */ }
+    }
+    const msg = e1 instanceof Error ? e1.message : 'JSON parse error';
+    console.error(`[fsea] ${passName} parse failed: ${msg}`);
+    console.error(`[fsea] ${passName} raw (first 800 chars): ${raw.slice(0, 800)}`);
+    return { data: null, error: `${passName} produced invalid JSON: ${msg}` };
   }
 }
 
-// ── Pass 1 — Document structure (deterministic, no LLM) ───────────────────────
+// Validate minimum shape requirements for each pass output.
+// Returns a string describing the violation, or null if valid.
+function validatePassOutput(data: unknown, passName: string): string | null {
+  if (!data || typeof data !== 'object') return `${passName} output is not an object`;
+  const obj = data as Record<string, unknown>;
+
+  switch (passName) {
+    case 'Pass 2':
+      if (!Array.isArray(obj.candidates)) return 'Pass 2: candidates array missing';
+      if ((obj.candidates as unknown[]).length === 0) return 'Pass 2: no candidates extracted — document may be unreadable or contain no requirements';
+      return null;
+    case 'Pass 3':
+      if (!Array.isArray(obj.factors)) return 'Pass 3: factors array missing';
+      if ((obj.factors as unknown[]).length === 0) return 'Pass 3: no evaluation factors found — check that Section M or evaluation criteria language is present in the document';
+      return null;
+    case 'Pass 4':
+      if (!Array.isArray(obj.criteria)) return 'Pass 4: criteria array missing';
+      if (!Array.isArray(obj.factors)) return 'Pass 4: factors array missing';
+      return null;
+    case 'Pass 5':
+      if (!Array.isArray(obj.classified)) return 'Pass 5: classified array missing';
+      return null;
+    case 'Pass 10':
+      if (!Array.isArray(obj.sectionA)) return 'Pass 10: sectionA array missing';
+      if ((obj.sectionA as unknown[]).length === 0) return 'Pass 10: evaluation matrix is empty — no actionable requirements were produced';
+      return null;
+    default:
+      return null; // passes 6-9 are graceful-degradable
+  }
+}
+
+// ── LLM pass runner ────────────────────────────────────────────────────────────
+
+interface LlmPassOptions {
+  system: string;
+  user: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  companyId: bigint;
+  passName: string;
+  retryOnParseFailure?: boolean;
+}
+
+async function runLlmPass<T>(
+  opts: LlmPassOptions
+): Promise<{ data: T; error: null } | { data: null; error: string }> {
+  const { system, user, provider, model, apiKey, companyId, passName, retryOnParseFailure = false } = opts;
+
+  const attempt = async (userContent: string): Promise<string | null> => {
+    try {
+      const result = await complete(provider, system, userContent, model, apiKey, MAX_TOKENS);
+      await logUsage({
+        capability: 'shred',
+        provider,
+        model,
+        companyId,
+        tokenIn: result.tokenIn,
+        tokenOut: result.tokenOut
+      });
+      return result.text;
+    } catch (e) {
+      await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
+      const msg = e instanceof Error ? e.message : 'unknown error';
+      console.error(`[fsea] ${passName} LLM call failed: ${msg}`);
+      return null;
+    }
+  };
+
+  // First attempt with full context
+  const raw = await attempt(user);
+  if (!raw) return { data: null, error: `${passName}: AI call failed. Check provider API key and quota.` };
+
+  const parsed = parsePassOutput<T>(raw, passName);
+  if (parsed.data !== null) {
+    const valid = validatePassOutput(parsed.data, passName);
+    if (valid) return { data: null, error: valid };
+    return { data: parsed.data, error: null };
+  }
+
+  // Retry with a clarifying prefix when parse fails and retry is enabled
+  if (retryOnParseFailure) {
+    console.warn(`[fsea] ${passName} retrying after parse failure`);
+    const retryUser = `IMPORTANT: Your previous response could not be parsed as JSON. Return ONLY a valid JSON object — no prose, no markdown code fences, no explanation. Begin your response with { and end with }.\n\n${user.slice(0, MAX_PRIOR_CONTEXT_CHARS)}`;
+    const retryRaw = await attempt(retryUser);
+    if (!retryRaw) return { data: null, error: `${passName}: retry AI call also failed.` };
+    const retryParsed = parsePassOutput<T>(retryRaw, `${passName} (retry)`);
+    if (retryParsed.data !== null) {
+      const valid = validatePassOutput(retryParsed.data, passName);
+      if (valid) return { data: null, error: valid };
+      return { data: retryParsed.data, error: null };
+    }
+    return { data: null, error: `${passName}: produced invalid JSON on both attempts. ${parsed.error}` };
+  }
+
+  return { data: null, error: parsed.error };
+}
+
+// ── Pass 1 — Document assembly (deterministic, no LLM) ────────────────────────
 
 async function runPass1(
   solId: bigint,
   companyId: bigint
-): Promise<P1DocumentStructure | null> {
+): Promise<{ structure: P1DocumentStructure; error: null } | { structure: null; error: string }> {
   const loaded = await withTenant(companyId, async (tx) => {
-    const sol = await tx.solicitation.findFirst({
+    return tx.solicitation.findFirst({
       where: { id: solId, companyId },
       include: { solDocs: true }
     });
-    return sol;
   });
 
-  if (!loaded) return null;
+  if (!loaded) return { structure: null, error: 'Solicitation not found.' };
 
   const SHRED_ELIGIBLE = new Set(['rfp_base', 'pws_sow']);
-  const eligibleDocs = loaded.solDocs.filter(
-    (d) => d.docType === 'rfp' && d.extractionStatus === 'complete'
-      && (!d.documentRole || SHRED_ELIGIBLE.has(d.documentRole ?? ''))
-  );
+  const allDocs = loaded.solDocs.filter(d => d.docType === 'rfp' && d.extractionStatus === 'complete');
+  const eligibleDocs = allDocs.filter(d => !d.documentRole || SHRED_ELIGIBLE.has(d.documentRole ?? ''));
+  const skipped = allDocs.filter(d => d.documentRole && !SHRED_ELIGIBLE.has(d.documentRole ?? ''));
 
-  if (eligibleDocs.length === 0) return null;
+  if (eligibleDocs.length === 0) {
+    const hint = allDocs.length > 0
+      ? `${allDocs.length} document(s) are uploaded but none have eligible roles (rfp_base or pws_sow). Assign document roles on the Documents tab.`
+      : 'No extracted documents found. Upload the solicitation and wait for extraction to complete.';
+    return { structure: null, error: hint };
+  }
 
-  // Load parse results for structured text, fall back to extracted text
   const docTexts: string[] = [];
   const packageInventory: P1DocumentStructure['packageInventory'] = [];
+  const warnings: string[] = [];
 
   for (const doc of eligibleDocs) {
-    const parseRows = await withTenant(companyId, async (tx) => {
-      return tx.daraParseResult.findMany({
+    // Try structured parse result first
+    const parseRows = await withTenant(companyId, async (tx) =>
+      tx.daraParseResult.findMany({
         where: { solDocId: doc.id, supersededAt: null },
         orderBy: { id: 'desc' },
         take: 1
-      });
-    });
+      })
+    );
 
     let text = '';
     if (parseRows.length > 0) {
       const pr = asParseResult(parseRows[0].result);
-      if (pr) {
-        text = joinParagraphs(pr);
-      }
+      if (pr) text = joinParagraphs(pr);
     }
+    // Fall back to flat extracted text
     if (!text.trim()) {
       text = decryptField(doc.extractedText) ?? '';
     }
 
-    if (text.trim()) {
-      docTexts.push(`=== DOCUMENT: ${doc.originalFilename} [${doc.documentRole ?? 'unclassified'}] ===\n\n${text}`);
+    if (!text.trim()) {
+      warnings.push(`${doc.originalFilename}: text extraction is empty — skipping this document`);
+      continue;
     }
 
+    docTexts.push(`=== DOCUMENT: ${doc.originalFilename} [${doc.documentRole ?? 'unclassified'}] ===\n\n${text}`);
     packageInventory.push({
       name: doc.originalFilename,
       role: (doc.documentRole as P1DocumentStructure['packageInventory'][0]['role']) ?? 'other',
@@ -110,47 +239,43 @@ async function runPass1(
     });
   }
 
+  for (const doc of skipped) {
+    packageInventory.push({ name: doc.originalFilename, role: 'other', present: false });
+  }
+
+  if (docTexts.length === 0) {
+    return { structure: null, error: `All eligible documents have empty text. ${warnings.join('; ')}` };
+  }
+
+  if (warnings.length > 0) {
+    console.warn('[fsea] Pass 1 warnings:', warnings.join('; '));
+  }
+
   let documentText = docTexts.join('\n\n');
   if (documentText.length > MAX_DOC_CHARS) {
-    documentText = documentText.slice(0, MAX_DOC_CHARS) + '\n\n[Document truncated to context limit]';
+    console.warn(`[fsea] Document text truncated from ${documentText.length} to ${MAX_DOC_CHARS} chars`);
+    documentText = documentText.slice(0, MAX_DOC_CHARS) + '\n\n[Document truncated — remaining text omitted to fit context limit]';
   }
 
   return {
-    packageInventory,
-    sections: [],          // populated by the LLM passes — P1 just provides the text
-    criticalParagraphs: [],
-    cdrlItems: [],
-    documentText
+    structure: {
+      packageInventory,
+      sections: [],
+      criticalParagraphs: [],
+      cdrlItems: [],
+      documentText
+    },
+    error: null
   };
 }
 
-// ── Generic LLM pass runner ────────────────────────────────────────────────────
+// ── Trim prior context to fit within budget ────────────────────────────────────
 
-async function runLlmPass(
-  system: string,
-  userContent: string,
-  provider: string,
-  model: string,
-  apiKey: string,
-  companyId: bigint,
-  passName: string
-): Promise<string | null> {
-  try {
-    const result = await complete(provider, system, userContent, model, apiKey, MAX_TOKENS);
-    await logUsage({
-      capability: 'shred',
-      provider,
-      model,
-      companyId,
-      tokenIn: result.tokenIn,
-      tokenOut: result.tokenOut
-    });
-    return result.text;
-  } catch (e) {
-    await logUsage({ capability: 'shred', provider, model, companyId, ok: false });
-    console.error(`[fsea] ${passName} LLM call failed:`, e instanceof Error ? e.message : e);
-    return null;
-  }
+function trimContext(obj: unknown, maxChars = MAX_PRIOR_CONTEXT_CHARS): string {
+  const s = JSON.stringify(obj, null, 2);
+  if (s.length <= maxChars) return s;
+  console.warn(`[fsea] Trimming prior context from ${s.length} to ${maxChars} chars`);
+  return s.slice(0, maxChars) + '\n... [truncated to fit context limit]';
 }
 
 // ── Main orchestrator ──────────────────────────────────────────────────────────
@@ -161,23 +286,25 @@ export async function runFSEA(
   deadlineMs: number,
   jobId?: bigint
 ): Promise<FSEAResult> {
+  const passResults: FSEAResult['passResults'] = {};
+  const errors: Record<string, string> = {};
 
-  // Guard: do not overwrite a populated matrix without explicit clear
-  const existing = await withTenant(companyId, async (tx) => {
-    return tx.requirement.count({ where: { solicitationId, companyId, removedAt: null } });
-  });
+  // Guard: populated matrix requires explicit clear before re-run
+  const existing = await withTenant(companyId, async (tx) =>
+    tx.requirement.count({ where: { solicitationId, companyId, removedAt: null } })
+  );
   if (existing > 0) {
-    return { ok: false, error: 'Matrix already populated. Clear existing requirements before re-running the pipeline.' };
+    return {
+      ok: false,
+      error: 'Matrix already populated. Clear existing requirements before re-running the pipeline.'
+    };
   }
 
   // Resolve AI provider
-  const platform = await (async () => {
-    try { return await getPlatformAI(); } catch { return undefined; }
-  })();
-
-  const company = await withTenant(companyId, async (tx) => {
-    return tx.company.findFirst({ where: { id: companyId } });
-  });
+  const platform = await getPlatformAI().catch(() => undefined);
+  const company = await withTenant(companyId, async (tx) =>
+    tx.company.findFirst({ where: { id: companyId } })
+  );
   if (!company) return { ok: false, error: 'Company not found.' };
 
   const { provider, model, apiKey } = applyCapabilityOverride(
@@ -187,197 +314,250 @@ export async function runFSEA(
     platform,
     await getCapabilityOverrides()
   );
-  if (!apiKey) return { ok: false, error: `No API key configured for provider "${provider}".` };
+  if (!apiKey) return { ok: false, error: `No API key configured for provider "${provider}". Add an API key in Settings.` };
 
-  const passResults: FSEAResult['passResults'] = {};
-
-  // ── Pass 1 — Document structure ──────────────────────────────────────────────
+  // ── Pass 1 — Document assembly ───────────────────────────────────────────────
   await setProgress(jobId, 'Pass 1 — Assembling document package…', 5);
-  const p1 = await runPass1(solicitationId, companyId);
-  if (!p1 || !p1.documentText.trim()) {
-    return { ok: false, error: 'No eligible documents found. Assign rfp_base or pws_sow roles and wait for extraction.' };
-  }
+  const p1Result = await runPass1(solicitationId, companyId);
+  if (p1Result.error) return { ok: false, error: p1Result.error };
+  const p1 = p1Result.structure;
   passResults.p1 = true;
-
   const docText = p1.documentText;
 
-  // ── Pass 2 — Requirement candidate detection ──────────────────────────────────
+  // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
   await setProgress(jobId, 'Pass 2 — Detecting requirement candidates…', 12);
-  const p2Raw = await runLlmPass(
-    PASS_2_SYSTEM,
-    `SOLICITATION PACKAGE:\n\n${docText}`,
-    provider, model, apiKey, companyId, 'Pass 2'
-  );
-  const p2 = p2Raw ? parsePassOutput<P2Output>(p2Raw, 'Pass 2') : null;
-  if (!p2 || p2.candidates.length === 0) {
-    return { ok: false, error: 'Pass 2 failed: no requirement candidates detected.' };
-  }
-  passResults.p2 = true;
-  console.log(`[fsea] Pass 2 complete: ${p2.candidates.length} candidates (${p2.summary.critical} critical)`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 2.' };
-
-  // ── Pass 3 — Evaluation factor discovery ──────────────────────────────────────
-  await setProgress(jobId, 'Pass 3 — Parsing evaluation methodology…', 20);
-  const p3Raw = await runLlmPass(
-    PASS_3_SYSTEM,
-    `SOLICITATION PACKAGE:\n\n${docText}`,
-    provider, model, apiKey, companyId, 'Pass 3'
-  );
-  const p3 = p3Raw ? parsePassOutput<P3Output>(p3Raw, 'Pass 3') : null;
-  if (!p3) {
-    return { ok: false, error: 'Pass 3 failed: evaluation factor discovery returned no output.' };
-  }
-  passResults.p3 = true;
-  console.log(`[fsea] Pass 3 complete: strategy=${p3.evaluationStrategy}, factors=${p3.factors.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 3.' };
-
-  // ── Pass 4 — Evaluation ontology ──────────────────────────────────────────────
-  await setProgress(jobId, 'Pass 4 — Building evaluation ontology…', 28);
-  const p4Raw = await runLlmPass(
-    PASS_4_SYSTEM,
-    `SOLICITATION PACKAGE:\n\n${docText}\n\n` +
-    `PASS 2 CANDIDATE LIST:\n${JSON.stringify(p2, null, 2)}\n\n` +
-    `PASS 3 EVALUATION FACTORS:\n${JSON.stringify(p3, null, 2)}`,
-    provider, model, apiKey, companyId, 'Pass 4'
-  );
-  const p4 = p4Raw ? parsePassOutput<P4Output>(p4Raw, 'Pass 4') : null;
-  if (!p4) {
-    return { ok: false, error: 'Pass 4 failed: evaluation ontology construction returned no output.' };
-  }
-  passResults.p4 = true;
-  console.log(`[fsea] Pass 4 complete: criteria=${p4.criteria.length}, surface=${p4.evaluationSurface.length}, SO=${p4.strengthOpportunities.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 4.' };
-
-  // ── Pass 5 — Requirement classification ───────────────────────────────────────
-  await setProgress(jobId, 'Pass 5 — Classifying requirements…', 38);
-  const p5Raw = await runLlmPass(
-    PASS_5_SYSTEM,
-    `EVALUATION ONTOLOGY:\n${JSON.stringify(p4, null, 2)}\n\n` +
-    `REQUIREMENT CANDIDATES:\n${JSON.stringify(p2.candidates, null, 2)}`,
-    provider, model, apiKey, companyId, 'Pass 5'
-  );
-  const p5 = p5Raw ? parsePassOutput<P5Output>(p5Raw, 'Pass 5') : null;
-  if (!p5) {
-    return { ok: false, error: 'Pass 5 failed: requirement classification returned no output.' };
-  }
-  passResults.p5 = true;
-  const matrixCount = p5.classified.filter(r => r.disposition === 'MATRIX').length;
-  console.log(`[fsea] Pass 5 complete: matrix=${matrixCount}, discard=${p5.summary.discarded}, clusters=${p5.clusters.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 5.' };
-
-  // ── Pass 6 — Proposal actionability ───────────────────────────────────────────
-  await setProgress(jobId, 'Pass 6 — Determining proposal actionability and page budget…', 46);
-  const matrixReqs = p5.classified.filter(r => r.disposition === 'MATRIX');
-  const p6Raw = await runLlmPass(
-    PASS_6_SYSTEM,
-    `EVALUATION ONTOLOGY:\n${JSON.stringify(p4, null, 2)}\n\n` +
-    `MATRIX REQUIREMENTS:\n${JSON.stringify(matrixReqs, null, 2)}\n\n` +
-    `CLUSTERS:\n${JSON.stringify(p5.clusters, null, 2)}`,
-    provider, model, apiKey, companyId, 'Pass 6'
-  );
-  const p6 = p6Raw ? parsePassOutput<P6Output>(p6Raw, 'Pass 6') : null;
-  if (!p6) {
-    return { ok: false, error: 'Pass 6 failed: actionability determination returned no output.' };
-  }
-  passResults.p6 = true;
-  console.log(`[fsea] Pass 6 complete: budget paragraphs=${p6.pageBudget.length}, strength targets=${p6.strengthTargetList.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 6.' };
-
-  // ── Pass 7 — L-to-M mapping ────────────────────────────────────────────────────
-  await setProgress(jobId, 'Pass 7 — Mapping Section L to Section M…', 54);
-  const p7Raw = await runLlmPass(
-    PASS_7_SYSTEM,
-    `SOLICITATION PACKAGE:\n\n${docText}\n\n` +
-    `EVALUATION ONTOLOGY:\n${JSON.stringify(p4, null, 2)}\n\n` +
-    `CLASSIFIED MATRIX REQUIREMENTS:\n${JSON.stringify(matrixReqs, null, 2)}\n\n` +
-    `ACTIONABILITY DETERMINATIONS:\n${JSON.stringify(p6.actionabilityDeterminations, null, 2)}`,
-    provider, model, apiKey, companyId, 'Pass 7'
-  );
-  const p7 = p7Raw ? parsePassOutput<P7Output>(p7Raw, 'Pass 7') : null;
-  if (!p7) {
-    return { ok: false, error: 'Pass 7 failed: L-to-M mapping returned no output.' };
-  }
-  passResults.p7 = true;
-  console.log(`[fsea] Pass 7 complete: paragraph maps=${p7.paragraphMaps.length}, cross-wires=${p7.crossParagraphWires.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 7.' };
-
-  // ── Pass 8 — Strength opportunity detection ────────────────────────────────────
-  await setProgress(jobId, 'Pass 8 — Detecting strength opportunities…', 62);
-  const p8Raw = await runLlmPass(
-    PASS_8_SYSTEM,
-    `EVALUATION ONTOLOGY:\n${JSON.stringify(p4, null, 2)}\n\n` +
-    `L-TO-M MAPPING:\n${JSON.stringify(p7, null, 2)}\n\n` +
-    `SOLICITATION STRENGTH DEFINITION:\n${JSON.stringify(p4.constructs, null, 2)}`,
-    provider, model, apiKey, companyId, 'Pass 8'
-  );
-  const p8 = p8Raw ? parsePassOutput<P8Output>(p8Raw, 'Pass 8') : null;
-  if (!p8) {
-    return { ok: false, error: 'Pass 8 failed: strength detection returned no output.' };
-  }
-  passResults.p8 = true;
-  console.log(`[fsea] Pass 8 complete: strengths=${p8.strengthOpportunities.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 8.' };
-
-  // ── Pass 9 — Cross-reference resolution ───────────────────────────────────────
-  await setProgress(jobId, 'Pass 9 — Resolving cross-references and regulatory citations…', 70);
-  const p9Raw = await runLlmPass(
-    PASS_9_SYSTEM,
-    `ALL PRIOR PASS OUTPUTS:\n\n` +
-    `PASS 5 CLUSTERS:\n${JSON.stringify(p5.clusters, null, 2)}\n\n` +
-    `PASS 6 CLUSTER CONSOLIDATION:\n${JSON.stringify(p6.clusterConsolidation, null, 2)}\n\n` +
-    `PASS 7 CROSS-PARAGRAPH WIRES:\n${JSON.stringify(p7.crossParagraphWires, null, 2)}\n\n` +
-    `PASS 8 STRENGTH OPPORTUNITIES (for citation verification):\n${JSON.stringify(p8.strengthOpportunities.slice(0, 10), null, 2)}\n\n` +
-    `SOLICITATION TEXT (for anchor verification):\n${docText.slice(0, 50000)}`,
-    provider, model, apiKey, companyId, 'Pass 9'
-  );
-  const p9 = p9Raw ? parsePassOutput<P9Output>(p9Raw, 'Pass 9') : null;
-  if (!p9) {
-    return { ok: false, error: 'Pass 9 failed: cross-reference resolution returned no output.' };
-  }
-  passResults.p9 = true;
-  console.log(`[fsea] Pass 9 complete: xrefs=${p9.internalCrossRefs.length}, citations=${p9.regulatoryCitations.length}`);
-
-  if (Date.now() > deadlineMs) return { ok: false, error: 'Pipeline deadline exceeded after Pass 9.' };
-
-  // ── Pass 10 — Matrix and products generation ───────────────────────────────────
-  await setProgress(jobId, 'Pass 10 — Generating evaluation matrix and writing plan…', 80);
-  const p10Raw = await runLlmPass(
-    PASS_10_SYSTEM,
-    `COMPLETE FSEA PIPELINE OUTPUT:\n\n` +
-    `PASS 2 — CANDIDATES:\n${JSON.stringify(p2, null, 2)}\n\n` +
-    `PASS 3 — EVALUATION FACTORS:\n${JSON.stringify(p3, null, 2)}\n\n` +
-    `PASS 4 — ONTOLOGY:\n${JSON.stringify(p4, null, 2)}\n\n` +
-    `PASS 5 — CLASSIFIED:\n${JSON.stringify(p5, null, 2)}\n\n` +
-    `PASS 6 — ACTIONABILITY:\n${JSON.stringify(p6, null, 2)}\n\n` +
-    `PASS 7 — L-TO-M MAPPING:\n${JSON.stringify(p7, null, 2)}\n\n` +
-    `PASS 8 — STRENGTHS:\n${JSON.stringify(p8, null, 2)}\n\n` +
-    `PASS 9 — CROSS-REFERENCES:\n${JSON.stringify(p9, null, 2)}`,
-    provider, model, apiKey, companyId, 'Pass 10'
-  );
-  const p10 = p10Raw ? parsePassOutput<P10Output>(p10Raw, 'Pass 10') : null;
-  if (!p10) {
-    return { ok: false, error: 'Pass 10 failed: matrix generation returned no output.' };
-  }
-  passResults.p10 = true;
-  console.log(`[fsea] Pass 10 complete: matrix rows=${p10.sectionA.length}, SO=${p10.sectionB.length}, WR=${p10.sectionC.length}, AC=${p10.sectionD.length}`);
-
-  // ── Persist all results ────────────────────────────────────────────────────────
-  await setProgress(jobId, `Saving ${p10.sectionA.length} requirements and evaluation matrix…`, 90);
-
-  await writeFseaResults({
-    solicitationId,
-    companyId,
-    p2, p3, p4, p5, p6, p7, p8, p9, p10
+  const p2Result = await runLlmPass<P2Output>({
+    system: PASS_2_SYSTEM,
+    user: `SOLICITATION PACKAGE:\n\n${docText}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 2',
+    retryOnParseFailure: true
   });
+  if (p2Result.error) {
+    return { ok: false, error: `Pass 2 failed: ${p2Result.error}. The pipeline cannot continue without a requirement candidate list.` };
+  }
+  const p2 = p2Result.data;
+  passResults.p2 = true;
+  console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${p2.summary.critical} critical, ${p2.summary.nonCritical} non-critical)`);
 
-  await setProgress(jobId, `Pipeline complete — ${p10.sectionA.length} requirements, ${p10.sectionB.length} strength opportunities`, 100);
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline paused after Pass 2 — deadline exceeded' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 2. Re-run to continue from Pass 3.' };
+  }
+
+  // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
+  await setProgress(jobId, 'Pass 3 — Parsing evaluation methodology…', 20);
+  const p3Result = await runLlmPass<P3Output>({
+    system: PASS_3_SYSTEM,
+    user: `SOLICITATION PACKAGE:\n\n${docText}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 3',
+    retryOnParseFailure: true
+  });
+  if (p3Result.error) {
+    return { ok: false, error: `Pass 3 failed: ${p3Result.error}. Without an evaluation model, requirement classification cannot proceed.` };
+  }
+  const p3 = p3Result.data;
+  passResults.p3 = true;
+  console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${p3.factors.length}, signals=${p3.strengthSignals.length}`);
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline paused after Pass 3 — deadline exceeded' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 3. Re-run to continue.' };
+  }
+
+  // ── Pass 4 — Evaluation ontology (RETRYABLE) ──────────────────────────────────
+  await setProgress(jobId, 'Pass 4 — Building evaluation ontology…', 28);
+  const p4Result = await runLlmPass<P4Output>({
+    system: PASS_4_SYSTEM,
+    user: `SOLICITATION PACKAGE:\n\n${docText}\n\n` +
+      `PASS 2 — CANDIDATES:\n${trimContext(p2)}\n\n` +
+      `PASS 3 — EVALUATION FACTORS:\n${trimContext(p3)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 4',
+    retryOnParseFailure: true
+  });
+  if (p4Result.error) {
+    errors.p4 = p4Result.error;
+    console.error('[fsea] Pass 4 failed — continuing with degraded ontology:', p4Result.error);
+    // Construct a minimal fallback ontology from Pass 3 output so the pipeline can continue
+  }
+  const p4: P4Output = p4Result.data ?? buildFallbackOntology(p3);
+  passResults.p4 = !p4Result.error;
+  console.log(`[fsea] Pass 4: criteria=${p4.criteria.length}, surface=${p4.evaluationSurface.length}, SO=${p4.strengthOpportunities.length}`);
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline paused after Pass 4' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 4. Re-run to continue.' };
+  }
+
+  // ── Pass 5 — Requirement classification (RETRYABLE) ───────────────────────────
+  await setProgress(jobId, 'Pass 5 — Classifying requirements…', 38);
+  const p5Result = await runLlmPass<P5Output>({
+    system: PASS_5_SYSTEM,
+    user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+      `REQUIREMENT CANDIDATES:\n${trimContext(p2.candidates)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 5',
+    retryOnParseFailure: true
+  });
+  if (p5Result.error) {
+    return { ok: false, error: `Pass 5 failed: ${p5Result.error}. Cannot build the matrix without classified requirements.` };
+  }
+  const p5 = p5Result.data;
+  passResults.p5 = true;
+  const matrixReqs = p5.classified.filter(r => r.disposition === 'MATRIX');
+  console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary.discarded}, clusters=${p5.clusters.length}`);
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline paused after Pass 5' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 5. Re-run to continue.' };
+  }
+
+  // ── Pass 6 — Proposal actionability (GRACEFUL DEGRADE) ───────────────────────
+  await setProgress(jobId, 'Pass 6 — Determining page budget and actionability…', 46);
+  const p6Result = await runLlmPass<P6Output>({
+    system: PASS_6_SYSTEM,
+    user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+      `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
+      `CLUSTERS:\n${trimContext(p5.clusters)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 6'
+  });
+  if (p6Result.error) {
+    errors.p6 = p6Result.error;
+    console.warn('[fsea] Pass 6 degraded — page budget will be absent:', p6Result.error);
+  }
+  const p6: P6Output = p6Result.data ?? buildFallbackP6(matrixReqs);
+  passResults.p6 = !p6Result.error;
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Pipeline paused after Pass 6' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 6. Re-run to continue.' };
+  }
+
+  // ── Pass 7 — L-to-M mapping (GRACEFUL DEGRADE) ────────────────────────────────
+  await setProgress(jobId, 'Pass 7 — Mapping Section L to evaluation criteria…', 54);
+  const p7Result = await runLlmPass<P7Output>({
+    system: PASS_7_SYSTEM,
+    user: `SOLICITATION (first 40000 chars):\n${docText.slice(0, 40000)}\n\n` +
+      `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+      `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
+      `ACTIONABILITY:\n${trimContext(p6.actionabilityDeterminations)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 7'
+  });
+  if (p7Result.error) {
+    errors.p7 = p7Result.error;
+    console.warn('[fsea] Pass 7 degraded — L-to-M wiring will be absent:', p7Result.error);
+  }
+  const p7: P7Output = p7Result.data ?? buildFallbackP7();
+  passResults.p7 = !p7Result.error;
+  console.log(`[fsea] Pass 7: maps=${p7.paragraphMaps.length}, cross-wires=${p7.crossParagraphWires.length}`);
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline paused after Pass 7' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 7. Re-run to continue.' };
+  }
+
+  // ── Pass 8 — Strength opportunity detection (GRACEFUL DEGRADE) ───────────────
+  await setProgress(jobId, 'Pass 8 — Detecting strength opportunities…', 62);
+  const p8Result = await runLlmPass<P8Output>({
+    system: PASS_8_SYSTEM,
+    user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+      `L-TO-M MAPPING:\n${trimContext(p7)}\n\n` +
+      `STRENGTH DEFINITION:\n${trimContext(p4.constructs)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 8'
+  });
+  if (p8Result.error) {
+    errors.p8 = p8Result.error;
+    console.warn('[fsea] Pass 8 degraded — strength register will be absent:', p8Result.error);
+  }
+  const p8: P8Output = p8Result.data ?? { strengthOpportunities: [], summary: { total: 0, byParagraph: {}, top5: [] }, criticalGapAdvisory: '' };
+  passResults.p8 = !p8Result.error;
+  console.log(`[fsea] Pass 8: strengths=${p8.strengthOpportunities.length}`);
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline paused after Pass 8' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 8. Re-run to continue.' };
+  }
+
+  // ── Pass 9 — Cross-reference resolution (GRACEFUL DEGRADE) ───────────────────
+  await setProgress(jobId, 'Pass 9 — Resolving cross-references and citations…', 70);
+  const p9Result = await runLlmPass<P9Output>({
+    system: PASS_9_SYSTEM,
+    user: `PASS 5 CLUSTERS:\n${trimContext(p5.clusters)}\n\n` +
+      `PASS 6 CLUSTER CONSOLIDATION:\n${trimContext(p6.clusterConsolidation)}\n\n` +
+      `PASS 7 CROSS-PARAGRAPH WIRES:\n${trimContext(p7.crossParagraphWires)}\n\n` +
+      `PASS 8 STRENGTH OPPORTUNITIES:\n${trimContext(p8.strengthOpportunities.slice(0, 15))}\n\n` +
+      `SOLICITATION (first 30000 chars):\n${docText.slice(0, 30000)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 9'
+  });
+  if (p9Result.error) {
+    errors.p9 = p9Result.error;
+    console.warn('[fsea] Pass 9 degraded — cross-reference graph will be absent:', p9Result.error);
+  }
+  const p9: P9Output = p9Result.data ?? { internalCrossRefs: [], crossRefDependencyMap: '', regulatoryCitations: [], cdrlLinkages: [], solicitationAnchors: [], integrityStatus: 'Pass 9 did not complete', actionsRequired: [] };
+  passResults.p9 = !p9Result.error;
+
+  if (Date.now() > deadlineMs) {
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Pipeline paused after Pass 9' });
+    return { ok: false, error: 'Worker deadline exceeded after Pass 9. Re-run to continue.' };
+  }
+
+  // ── Pass 10 — Matrix and products generation (HARD GATE) ──────────────────────
+  await setProgress(jobId, 'Pass 10 — Generating evaluation matrix and writing plan…', 80);
+  const p10Result = await runLlmPass<P10Output>({
+    system: PASS_10_SYSTEM,
+    user: `PASS 2 — CANDIDATES:\n${trimContext(p2)}\n\n` +
+      `PASS 3 — EVALUATION FACTORS:\n${trimContext(p3)}\n\n` +
+      `PASS 4 — ONTOLOGY:\n${trimContext(p4)}\n\n` +
+      `PASS 5 — CLASSIFIED:\n${trimContext(p5)}\n\n` +
+      `PASS 6 — ACTIONABILITY:\n${trimContext(p6)}\n\n` +
+      `PASS 7 — L-TO-M MAPPING:\n${trimContext(p7)}\n\n` +
+      `PASS 8 — STRENGTHS:\n${trimContext(p8)}\n\n` +
+      `PASS 9 — CROSS-REFERENCES:\n${trimContext(p9)}`,
+    provider, model, apiKey, companyId,
+    passName: 'Pass 10',
+    retryOnParseFailure: true
+  });
+  if (p10Result.error) {
+    // Save partial data so the run is not a total loss
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: `Pass 10 failed: ${p10Result.error}` });
+    return { ok: false, error: `Pass 10 failed: ${p10Result.error}. Partial data from Passes 2-9 has been saved.` };
+  }
+  const p10 = p10Result.data;
+  passResults.p10 = true;
+
+  // Inject any pass errors into the executive summary so the UI can surface them
+  if (Object.keys(errors).length > 0) {
+    p10.executiveSummary.criticalActions = [
+      ...Object.entries(errors).map(([pass, err]) => `${pass} degraded: ${err}`),
+      ...(p10.executiveSummary.criticalActions ?? [])
+    ];
+  }
+
+  console.log(`[fsea] Pass 10: matrix=${p10.sectionA.length}, SO=${p10.sectionB.length}, WR=${p10.sectionC.length}, AC=${p10.sectionD.length}`);
+
+  // ── Persist ────────────────────────────────────────────────────────────────────
+  await setProgress(jobId, `Saving ${p10.sectionA.length} requirements and ${p10.sectionB.length} strength opportunities…`, 92);
+
+  try {
+    await writeFseaResults({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, p10 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'database write failed';
+    console.error('[fsea] writeFseaResults failed:', msg);
+    return { ok: false, error: `Pipeline completed but save failed: ${msg}. Re-run to retry.` };
+  }
+
+  const degradedPasses = Object.keys(errors);
+  const label = degradedPasses.length > 0
+    ? `Pipeline complete (${degradedPasses.join(', ')} degraded) — ${p10.sectionA.length} requirements`
+    : `Pipeline complete — ${p10.sectionA.length} requirements, ${p10.sectionB.length} strength opportunities`;
+
+  await setProgress(jobId, label, 100);
 
   return {
     ok: true,
@@ -385,5 +565,64 @@ export async function runFSEA(
     strengthCount: p10.sectionB.length,
     adminCount: p10.sectionD.length,
     passResults
+  };
+}
+
+// ── Fallback constructors for graceful degradation ─────────────────────────────
+
+function buildFallbackOntology(p3: P3Output): P4Output {
+  return {
+    evaluationStrategy: {
+      type: p3.evaluationStrategy,
+      dominantFactor: p3.factors[0]?.name ?? 'Technical',
+      priceRole: 'Secondary',
+      interchangeIntent: p3.interchangeIntent ?? '',
+      awardQuantity: '1',
+      setAside: null
+    },
+    factors: p3.factors.map((f, i) => ({ id: `F${i + 1}`, name: f.name, orderOfImportance: f.orderOfImportance, ratingMethod: f.ratingMethod })),
+    criteria: [],
+    evaluationSurface: [],
+    constructs: p3.constructDefinitions ?? [],
+    strengthOpportunities: p3.strengthSignals.map((s, i) => ({
+      id: `SO-0${i + 1}`,
+      signal: s.term,
+      source: s.location,
+      targetParagraphs: [],
+      type: 'general'
+    })),
+    weaknessRisks: [],
+    adminCompliance: [],
+    deliverables: [],
+    relationships: []
+  };
+}
+
+function buildFallbackP6(matrixReqs: { reqId: string; sectionId: string }[]): P6Output {
+  return {
+    actionabilityDeterminations: matrixReqs.map(r => ({
+      reqId: r.reqId,
+      paragraphId: r.sectionId,
+      responseRequired: true,
+      strengthensRating: false,
+      strengthLevel: null,
+      risksWeakness: false,
+      pageSignal: 'Medium',
+      notes: ''
+    })),
+    pageBudget: [],
+    strengthTargetList: [],
+    clusterConsolidation: [],
+    guardRails: []
+  };
+}
+
+function buildFallbackP7(): P7Output {
+  return {
+    mappingArchitecture: '',
+    paragraphMaps: [],
+    crossParagraphWires: [],
+    narrativePriorityStack: [],
+    wiringIntegrityStatus: 'Pass 7 did not complete'
   };
 }

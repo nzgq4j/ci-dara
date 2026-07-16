@@ -1,12 +1,8 @@
-// FSEA Persist Layer — writes the output of all 10 passes to the database.
+// FSEA Persist Layer
 //
-// Pass 10 Section A rows → dara_requirements (one row per matrix requirement)
-// Pass 4 ontology       → dara_eval_factors + dara_eval_criteria (new tables, migration required)
-// Pass 8 strengths      → dara_strength_opportunities (new table, migration required)
-// Pass 10 Sections B/C/D + full pipeline JSON → stored in dara_solicitations.fsea_output JSONB
-//
-// The full pipeline JSON is stored so it can be displayed in the UI without re-running.
-// Until the new tables exist, factors and strengths are stored in the JSONB blob.
+// writeFseaResults: full pipeline — writes all pass outputs after a complete run
+// writeFseaPartial: partial save — called when the pipeline is interrupted or a
+//   late pass fails; saves whatever was produced so the run is not a total loss
 
 import { withTenant } from '@/utils/prisma';
 import type {
@@ -14,6 +10,23 @@ import type {
   P6Output, P7Output, P8Output, P9Output, P10Output,
   P10MatrixRow
 } from '../types';
+
+// ── Source/disposition helpers ─────────────────────────────────────────────────
+
+function sourceFromCriteria(governingCriteriaIds: string[]): 'instruction' | 'evaluation_factor' | 'other' {
+  if (!governingCriteriaIds || governingCriteriaIds.length === 0) return 'instruction';
+  // Evaluation-factor source rows are the Section M criteria themselves, not the instructions
+  // that feed them. All matrix rows in FSEA are proposal instructions.
+  return 'instruction';
+}
+
+function dispositionFromPriority(priority: string): 'scored' | 'compliance' | 'administrative' {
+  if (priority === 'checklist_only') return 'administrative';
+  if (priority === 'lead' || priority === 'high' || priority === 'medium' || priority === 'low') return 'compliance';
+  return 'compliance';
+}
+
+// ── Full write ─────────────────────────────────────────────────────────────────
 
 interface WriteFseaArgs {
   solicitationId: bigint;
@@ -29,126 +42,214 @@ interface WriteFseaArgs {
   p10: P10Output;
 }
 
-// Map P10 priority to RequirementSource for the existing dara_requirements.source column
-function sourceFromRow(row: P10MatrixRow, p5Req: { governingCriteriaIds?: string[] } | undefined): 'instruction' | 'evaluation_factor' | 'sow_pws' | 'far_clause' | 'other' {
-  const criteria = p5Req?.governingCriteriaIds ?? [];
-  // If the row connects to evaluation criteria starting with F (factor criteria) → instruction
-  // PWS/SOW performance requirements → sow_pws
-  // Compliance items not in the matrix → other
-  if (criteria.some(c => c.startsWith('F'))) return 'instruction';
-  return 'instruction'; // all matrix rows are proposal instructions by definition
-}
-
-function dispositionFromRow(row: P10MatrixRow): 'scored' | 'compliance' | 'administrative' {
-  if (row.priority === 'lead' || row.priority === 'high') return 'compliance';
-  if (row.priority === 'checklist_only') return 'administrative';
-  return 'compliance';
-}
-
 export async function writeFseaResults(args: WriteFseaArgs): Promise<void> {
   const { solicitationId, companyId, p5, p10 } = args;
 
-  // Build a lookup from reqId to P5 classified requirement
-  const p5ByReqId = new Map(p5.classified.map(r => [r.reqId, r]));
-
-  // Build a lookup from paragraphId to writing sequence for sort ordering
-  const seqByParagraph = new Map<string, Map<number, string>>();
-  for (const ws of p10.paragraphWritingSequences ?? []) {
-    const m = new Map<number, string>();
-    (ws.sequence ?? []).forEach((step, i) => m.set(i + 1, step));
-    seqByParagraph.set(ws.paragraphId, m);
-  }
+  const p5ByReqId = new Map((p5.classified ?? []).map(r => [r.reqId, r]));
+  const rows = p10.sectionA ?? [];
+  const checklist = p10.sectionD ?? [];
 
   await withTenant(companyId, async (tx) => {
 
-    // Write Section A matrix rows as requirements
-    const rows = p10.sectionA ?? [];
+    // Section A — matrix requirements (one row per actionable requirement)
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      if (!row?.reqId) continue;
+
       const p5Req = p5ByReqId.get(row.reqId);
+      const criteriaIds = p5Req?.governingCriteriaIds ?? [];
 
       await tx.requirement.create({
         data: {
           companyId,
           solicitationId,
-          // name = concise label (requirement summary, capped at 300 chars)
-          name: row.requirement.slice(0, 300),
-          // description = the proposal response obligation — the writing directive
-          description: row.proposalResponseObligation,
-          source: sourceFromRow(row, p5Req),
-          disposition: dispositionFromRow(row),
-          citation: row.reqId,
+          name: (row.requirement ?? '').slice(0, 300) || row.reqId,
+          description: row.proposalResponseObligation ?? null,
+          source: sourceFromCriteria(criteriaIds),
+          disposition: dispositionFromPriority(row.priority ?? 'medium'),
+          citation: (row.reqId ?? '').slice(0, 200),
           complianceStatus: 'not_assessed',
           sortOrder: i,
-          // FSEA-specific fields stored in hrlr JSONB until migration adds dedicated columns
           hrlr: {
-            // Core FSEA output fields
             fseaPassRow: true,
-            paragraphId: row.paragraphId,
-            evaluationCriterion: row.evaluationCriterion,
+            paragraphId: row.paragraphId ?? null,
+            evaluationCriterion: row.evaluationCriterion ?? null,
             strengthGate: row.strengthGate ?? null,
             crossReference: row.crossReference ?? null,
-            pageSignal: row.pageSignal,
-            priority: row.priority,
+            pageSignal: row.pageSignal ?? null,
+            priority: row.priority ?? null,
             writingSequenceOrder: row.writingSequenceOrder ?? i,
             pageBudgetMin: row.pageBudgetMin ?? null,
             pageBudgetMax: row.pageBudgetMax ?? null,
-            // From P5 classification
             type: p5Req?.type ?? null,
             actionable: p5Req?.actionable ?? null,
-            governingCriteriaIds: p5Req?.governingCriteriaIds ?? [],
+            governingCriteriaIds: criteriaIds,
           }
         }
       });
     }
 
-    // Write checklist items (Section D) as administrative requirements
-    for (const ac of p10.sectionD ?? []) {
+    // Section D — administrative compliance checklist
+    for (let i = 0; i < checklist.length; i++) {
+      const ac = checklist[i];
+      if (!ac?.acId) continue;
+
       await tx.requirement.create({
         data: {
           companyId,
           solicitationId,
-          name: ac.requirement.slice(0, 300),
-          description: `Source: ${ac.source} | Responsible: ${ac.responsible}`,
+          name: (ac.requirement ?? '').slice(0, 300) || ac.acId,
+          description: `Source: ${ac.source ?? ''} | Responsible: ${ac.responsible ?? ''}`,
           source: 'other',
           disposition: 'administrative',
-          citation: ac.acId,
+          citation: (ac.acId ?? '').slice(0, 200),
           complianceStatus: 'not_assessed',
-          sortOrder: rows.length + (p10.sectionD?.indexOf(ac) ?? 0),
+          sortOrder: rows.length + i,
           hrlr: {
             fseaPassRow: true,
             isChecklist: true,
             acId: ac.acId,
-            responsible: ac.responsible,
-            source: ac.source,
+            responsible: ac.responsible ?? null,
+            source: ac.source ?? null,
           }
         }
       });
     }
 
-    // Store full pipeline output in solicitation notes JSONB for UI display
-    // (until dedicated columns/tables are added via migration)
+    // Store full FSEA output in solicitation notes for UI sub-tabs
     await tx.solicitation.update({
       where: { id: solicitationId },
       data: {
-        notes: JSON.stringify({
-          fseaOutput: {
-            sectionB: p10.sectionB,
-            sectionC: p10.sectionC,
-            executiveSummary: p10.executiveSummary,
-            paragraphWritingSequences: p10.paragraphWritingSequences,
-            evalOntology: {
-              factors: (args.p4 as P4Output).factors,
-              criteria: (args.p4 as P4Output).criteria,
-              evaluationSurface: (args.p4 as P4Output).evaluationSurface,
-              constructs: (args.p4 as P4Output).constructs,
-            },
-            crossRefs: (args.p9 as P9Output).internalCrossRefs,
-            regulatoryCitations: (args.p9 as P9Output).regulatoryCitations,
-            pageBudget: (args.p6 as P6Output).pageBudget,
-          }
-        })
+        notes: buildFseaNotesJson(args)
       }
     });
+  });
+}
+
+// ── Partial write (pipeline interrupted or late pass failed) ───────────────────
+
+interface WriteFseaPartialArgs {
+  solicitationId: bigint;
+  companyId: bigint;
+  p2?: P2Output;
+  p3?: P3Output;
+  p4?: P4Output;
+  p5?: P5Output;
+  p6?: P6Output;
+  p7?: P7Output;
+  p8?: P8Output;
+  p9?: P9Output;
+  error: string;
+}
+
+export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void> {
+  const { solicitationId, companyId } = args;
+
+  try {
+    await withTenant(companyId, async (tx) => {
+      // If we have P5 classified requirements, write them as minimal matrix rows
+      if (args.p5) {
+        const matrixReqs = (args.p5.classified ?? []).filter(r => r.disposition === 'MATRIX');
+        for (let i = 0; i < matrixReqs.length; i++) {
+          const req = matrixReqs[i];
+          if (!req?.reqId) continue;
+
+          // Find the original candidate for the full requirement text
+          const candidate = (args.p2?.candidates ?? []).find(c => c.reqId === req.reqId);
+
+          await tx.requirement.create({
+            data: {
+              companyId,
+              solicitationId,
+              name: (req.requirementSummary ?? req.reqId).slice(0, 300),
+              description: candidate?.exactText ?? null,
+              source: 'instruction',
+              disposition: 'compliance',
+              citation: (req.reqId ?? '').slice(0, 200),
+              complianceStatus: 'not_assessed',
+              sortOrder: i,
+              hrlr: {
+                fseaPassRow: true,
+                partial: true,
+                paragraphId: req.sectionId ?? null,
+                governingCriteriaIds: req.governingCriteriaIds ?? [],
+              }
+            }
+          }).catch(() => { /* skip duplicate */ });
+        }
+      }
+
+      // Save whatever pipeline data we have
+      await tx.solicitation.update({
+        where: { id: solicitationId },
+        data: {
+          notes: JSON.stringify({
+            fseaOutput: {
+              partial: true,
+              error: args.error,
+              passesCompleted: {
+                p2: !!args.p2,
+                p3: !!args.p3,
+                p4: !!args.p4,
+                p5: !!args.p5,
+                p6: !!args.p6,
+                p7: !!args.p7,
+                p8: !!args.p8,
+                p9: !!args.p9,
+              },
+              sectionB: [],
+              sectionC: [],
+              executiveSummary: null,
+              evalOntology: args.p4 ? {
+                factors: args.p4.factors ?? [],
+                criteria: args.p4.criteria ?? [],
+                evaluationSurface: args.p4.evaluationSurface ?? [],
+                constructs: args.p4.constructs ?? [],
+              } : null,
+              pageBudget: args.p6?.pageBudget ?? [],
+              crossRefs: args.p9?.internalCrossRefs ?? [],
+              regulatoryCitations: args.p9?.regulatoryCitations ?? [],
+              strengthOpportunities: args.p8?.strengthOpportunities ?? [],
+              paragraphWritingSequences: [],
+            }
+          })
+        }
+      });
+    });
+  } catch (e) {
+    // Partial save failure is non-fatal — log and continue
+    console.error('[fsea] writeFseaPartial failed:', e instanceof Error ? e.message : e);
+  }
+}
+
+// ── Notes JSON builder ─────────────────────────────────────────────────────────
+
+function buildFseaNotesJson(args: WriteFseaArgs): string {
+  const { p4, p6, p8, p9, p10 } = args;
+
+  return JSON.stringify({
+    fseaOutput: {
+      partial: false,
+      sectionB: p10.sectionB ?? [],
+      sectionC: p10.sectionC ?? [],
+      executiveSummary: p10.executiveSummary ?? null,
+      paragraphWritingSequences: p10.paragraphWritingSequences ?? [],
+      evalOntology: {
+        factors: p4.factors ?? [],
+        criteria: p4.criteria ?? [],
+        evaluationSurface: p4.evaluationSurface ?? [],
+        constructs: p4.constructs ?? [],
+      },
+      crossRefs: p9.internalCrossRefs ?? [],
+      regulatoryCitations: p9.regulatoryCitations ?? [],
+      cdrlLinkages: p9.cdrlLinkages ?? [],
+      solicitationAnchors: p9.solicitationAnchors ?? [],
+      actionsRequired: p9.actionsRequired ?? [],
+      pageBudget: p6.pageBudget ?? [],
+      strengthTargetList: p6.strengthTargetList ?? [],
+      strengthOpportunities: p8.strengthOpportunities ?? [],
+      strengthSummary: p8.summary ?? null,
+      criticalGapAdvisory: p8.criticalGapAdvisory ?? null,
+    }
   });
 }
