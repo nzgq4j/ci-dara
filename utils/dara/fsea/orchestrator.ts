@@ -354,7 +354,7 @@ export async function runFSEA(
   deadlineMs: number,
   jobId?: bigint
 ): Promise<FSEAResult> {
-  const passResults: FSEAResult['passResults'] = {};
+  const passResults: NonNullable<FSEAResult['passResults']> = {};
   const errors: Record<string, string | undefined> = {};
 
   // Guard: populated matrix requires explicit clear before re-run.
@@ -364,8 +364,9 @@ export async function runFSEA(
   );
 
   // Attempt to load checkpoint from a prior paused tick
-  const checkpoint = await readFseaCheckpoint(solicitationId, companyId);
-  const isResume = checkpoint && !!(checkpoint.p2 || checkpoint.p3 || checkpoint.p4 || checkpoint.p5 || checkpoint.p6 || checkpoint.p7 || checkpoint.p8 || checkpoint.p9);
+  const checkpointRaw = await readFseaCheckpoint(solicitationId, companyId);
+  const checkpoint = checkpointRaw ?? {};
+  const isResume = !!(checkpoint.p2 || checkpoint.p3 || checkpoint.p4 || checkpoint.p5 || checkpoint.p6 || checkpoint.p7 || checkpoint.p8 || checkpoint.p9);
 
   if (existing > 0 && !isResume) {
     return {
