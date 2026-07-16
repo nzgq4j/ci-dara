@@ -413,87 +413,55 @@ export async function runFSEA(
   } else {
 
   // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
-  // Run all chunks in parallel via the Anthropic Batch API (Anthropic provider only).
-  // The Batch API submits all requests in one HTTP call and processes them server-side
-  // in parallel, bypassing Vercel's serialization of concurrent outbound connections.
-  // Non-Anthropic providers fall back to sequential execution.
+  // Anthropic: all chunks fired simultaneously as parallel streams.
+  // Total wall time ≈ slowest single chunk, not sum of all chunks.
+  // Non-Anthropic providers run sequentially (no streaming parallel support).
   const chunks = p1.chunks;
-  await setProgress(jobId, `Pass 2 — Submitting ${chunks.length} chunk(s) for parallel processing…`, 12);
+  const chunkLabel = (ci: number) => chunks.length > 1 ? ` (chunk ${ci + 1}/${chunks.length})` : '';
+  await setProgress(jobId, `Pass 2 — Processing ${chunks.length} chunk(s)…`, 12);
 
   let chunkResults: Array<{ data: P2Output | null; error: string | null }>;
 
   if (provider === 'anthropic' && chunks.length > 1) {
-    // Batch path — true server-side parallelism
-    const batchRequests = chunks.map((chunk, ci) => ({
-      customId: `p2-chunk-${ci}`,
-      system: PASS_2_SYSTEM,
-      user: `SOLICITATION PACKAGE (chunk ${ci + 1}/${chunks.length}):\n\n${chunk}`
-    }));
+    // Parallel streaming — all chunks in-flight simultaneously
+    await setProgress(jobId, `Pass 2 — Streaming ${chunks.length} chunks in parallel…`, 13);
+    const streamResults = await anthropicBatch(
+      chunks.map((chunk, ci) => ({
+        customId: `p2-chunk-${ci}`,
+        system: PASS_2_SYSTEM,
+        user: `SOLICITATION PACKAGE (chunk ${ci + 1}/${chunks.length}):\n\n${chunk}`
+      })),
+      model, apiKey, MAX_TOKENS_P2_CHUNK
+    );
 
-    await setProgress(jobId, `Pass 2 — Waiting for batch results (${chunks.length} chunks in parallel)…`, 13);
+    // Log usage per stream
+    await Promise.all(streamResults.map(r =>
+      logUsage({
+        capability: 'shred', provider, model, companyId,
+        tokenIn: r.tokenIn, tokenOut: r.tokenOut, ok: r.error === null
+      })
+    ));
 
-    const batchResults = await anthropicBatch(batchRequests, model, apiKey, MAX_TOKENS_P2_CHUNK).catch(e => {
-      // Batch submission failed — fall through to sequential
-      console.error('[fsea] Pass 2 batch failed, falling back to sequential:', e instanceof Error ? e.message : e);
-      return null;
+    chunkResults = streamResults.map((r, ci) => {
+      if (r.error) return { data: null, error: r.error };
+      const parsed = parsePassOutput<P2Output>(r.text, `Pass 2 (chunk ${ci + 1})`);
+      if (parsed.data === null) return { data: null, error: parsed.error };
+      const valid = validatePassOutput(parsed.data, 'Pass 2');
+      if (valid) return { data: null, error: valid };
+      return { data: parsed.data, error: null };
     });
-
-    if (batchResults) {
-      // Log usage for each batch result
-      await Promise.all(batchResults.map(r =>
-        logUsage({
-          capability: 'shred', provider, model, companyId,
-          tokenIn: r.tokenIn, tokenOut: r.tokenOut, ok: r.error === null
-        })
-      ));
-      // Parse each result through the same JSON parser
-      chunkResults = batchResults.map((r, ci) => {
-        if (r.error) return { data: null, error: r.error };
-        const parsed = parsePassOutput<P2Output>(r.text, `Pass 2 (chunk ${ci + 1})`);
-        if (parsed.data === null) return { data: null, error: parsed.error };
-        const valid = validatePassOutput(parsed.data, 'Pass 2');
-        if (valid) return { data: null, error: valid };
-        return { data: parsed.data, error: null };
-      });
-    } else {
-      // Batch failed — fall through to sequential below
-      chunkResults = [];
-    }
-
-    if (chunkResults.length === 0) {
-      // Batch failed. For multi-chunk documents, sequential fallback will always exceed
-      // Vercel's 300s function limit (each chunk takes 90-180s). Fail fast so the
-      // checkpoint/resume mechanism can retry cleanly on the next invocation rather
-      // than burning the remaining Vercel budget on a guaranteed timeout.
-      if (chunks.length > 1) {
-        return { ok: false, error: `Pass 2 batch failed on a ${chunks.length}-chunk document. Sequential fallback would exceed the function time limit. Re-run to retry via the batch API.` };
-      }
-      // Single chunk only — sequential is safe
-      await setProgress(jobId, `Pass 2 — Processing single chunk sequentially…`, 13);
-      chunkResults = await Promise.all(chunks.map((chunk, ci) =>
-        runLlmPass<P2Output>({
-          system: PASS_2_SYSTEM,
-          user: `SOLICITATION PACKAGE (chunk ${ci + 1}/${chunks.length}):\n\n${chunk}`,
-          provider, model, apiKey, companyId,
-          passName: `Pass 2 (chunk ${ci + 1})`,
-          retryOnParseFailure: true,
-          maxTokens: MAX_TOKENS_P2_CHUNK
-        })
-      ));
-    }
   } else {
     // Non-Anthropic provider or single chunk — run directly
-    chunkResults = await Promise.all(chunks.map((chunk, ci) => {
-      const chunkLabel = chunks.length > 1 ? ` (chunk ${ci + 1}/${chunks.length})` : '';
-      return runLlmPass<P2Output>({
+    chunkResults = await Promise.all(chunks.map((chunk, ci) =>
+      runLlmPass<P2Output>({
         system: PASS_2_SYSTEM,
-        user: `SOLICITATION PACKAGE${chunkLabel}:\n\n${chunk}`,
+        user: `SOLICITATION PACKAGE${chunkLabel(ci)}:\n\n${chunk}`,
         provider, model, apiKey, companyId,
-        passName: `Pass 2${chunkLabel}`,
+        passName: `Pass 2${chunkLabel(ci)}`,
         retryOnParseFailure: true,
         maxTokens: MAX_TOKENS_P2_CHUNK
-      });
-    }));
+      })
+    ));
   }
 
   const allCandidates: P2Output['candidates'] = [];
