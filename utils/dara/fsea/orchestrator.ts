@@ -320,7 +320,7 @@ export async function runFSEA(
   await setProgress(jobId, 'Pass 1 — Assembling document package…', 5);
   const p1Result = await runPass1(solicitationId, companyId);
   if (p1Result.error) return { ok: false, error: p1Result.error };
-  const p1 = p1Result.structure;
+  const p1 = p1Result.structure!;
   passResults.p1 = true;
   const docText = p1.documentText;
 
