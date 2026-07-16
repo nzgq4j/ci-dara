@@ -20,7 +20,6 @@ import { recordAudit } from '@/utils/dara/audit';
 import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { parseAndPersist } from '@/utils/dara/modal-parser';
 import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
-import { shredRequirements } from '@/utils/dara/requirements';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, getShredStatus, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
 import { isPlatformAdmin } from '@/utils/dara/admin';
