@@ -365,7 +365,7 @@ export async function runFSEA(
 
   // Attempt to load checkpoint from a prior paused tick
   const checkpoint = await readFseaCheckpoint(solicitationId, companyId);
-  const isResume = checkpoint && (checkpoint.p2 || checkpoint.p3);
+  const isResume = checkpoint && !!(checkpoint.p2 || checkpoint.p3 || checkpoint.p4 || checkpoint.p5 || checkpoint.p6 || checkpoint.p7 || checkpoint.p8 || checkpoint.p9);
 
   if (existing > 0 && !isResume) {
     return {
@@ -501,9 +501,10 @@ export async function runFSEA(
   console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s), ${chunkFailCount} chunk(s) failed`);
   } // end of Pass 2 new-run block
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline paused after Pass 2 — deadline exceeded' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 2. Re-run to continue from Pass 3.' };
+  // Yield after Pass 2 — always checkpoint so next tick starts at Pass 3
+  await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline yielding after Pass 2' });
+  if (!isResume || !checkpoint.p3) {
+    return { ok: false, paused: true, error: 'Pass 2 complete. Pipeline will continue from Pass 3 on next tick.' };
   }
 
   // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
@@ -562,9 +563,10 @@ export async function runFSEA(
   console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${(p3.factors ?? []).length}, signals=${(p3.strengthSignals ?? []).length}`);
   } // end of Pass 3 new-run block
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline paused after Pass 3 — deadline exceeded' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 3. Re-run to continue.' };
+  // Yield after Pass 3 — checkpoint and continue on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline yielding after Pass 3' });
+  if (!isResume || !checkpoint.p4) {
+    return { ok: false, paused: true, error: 'Pass 3 complete. Pipeline will continue from Pass 4 on next tick.' };
   }
 
   // ── Pass 4 — Evaluation ontology (RETRYABLE) ──────────────────────────────────
@@ -605,9 +607,10 @@ export async function runFSEA(
   console.log(`[fsea] Pass 4: criteria=${(p4.criteria ?? []).length}, surface=${(p4.evaluationSurface ?? []).length}, SO=${(p4.strengthOpportunities ?? []).length}`);
   } // end Pass 4 new-run block
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline paused after Pass 4' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 4. Re-run to continue.' };
+  // Yield after Pass 4 — checkpoint and continue on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline yielding after Pass 4' });
+  if (!isResume || !checkpoint.p5) {
+    return { ok: false, paused: true, error: 'Pass 4 complete. Pipeline will continue from Pass 5 on next tick.' };
   }
 
   // ── Pass 5 — Requirement classification (RETRYABLE) ───────────────────────────
@@ -629,9 +632,10 @@ export async function runFSEA(
   await setProgress(jobId, `Pass 5 — Classified ${p5.classified?.length ?? 0} requirements: ${matrixReqs.length} for matrix…`, 43);
   console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary?.discarded ?? 0}, clusters=${(p5.clusters ?? []).length}`);
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline paused after Pass 5' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 5. Re-run to continue.' };
+  // Yield after Pass 5 — checkpoint and continue on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline yielding after Pass 5' });
+  if (!isResume || !checkpoint.p6) {
+    return { ok: false, paused: true, error: 'Pass 5 complete. Pipeline will continue from Pass 6 on next tick.' };
   }
 
   // ── Pass 6 — Proposal actionability (GRACEFUL DEGRADE) ───────────────────────
@@ -651,9 +655,10 @@ export async function runFSEA(
   const p6: P6Output = p6Result.data ?? buildFallbackP6(matrixReqs);
   passResults.p6 = !p6Result.error;
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Pipeline paused after Pass 6' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 6. Re-run to continue.' };
+  // Yield after Pass 6 — checkpoint and continue on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Pipeline yielding after Pass 6' });
+  if (!isResume || !checkpoint.p7) {
+    return { ok: false, paused: true, error: 'Pass 6 complete. Pipeline will continue from Pass 7 on next tick.' };
   }
 
   // ── Pass 7 — L-to-M mapping (GRACEFUL DEGRADE) ────────────────────────────────
@@ -675,9 +680,10 @@ export async function runFSEA(
   passResults.p7 = !p7Result.error;
   console.log(`[fsea] Pass 7: maps=${(p7.paragraphMaps ?? []).length}, cross-wires=${(p7.crossParagraphWires ?? []).length}`);
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline paused after Pass 7' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 7. Re-run to continue.' };
+  // Yield after Pass 7 — checkpoint and continue on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline yielding after Pass 7' });
+  if (!isResume || !checkpoint.p8) {
+    return { ok: false, paused: true, error: 'Pass 7 complete. Pipeline will continue from Pass 8 on next tick.' };
   }
 
   // ── Pass 8 — Strength opportunity detection (GRACEFUL DEGRADE) ───────────────
@@ -699,9 +705,10 @@ export async function runFSEA(
   await setProgress(jobId, `Pass 8 — Identified ${(p8.strengthOpportunities ?? []).length} strength opportunities${p8Result.error ? ' (degraded)' : ''}…`, 67);
   console.log(`[fsea] Pass 8: strengths=${(p8.strengthOpportunities ?? []).length}`);
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline paused after Pass 8' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 8. Re-run to continue.' };
+  // Yield after Pass 8 — checkpoint and continue on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline yielding after Pass 8' });
+  if (!isResume || !checkpoint.p9) {
+    return { ok: false, paused: true, error: 'Pass 8 complete. Pipeline will continue from Pass 9 on next tick.' };
   }
 
   // ── Pass 9 — Cross-reference resolution (GRACEFUL DEGRADE) ───────────────────
@@ -723,9 +730,10 @@ export async function runFSEA(
   const p9: P9Output = p9Result.data ?? { internalCrossRefs: [], crossRefDependencyMap: '', regulatoryCitations: [], cdrlLinkages: [], solicitationAnchors: [], integrityStatus: 'Pass 9 did not complete', actionsRequired: [] };
   passResults.p9 = !p9Result.error;
 
-  if (Date.now() > deadlineMs) {
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Pipeline paused after Pass 9' });
-    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 9. Re-run to continue.' };
+  // Yield after Pass 9 — checkpoint and continue to Pass 10 on next tick
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Pipeline yielding after Pass 9' });
+  if (!isResume || !checkpoint.p9) {
+    return { ok: false, paused: true, error: 'Pass 9 complete. Pipeline will continue to Pass 10 on next tick.' };
   }
 
   // ── Pass 10 — Matrix and products generation (HARD GATE) ──────────────────────
