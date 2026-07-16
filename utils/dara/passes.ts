@@ -830,9 +830,9 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
           pending.id,
         );
         if (shredRes.paused) {
-          // Pass complete — fire next invocation immediately, don't wait for cron
+          // Pass complete — requeue first, then trigger so the next invocation
+          // finds a pending job to claim rather than seeing it as still running.
           done = false;
-          triggerWorker();
         } else if (!shredRes.ok) {
           throw new Error(shredRes.error ?? 'FSEA pipeline failed.');
         } else {
@@ -860,12 +860,17 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
           data: { status: 'done', finishedAt: new Date() }
         });
       } else {
-        // Deadline hit with passes still queued — requeue for the next worker tick.
+        // Pass yielded — requeue then immediately trigger next invocation.
+        // triggerWorker() is called AFTER the status is set to pending so the
+        // triggered invocation finds a claimable job rather than a running one.
         await prismaAdmin.jobQueue.update({
           where: { id: pending.id },
           data: { status: 'pending', availableAt: new Date() }
         });
-        break; // out of time this tick
+        if ((payload as { kind?: string }).kind === 'shred') {
+          triggerWorker();
+        }
+        break; // one pass per tick
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 480) : 'Job failed.';
