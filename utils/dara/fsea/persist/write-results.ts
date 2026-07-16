@@ -199,6 +199,7 @@ export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void
               },
               sectionB: [],
               sectionC: [],
+              sectionD: [],
               executiveSummary: null,
               evalOntology: args.p4 ? {
                 factors: args.p4.factors ?? [],
@@ -232,6 +233,7 @@ function buildFseaNotesJson(args: WriteFseaArgs): string {
       partial: false,
       sectionB: p10.sectionB ?? [],
       sectionC: p10.sectionC ?? [],
+      sectionD: p10.sectionD ?? [],
       executiveSummary: p10.executiveSummary ?? null,
       paragraphWritingSequences: p10.paragraphWritingSequences ?? [],
       evalOntology: {
