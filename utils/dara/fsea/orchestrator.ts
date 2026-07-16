@@ -377,47 +377,57 @@ export async function runFSEA(
   const docText = p1.documentText;
 
   // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
-  // Run against each document chunk separately, then merge results.
-  // This allows Haiku to process large solicitations without hitting context limits.
-  await setProgress(jobId, 'Pass 2 — Detecting requirement candidates…', 12);
-  const allCandidates: P2Output['candidates'] = [];
+  // Run all chunks concurrently — candidates within each chunk are independent.
+  // Serial execution was the bottleneck: 7 chunks × ~45s per Haiku call = 5+ minutes for Pass 2 alone.
+  await setProgress(jobId, `Pass 2 — Scanning ${p1.chunks.length > 1 ? `${p1.chunks.length} chunks` : 'document'} for requirements…`, 12);
   const chunks = p1.chunks;
-  for (let ci = 0; ci < chunks.length; ci++) {
-    const chunkLabel = chunks.length > 1 ? ` (chunk ${ci + 1}/${chunks.length})` : '';
-    await setProgress(jobId, `Pass 2 — Scanning requirements${chunkLabel}…`, 12 + Math.floor((ci / chunks.length) * 6));
-    const chunkResult = await runLlmPass<P2Output>({
-      system: PASS_2_SYSTEM,
-      user: `SOLICITATION PACKAGE${chunkLabel}:\n\n${chunks[ci]}`,
-      provider, model, apiKey, companyId,
-      passName: `Pass 2${chunkLabel}`,
-      retryOnParseFailure: true
-    });
-    if (chunkResult.data) {
-      allCandidates.push(...(chunkResult.data.candidates ?? []));
-    } else if (ci === 0 && chunks.length === 1) {
-      // Only abort if there is a single chunk and it completely failed
-      return { ok: false, error: `Pass 2 failed: ${chunkResult.error}. The pipeline cannot continue without a requirement candidate list.` };
+  const chunkResults = await Promise.all(
+    chunks.map((chunk, ci) => {
+      const chunkLabel = chunks.length > 1 ? ` (chunk ${ci + 1}/${chunks.length})` : '';
+      return runLlmPass<P2Output>({
+        system: PASS_2_SYSTEM,
+        user: `SOLICITATION PACKAGE${chunkLabel}:\n\n${chunk}`,
+        provider, model, apiKey, companyId,
+        passName: `Pass 2${chunkLabel}`,
+        retryOnParseFailure: true
+      });
+    })
+  );
+
+  const allCandidates: P2Output['candidates'] = [];
+  let chunkFailCount = 0;
+  for (let ci = 0; ci < chunkResults.length; ci++) {
+    const r = chunkResults[ci];
+    if (r.data) {
+      allCandidates.push(...(r.data.candidates ?? []));
     } else {
-      console.warn(`[fsea] Pass 2 chunk ${ci + 1} failed — continuing with other chunks: ${chunkResult.error}`);
+      chunkFailCount++;
+      console.warn(`[fsea] Pass 2 chunk ${ci + 1} failed: ${r.error}`);
     }
   }
-  // Deduplicate candidates by reqId prefix to remove cross-chunk overlaps
+
+  // Hard abort only if every chunk failed or this was a single-chunk document
+  if (allCandidates.length === 0) {
+    return { ok: false, error: `Pass 2 failed: no requirement candidates found${chunks.length > 1 ? ` across all ${chunks.length} chunks` : ''}. The pipeline cannot continue without a requirement candidate list.` };
+  }
+  if (chunkFailCount > 0) {
+    console.warn(`[fsea] Pass 2: ${chunkFailCount}/${chunks.length} chunks failed — continuing with partial candidate list`);
+  }
+
+  // Deduplicate by reqId to remove candidates from the 5k-char overlap zones
   const seenIds = new Set<string>();
   const dedupedCandidates = allCandidates.filter(c => {
     if (seenIds.has(c.reqId)) return false;
     seenIds.add(c.reqId);
     return true;
   });
-  if (dedupedCandidates.length === 0) {
-    return { ok: false, error: 'Pass 2 failed: no requirement candidates found across any document chunk.' };
-  }
   const criticalCount = dedupedCandidates.filter(c => c.isCritical).length;
   const p2: P2Output = {
     candidates: dedupedCandidates,
     summary: { total: dedupedCandidates.length, critical: criticalCount, nonCritical: dedupedCandidates.length - criticalCount, compliance: 0 }
   };
   passResults.p2 = true;
-  console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s)`);
+  console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s), ${chunkFailCount} chunk(s) failed`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline paused after Pass 2 — deadline exceeded' });
