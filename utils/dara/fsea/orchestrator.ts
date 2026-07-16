@@ -32,7 +32,19 @@ import type {
 } from './types';
 import { writeFseaResults, writeFseaPartial, readFseaCheckpoint } from './persist/write-results';
 
-const MAX_TOKENS = 32000;
+// Per-pass output token ceilings calibrated to actual output size needs.
+// Oversized ceilings cause slow calls and unnecessary cost — a P2 chunk producing
+// 21k tokens of ontology JSON is a sign MAX_TOKENS was too high.
+const MAX_TOKENS = 16000;          // default / fallback
+const MAX_TOKENS_P2_CHUNK = 8000;  // candidate list per chunk: reqId + sectionId + isCritical + exactText
+const MAX_TOKENS_P3 = 6000;        // evaluation model: factors, rating scale, strength signals
+const MAX_TOKENS_P4 = 12000;       // ontology: 10 object levels, more complex
+const MAX_TOKENS_P5 = 12000;       // classification: one entry per candidate
+const MAX_TOKENS_P6 = 8000;        // actionability determinations + page budget
+const MAX_TOKENS_P7 = 8000;        // L-to-M wiring maps
+const MAX_TOKENS_P8 = 8000;        // strength opportunity register
+const MAX_TOKENS_P9 = 6000;        // cross-reference graph
+const MAX_TOKENS_P10 = 16000;      // four output sections — most complex
 const MAX_DOC_CHARS = 500_000;
 // Chunk size for large documents fed to Passes 2 and 4.
 // 80k chars ≈ 60k tokens — comfortably within Haiku's 200k context with room for system prompt and output.
@@ -133,16 +145,17 @@ interface LlmPassOptions {
   companyId: bigint;
   passName: string;
   retryOnParseFailure?: boolean;
+  maxTokens?: number;  // per-pass output ceiling; defaults to MAX_TOKENS
 }
 
 async function runLlmPass<T>(
   opts: LlmPassOptions
 ): Promise<{ data: T; error: null } | { data: null; error: string }> {
-  const { system, user, provider, model, apiKey, companyId, passName, retryOnParseFailure = false } = opts;
+  const { system, user, provider, model, apiKey, companyId, passName, retryOnParseFailure = false, maxTokens: passMaxTokens = MAX_TOKENS } = opts;
 
   const attempt = async (userContent: string): Promise<string | null> => {
     try {
-      const result = await complete(provider, system, userContent, model, apiKey, MAX_TOKENS);
+      const result = await complete(provider, system, userContent, model, apiKey, passMaxTokens);
       await logUsage({
         capability: 'shred',
         provider,
@@ -416,7 +429,7 @@ export async function runFSEA(
 
     await setProgress(jobId, `Pass 2 — Waiting for batch results (${chunks.length} chunks in parallel)…`, 13);
 
-    const batchResults = await anthropicBatch(batchRequests, model, apiKey, MAX_TOKENS).catch(e => {
+    const batchResults = await anthropicBatch(batchRequests, model, apiKey, MAX_TOKENS_P2_CHUNK).catch(e => {
       // Batch submission failed — fall through to sequential
       console.error('[fsea] Pass 2 batch failed, falling back to sequential:', e instanceof Error ? e.message : e);
       return null;
@@ -466,7 +479,8 @@ export async function runFSEA(
         user: `SOLICITATION PACKAGE${chunkLabel}:\n\n${chunk}`,
         provider, model, apiKey, companyId,
         passName: `Pass 2${chunkLabel}`,
-        retryOnParseFailure: true
+        retryOnParseFailure: true,
+        maxTokens: MAX_TOKENS_P2_CHUNK
       });
     }));
   }
@@ -555,7 +569,8 @@ export async function runFSEA(
       user: `SOLICITATION PACKAGE (base RFP):\n\n${p1.rfpBaseText}`,
       provider, model, apiKey, companyId,
       passName: 'Pass 3 (full)',
-      retryOnParseFailure: true
+      retryOnParseFailure: true,
+      maxTokens: MAX_TOKENS_P3
     });
   }
 

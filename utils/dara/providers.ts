@@ -80,12 +80,11 @@ function providerMaxOutput(provider: string): number {
   return 64000; // anthropic — effectively uncapped for our requests
 }
 
-// Hard ceiling on a single LLM HTTP call. Without it a hung provider connection blocks the
-// worker until the 300s function kill, orphaning the job as `running` (which pins the workspace
-// poll on). Set just under the 300s function budget: high enough that legitimate long
-// generations (a full-RFP requirements shred, a many-finding review) finish, low enough that a
-// true hang still aborts with ~60s left for the catch to fail/requeue the job cleanly.
-const AI_TIMEOUT_MS = 240_000;
+// Hard ceiling on a single LLM HTTP call. Set well inside the Vercel function budget so
+// a hung or very slow call throws a catchable AbortError rather than being killed externally
+// by Vercel — an external kill bypasses all catch/finally cleanup including checkpoint saves.
+// 90s is generous for any single Haiku call (typical P4 at 17k in/21k out takes ~60-80s).
+const AI_TIMEOUT_MS = 90_000;
 
 async function aiFetch(url: string, init: RequestInit): Promise<Response> {
   const ctrl = new AbortController();
