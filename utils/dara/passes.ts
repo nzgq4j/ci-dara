@@ -819,10 +819,10 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
       } else if (payload.kind === 'shred' && payload.solicitationId) {
-        // FSEA pipeline is multi-tick: each invocation runs as many passes as the deadline allows,
-        // saves partial state, then returns paused=true. The job is requeued (done=false) and the
-        // next worker tick resumes. Only mark done when ok=true (pipeline complete) or surface
-        // a hard failure (real error, not a deadline pause) via throw.
+        // FSEA pipeline is multi-tick: each invocation runs exactly one pass, writes a
+        // checkpoint, and returns paused=true. The next invocation is triggered immediately
+        // via triggerWorker() rather than waiting for the next cron tick — this keeps
+        // pass-to-pass latency near zero instead of up to 60s.
         const shredRes = await runFSEA(
           BigInt(payload.solicitationId),
           companyId,
@@ -830,8 +830,9 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
           pending.id,
         );
         if (shredRes.paused) {
-          // Deadline exceeded mid-pipeline — requeue for next tick
+          // Pass complete — fire next invocation immediately, don't wait for cron
           done = false;
+          triggerWorker();
         } else if (!shredRes.ok) {
           throw new Error(shredRes.error ?? 'FSEA pipeline failed.');
         } else {
