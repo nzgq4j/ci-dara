@@ -352,7 +352,7 @@ export async function runFSEA(
   jobId?: bigint
 ): Promise<FSEAResult> {
   const passResults: FSEAResult['passResults'] = {};
-  const errors: Record<string, string> = {};
+  const errors: Record<string, string | undefined> = {};
 
   // Guard: populated matrix requires explicit clear before re-run.
   // Exception: a paused pipeline (partial=true in notes) is allowed to resume.
@@ -869,3 +869,4 @@ function buildFallbackP7(): P7Output {
     wiringIntegrityStatus: 'Pass 7 did not complete'
   };
 }
+
