@@ -336,7 +336,7 @@ export async function runFSEA(
   if (p2Result.error) {
     return { ok: false, error: `Pass 2 failed: ${p2Result.error}. The pipeline cannot continue without a requirement candidate list.` };
   }
-  const p2 = p2Result.data;
+  const p2 = p2Result.data!;
   passResults.p2 = true;
   console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${p2.summary.critical} critical, ${p2.summary.nonCritical} non-critical)`);
 
@@ -357,7 +357,7 @@ export async function runFSEA(
   if (p3Result.error) {
     return { ok: false, error: `Pass 3 failed: ${p3Result.error}. Without an evaluation model, requirement classification cannot proceed.` };
   }
-  const p3 = p3Result.data;
+  const p3 = p3Result.data!;
   passResults.p3 = true;
   console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${p3.factors.length}, signals=${p3.strengthSignals.length}`);
 
@@ -404,7 +404,7 @@ export async function runFSEA(
   if (p5Result.error) {
     return { ok: false, error: `Pass 5 failed: ${p5Result.error}. Cannot build the matrix without classified requirements.` };
   }
-  const p5 = p5Result.data;
+  const p5 = p5Result.data!;
   passResults.p5 = true;
   const matrixReqs = p5.classified.filter(r => r.disposition === 'MATRIX');
   console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary.discarded}, clusters=${p5.clusters.length}`);
@@ -528,7 +528,7 @@ export async function runFSEA(
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: `Pass 10 failed: ${p10Result.error}` });
     return { ok: false, error: `Pass 10 failed: ${p10Result.error}. Partial data from Passes 2-9 has been saved.` };
   }
-  const p10 = p10Result.data;
+  const p10 = p10Result.data!;
   passResults.p10 = true;
 
   // Inject any pass errors into the executive summary so the UI can surface them
