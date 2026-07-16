@@ -774,8 +774,8 @@ export async function runFSEA(
 
   try {
     await writeFseaResults({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, p10 });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'database write failed';
+  } catch {
+    const msg = 'database write failed';
     console.error('[fsea] writeFseaResults failed:', msg);
     return { ok: false, error: `Pipeline completed but save failed: ${msg}. Re-run to retry.` };
   }
