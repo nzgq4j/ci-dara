@@ -30,7 +30,7 @@ import type {
   FSEAResult, P1DocumentStructure, P2Output, P3Output, P4Output,
   P5Output, P6Output, P7Output, P8Output, P9Output, P10Output
 } from './types';
-import { writeFseaResults, writeFseaPartial } from './persist/write-results';
+import { writeFseaResults, writeFseaPartial, readFseaCheckpoint } from './persist/write-results';
 
 const MAX_TOKENS = 32000;
 const MAX_DOC_CHARS = 500_000;
@@ -341,11 +341,17 @@ export async function runFSEA(
   const passResults: FSEAResult['passResults'] = {};
   const errors: Record<string, string> = {};
 
-  // Guard: populated matrix requires explicit clear before re-run
+  // Guard: populated matrix requires explicit clear before re-run.
+  // Exception: a paused pipeline (partial=true in notes) is allowed to resume.
   const existing = await withTenant(companyId, async (tx) =>
     tx.requirement.count({ where: { solicitationId, companyId, removedAt: null } })
   );
-  if (existing > 0) {
+
+  // Attempt to load checkpoint from a prior paused tick
+  const checkpoint = await readFseaCheckpoint(solicitationId, companyId);
+  const isResume = checkpoint && (checkpoint.p2 || checkpoint.p3);
+
+  if (existing > 0 && !isResume) {
     return {
       ok: false,
       error: 'Matrix already populated. Clear existing requirements before re-running the pipeline.'
@@ -369,12 +375,26 @@ export async function runFSEA(
   if (!apiKey) return { ok: false, error: `No API key configured for provider "${provider}". Add an API key in Settings.` };
 
   // ── Pass 1 — Document assembly ───────────────────────────────────────────────
-  await setProgress(jobId, 'Pass 1 — Assembling document package…', 5);
+  await setProgress(jobId, isResume ? 'Resuming pipeline — reloading document…' : 'Pass 1 — Assembling document package…', 5);
   const p1Result = await runPass1(solicitationId, companyId);
   if (p1Result.error) return { ok: false, error: p1Result.error };
   const p1 = p1Result.structure!;
   passResults.p1 = true;
   const docText = p1.documentText;
+  // Pre-load checkpoint data for all passes — used to skip re-running completed passes
+  // when the pipeline is resumed after a Vercel timeout.
+  const cp = checkpoint ?? {};
+
+
+  // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
+  let p2: P2Output;
+  if (isResume && checkpoint.p2) {
+    // Resume: reload from checkpoint, skip re-running
+    p2 = checkpoint.p2;
+    passResults.p2 = true;
+    await setProgress(jobId, `Resuming from checkpoint — ${p2.candidates.length} candidates loaded…`, 18);
+    console.log(`[fsea] Pass 2 resumed from checkpoint: ${p2.candidates.length} candidates`);
+  } else {
 
   // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
   // Run all chunks in parallel via the Anthropic Batch API (Anthropic provider only).
@@ -486,14 +506,21 @@ export async function runFSEA(
   passResults.p2 = true;
   await setProgress(jobId, `Pass 2 — Found ${dedupedCandidates.length} requirement candidates across ${chunks.length} chunk(s)…`, 18);
   console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s), ${chunkFailCount} chunk(s) failed`);
+  } // end of Pass 2 new-run block
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline paused after Pass 2 — deadline exceeded' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 2. Re-run to continue from Pass 3.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 2. Re-run to continue from Pass 3.' };
   }
 
   // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
-  // Section M (evaluation factors) is almost always in the second half of the base RFP.
+  let p3: P3Output;
+  if (isResume && checkpoint.p3) {
+    p3 = checkpoint.p3;
+    passResults.p3 = true;
+    await setProgress(jobId, `Resuming from checkpoint — evaluation model loaded (${(p3.factors ?? []).length} factors)…`, 26);
+    console.log(`[fsea] Pass 3 resumed from checkpoint: ${(p3.factors ?? []).length} factors`);
+  } else {
   // Sending the entire rfpBaseText at ~64k tokens pushes Haiku to its output limit and
   // produces a truncated response that fails the factors array validation.
   //
@@ -540,13 +567,22 @@ export async function runFSEA(
   const p3Window = p3TailResult.error ? 'full RFP' : 'Section M region';
   await setProgress(jobId, `Pass 3 — Found ${(p3.factors ?? []).length} evaluation factor(s) [${p3Window}]…`, 26);
   console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${(p3.factors ?? []).length}, signals=${(p3.strengthSignals ?? []).length}`);
+  } // end of Pass 3 new-run block
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline paused after Pass 3 — deadline exceeded' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 3. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 3. Re-run to continue.' };
   }
 
   // ── Pass 4 — Evaluation ontology (RETRYABLE) ──────────────────────────────────
+  let p4: P4Output;
+  if (isResume && checkpoint?.p4) {
+    p4 = checkpoint.p4;
+    passResults.p4 = true;
+    errors.p4 = undefined;
+    await setProgress(jobId, `Resuming — ontology loaded (${(p4.factors ?? []).length} factors, ${(p4.criteria ?? []).length} criteria)…`, 34);
+    console.log('[fsea] Pass 4 resumed from checkpoint');
+  } else {
   await setProgress(jobId, 'Pass 4 — Building evaluation ontology…', 28);
   // Pass 4 uses rfpBaseText + compressed prior outputs — the full PWS is already
   // represented in the P2 candidate list, so we don't need to resend it raw.
@@ -570,14 +606,15 @@ export async function runFSEA(
     console.error('[fsea] Pass 4 failed — continuing with degraded ontology:', p4Result.error);
     // Construct a minimal fallback ontology from Pass 3 output so the pipeline can continue
   }
-  const p4: P4Output = p4Result.data ?? buildFallbackOntology(p3);
+  p4 = p4Result.data ?? buildFallbackOntology(p3);
   passResults.p4 = !p4Result.error;
   await setProgress(jobId, `Pass 4 — Built ontology: ${(p4.factors ?? []).length} factors, ${(p4.criteria ?? []).length} criteria${p4Result.error ? ' (degraded)' : ''}…`, 34);
   console.log(`[fsea] Pass 4: criteria=${(p4.criteria ?? []).length}, surface=${(p4.evaluationSurface ?? []).length}, SO=${(p4.strengthOpportunities ?? []).length}`);
+  } // end Pass 4 new-run block
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline paused after Pass 4' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 4. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 4. Re-run to continue.' };
   }
 
   // ── Pass 5 — Requirement classification (RETRYABLE) ───────────────────────────
@@ -601,7 +638,7 @@ export async function runFSEA(
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline paused after Pass 5' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 5. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 5. Re-run to continue.' };
   }
 
   // ── Pass 6 — Proposal actionability (GRACEFUL DEGRADE) ───────────────────────
@@ -623,7 +660,7 @@ export async function runFSEA(
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Pipeline paused after Pass 6' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 6. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 6. Re-run to continue.' };
   }
 
   // ── Pass 7 — L-to-M mapping (GRACEFUL DEGRADE) ────────────────────────────────
@@ -647,7 +684,7 @@ export async function runFSEA(
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline paused after Pass 7' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 7. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 7. Re-run to continue.' };
   }
 
   // ── Pass 8 — Strength opportunity detection (GRACEFUL DEGRADE) ───────────────
@@ -671,7 +708,7 @@ export async function runFSEA(
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline paused after Pass 8' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 8. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 8. Re-run to continue.' };
   }
 
   // ── Pass 9 — Cross-reference resolution (GRACEFUL DEGRADE) ───────────────────
@@ -695,7 +732,7 @@ export async function runFSEA(
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Pipeline paused after Pass 9' });
-    return { ok: false, error: 'Worker deadline exceeded after Pass 9. Re-run to continue.' };
+    return { ok: false, paused: true, error: 'Worker deadline exceeded after Pass 9. Re-run to continue.' };
   }
 
   // ── Pass 10 — Matrix and products generation (HARD GATE) ──────────────────────

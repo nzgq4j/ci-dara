@@ -467,6 +467,7 @@ export interface P10WritingSequence {
 
 export interface FSEAResult {
   ok: boolean;
+  paused?: boolean;   // true when deadline exceeded mid-pipeline — job should be requeued, not failed
   error?: string;
   matrixCount?: number;
   strengthCount?: number;

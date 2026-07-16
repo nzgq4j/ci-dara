@@ -179,7 +179,7 @@ export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void
         }
       }
 
-      // Save whatever pipeline data we have
+      // Save whatever pipeline data we have — includes full pass outputs for cross-tick resume
       await tx.solicitation.update({
         where: { id: solicitationId },
         data: {
@@ -196,6 +196,17 @@ export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void
                 p7: !!args.p7,
                 p8: !!args.p8,
                 p9: !!args.p9,
+              },
+              // Raw pass outputs stored for resume — loaded by runFSEA on next tick
+              checkpointData: {
+                p2: args.p2 ?? null,
+                p3: args.p3 ?? null,
+                p4: args.p4 ?? null,
+                p5: args.p5 ?? null,
+                p6: args.p6 ?? null,
+                p7: args.p7 ?? null,
+                p8: args.p8 ?? null,
+                p9: args.p9 ?? null,
               },
               sectionB: [],
               sectionC: [],
@@ -254,4 +265,47 @@ function buildFseaNotesJson(args: WriteFseaArgs): string {
       criticalGapAdvisory: p8.criticalGapAdvisory ?? null,
     }
   });
+}
+
+// ── Checkpoint reader for cross-tick resume ───────────────────────────────────
+
+export interface FseaCheckpoint {
+  p2?: P2Output;
+  p3?: P3Output;
+  p4?: P4Output;
+  p5?: P5Output;
+  p6?: P6Output;
+  p7?: P7Output;
+  p8?: P8Output;
+  p9?: P9Output;
+}
+
+export async function readFseaCheckpoint(
+  solicitationId: bigint,
+  companyId: bigint
+): Promise<FseaCheckpoint | null> {
+  try {
+    const sol = await withTenant(companyId, async (tx) =>
+      tx.solicitation.findFirst({
+        where: { id: solicitationId, companyId },
+        select: { notes: true }
+      })
+    );
+    if (!sol?.notes) return null;
+    const parsed = JSON.parse(sol.notes as string);
+    const cp = parsed?.fseaOutput?.checkpointData;
+    if (!cp) return null;
+    return {
+      p2: cp.p2 ?? undefined,
+      p3: cp.p3 ?? undefined,
+      p4: cp.p4 ?? undefined,
+      p5: cp.p5 ?? undefined,
+      p6: cp.p6 ?? undefined,
+      p7: cp.p7 ?? undefined,
+      p8: cp.p8 ?? undefined,
+      p9: cp.p9 ?? undefined,
+    };
+  } catch {
+    return null;
+  }
 }

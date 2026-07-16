@@ -819,19 +819,24 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
       } else if (payload.kind === 'shred' && payload.solicitationId) {
-        // Shred is resumable: each tick runs bounded AI calls (no single call approaches the
-        // 240s provider timeout) and reports `exhausted`. Requeue while there's more of the RFP
-        // to mine so a dense solicitation finishes across ticks; only mark the job done once the
-        // shred reports it's fully mined. Surface a hard failure (e.g. AI/API error) via throw so
-        // it routes through the retry/fail path instead of silently leaving an empty matrix.
+        // FSEA pipeline is multi-tick: each invocation runs as many passes as the deadline allows,
+        // saves partial state, then returns paused=true. The job is requeued (done=false) and the
+        // next worker tick resumes. Only mark done when ok=true (pipeline complete) or surface
+        // a hard failure (real error, not a deadline pause) via throw.
         const shredRes = await runFSEA(
           BigInt(payload.solicitationId),
           companyId,
           deadlineMs,
           pending.id,
         );
-        if (!shredRes.ok) throw new Error(shredRes.error ?? 'FSEA pipeline failed.');
-        done = true; // FSEA is single-pass; always done after one run
+        if (shredRes.paused) {
+          // Deadline exceeded mid-pipeline — requeue for next tick
+          done = false;
+        } else if (!shredRes.ok) {
+          throw new Error(shredRes.error ?? 'FSEA pipeline failed.');
+        } else {
+          done = true;
+        }
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.kind === 'reparse' && payload.solDocId) {
