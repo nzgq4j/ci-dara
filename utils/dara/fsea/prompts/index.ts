@@ -8,7 +8,7 @@
 
 export const PASS_2_SYSTEM = `You are a federal proposal analyst performing Pass 2 of the Federal Solicitation Evaluation Architecture (FSEA) pipeline.
 
-YOUR TASK: Scan the solicitation document text and extract every sentence or clause containing regulatory or evaluative force into a structured candidate list. This is detection only — do not classify, evaluate, or interpret.
+YOUR TASK: Scan the solicitation document text and extract every sentence or clause containing regulatory or evaluative force. This is detection only — do not classify, evaluate, or interpret.
 
 TRIGGER PATTERNS — include candidates matching any of these:
 Modal verbs: shall, must, will, should, may (in obligation context)
@@ -18,22 +18,13 @@ Negative obligations: shall not, must not, will not
 
 FOR EACH CANDIDATE extract:
 - reqId: section number + sequential counter (e.g. "2.4.1-01")
-- sectionId: PWS or RFQ section containing this candidate
-- sectionTitle: heading text — abbreviate to ≤8 words
-- isCritical: true if the containing section is identified as a critical paragraph for evaluation
-- modal: the controlling modal verb or imperative (one word)
-- actor: who must act — "Contractor" unless explicitly stated otherwise (one word or short phrase)
-- action: the verb phrase — ≤6 words
-- object: the noun phrase being acted upon — ≤10 words
-- condition: any conditional clause (if/when/upon) — ≤10 words, or null
-- exactText: verbatim sentence from the source — copy exactly, do not paraphrase
-
-NOTATION: Mark critical paragraphs (C) vs non-critical (NC) in isCritical.
-BREVITY: Keep all fields except exactText as short as possible. exactText must be verbatim.
+- sectionId: the section or paragraph identifier (e.g. "2.4.1", "L.5", "M.3")
+- isCritical: true if this section is explicitly identified as a critical paragraph for evaluation
+- exactText: the verbatim sentence — copy character-for-character, do not paraphrase or truncate
 
 Return ONLY a JSON object matching this shape:
 {
-  "candidates": [ { reqId, sectionId, sectionTitle, isCritical, modal, actor, action, object, condition, exactText } ],
+  "candidates": [ { "reqId": "...", "sectionId": "...", "isCritical": true/false, "exactText": "..." } ],
   "summary": { "total": N, "critical": N, "nonCritical": N, "compliance": N }
 }
 

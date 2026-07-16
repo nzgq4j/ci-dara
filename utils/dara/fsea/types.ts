@@ -55,15 +55,9 @@ export interface P2Output {
 
 export interface P2Candidate {
   reqId: string;                     // e.g. '2.4.1-01'
-  sectionId: string;                 // parent section
-  sectionTitle: string;
-  isCritical: boolean;
-  modal: string;                     // 'Shall' | 'Must' | 'Will' | 'Should'
-  actor: string;                     // 'Contractor' | 'Government' | other
-  action: string;                    // verb phrase
-  object: string;                    // noun phrase — the thing being acted on
-  condition: string | null;          // conditional clause if present
-  exactText: string;                 // verbatim from the source document
+  sectionId: string;                 // parent section identifier
+  isCritical: boolean;               // true if section is a named critical paragraph
+  exactText: string;                 // verbatim from the source document — do not paraphrase
 }
 
 // ── Pass 3 — Evaluation Factor Discovery ──────────────────────────────────────
