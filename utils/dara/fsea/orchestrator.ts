@@ -36,7 +36,7 @@ const MAX_TOKENS = 32000;
 const MAX_DOC_CHARS = 500_000;
 // Chunk size for large documents fed to Passes 2 and 4.
 // 80k chars ≈ 60k tokens — comfortably within Haiku's 200k context with room for system prompt and output.
-const CHUNK_SIZE = 80_000;
+const CHUNK_SIZE = 120_000;
 // Overlap between chunks so requirements spanning chunk boundaries are not missed.
 const CHUNK_OVERLAP = 5_000;
 // Context budget per pass — trim prior pass outputs to this many chars when building user message.
@@ -493,9 +493,15 @@ export async function runFSEA(
   await setProgress(jobId, 'Pass 4 — Building evaluation ontology…', 28);
   // Pass 4 uses rfpBaseText + compressed prior outputs — the full PWS is already
   // represented in the P2 candidate list, so we don't need to resend it raw.
+  // Pass 4 receives the Section M region (tail window) plus compressed P2/P3.
+  // Sending the full 63k-token rfpBaseText here caused a worker timeout — the combined
+  // input pushed Haiku over its reliable range before generating the full ontology.
+  const p4RfpContext = p1.rfpBaseText.length > P3_WINDOW
+    ? p1.rfpBaseText.slice(-P3_WINDOW)
+    : p1.rfpBaseText;
   const p4Result = await runLlmPass<P4Output>({
     system: PASS_4_SYSTEM,
-    user: `SOLICITATION PACKAGE (base RFP):\n\n${p1.rfpBaseText}\n\n` +
+    user: `SOLICITATION PACKAGE (base RFP — Section M region):\n\n${p4RfpContext}\n\n` +
       `PASS 2 — CANDIDATES:\n${trimContext(p2)}\n\n` +
       `PASS 3 — EVALUATION FACTORS:\n${trimContext(p3)}`,
     provider, model, apiKey, companyId,
