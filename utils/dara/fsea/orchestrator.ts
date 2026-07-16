@@ -46,6 +46,9 @@ const MAX_TOKENS_P8 = 8000;        // strength opportunity register
 const MAX_TOKENS_P9 = 6000;        // cross-reference graph
 const MAX_TOKENS_P10 = 16000;      // four output sections — most complex
 const MAX_DOC_CHARS = 500_000;
+// Tail window for Pass 3 and Pass 4 — last N chars of rfpBaseText where Section M typically lives.
+// Declared at module scope because both Pass 3 and Pass 4 reference it.
+const P3_WINDOW = 40_000;
 // Chunk size for large documents fed to Passes 2 and 4.
 // 80k chars ≈ 60k tokens — comfortably within Haiku's 200k context with room for system prompt and output.
 const CHUNK_SIZE = 120_000;
@@ -543,7 +546,6 @@ export async function runFSEA(
   await setProgress(jobId, 'Pass 3 — Locating Section M evaluation criteria…', 20);
 
   // Tail window: last 40k chars of rfpBaseText where Section M typically lives
-  const P3_WINDOW = 40_000;
   const rfpTail = p1.rfpBaseText.length > P3_WINDOW
     ? p1.rfpBaseText.slice(-P3_WINDOW)
     : p1.rfpBaseText;
