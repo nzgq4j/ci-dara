@@ -503,7 +503,7 @@ export async function runFSEA(
 
   // Yield after Pass 2 — always checkpoint so next tick starts at Pass 3
   await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline yielding after Pass 2' });
-  if (!isResume || !checkpoint.p3) {
+  if (!checkpoint.p3) {
     return { ok: false, paused: true, error: 'Pass 2 complete. Pipeline will continue from Pass 3 on next tick.' };
   }
 
@@ -565,7 +565,7 @@ export async function runFSEA(
 
   // Yield after Pass 3 — checkpoint and continue on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline yielding after Pass 3' });
-  if (!isResume || !checkpoint.p4) {
+  if (!checkpoint.p4) {
     return { ok: false, paused: true, error: 'Pass 3 complete. Pipeline will continue from Pass 4 on next tick.' };
   }
 
@@ -609,7 +609,7 @@ export async function runFSEA(
 
   // Yield after Pass 4 — checkpoint and continue on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline yielding after Pass 4' });
-  if (!isResume || !checkpoint.p5) {
+  if (!checkpoint.p5) {
     return { ok: false, paused: true, error: 'Pass 4 complete. Pipeline will continue from Pass 5 on next tick.' };
   }
 
@@ -634,7 +634,7 @@ export async function runFSEA(
 
   // Yield after Pass 5 — checkpoint and continue on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline yielding after Pass 5' });
-  if (!isResume || !checkpoint.p6) {
+  if (!checkpoint.p6) {
     return { ok: false, paused: true, error: 'Pass 5 complete. Pipeline will continue from Pass 6 on next tick.' };
   }
 
@@ -657,7 +657,7 @@ export async function runFSEA(
 
   // Yield after Pass 6 — checkpoint and continue on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Pipeline yielding after Pass 6' });
-  if (!isResume || !checkpoint.p7) {
+  if (!checkpoint.p7) {
     return { ok: false, paused: true, error: 'Pass 6 complete. Pipeline will continue from Pass 7 on next tick.' };
   }
 
@@ -682,7 +682,7 @@ export async function runFSEA(
 
   // Yield after Pass 7 — checkpoint and continue on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline yielding after Pass 7' });
-  if (!isResume || !checkpoint.p8) {
+  if (!checkpoint.p8) {
     return { ok: false, paused: true, error: 'Pass 7 complete. Pipeline will continue from Pass 8 on next tick.' };
   }
 
@@ -707,7 +707,7 @@ export async function runFSEA(
 
   // Yield after Pass 8 — checkpoint and continue on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline yielding after Pass 8' });
-  if (!isResume || !checkpoint.p9) {
+  if (!checkpoint.p9) {
     return { ok: false, paused: true, error: 'Pass 8 complete. Pipeline will continue from Pass 9 on next tick.' };
   }
 
@@ -732,9 +732,7 @@ export async function runFSEA(
 
   // Yield after Pass 9 — checkpoint and continue to Pass 10 on next tick
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Pipeline yielding after Pass 9' });
-  if (!isResume || !checkpoint.p9) {
-    return { ok: false, paused: true, error: 'Pass 9 complete. Pipeline will continue to Pass 10 on next tick.' };
-  }
+  return { ok: false, paused: true, error: 'Pass 9 complete. Pipeline will continue to Pass 10 on next tick.' };
 
   // ── Pass 10 — Matrix and products generation (HARD GATE) ──────────────────────
   await setProgress(jobId, 'Pass 10 — Generating evaluation matrix and writing plan…', 80);
