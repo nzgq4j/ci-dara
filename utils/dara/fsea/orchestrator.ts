@@ -93,7 +93,7 @@ function validatePassOutput(data: unknown, passName: string): string | null {
       if ((obj.candidates as unknown[]).length === 0) return 'Pass 2: no candidates extracted — document may be unreadable or contain no requirements';
       return null;
     case 'Pass 3': {
-      if (!obj.factors && !Array.isArray(obj.factors)) {
+      if (!Array.isArray(obj.factors)) {
         // Attempt common schema mismatch recovery before failing
         const alt = obj.evaluation_factors ?? obj.evaluationFactors ?? obj.factor_list ?? obj.factorList;
         if (Array.isArray(alt) && alt.length > 0) {
@@ -427,6 +427,7 @@ export async function runFSEA(
     summary: { total: dedupedCandidates.length, critical: criticalCount, nonCritical: dedupedCandidates.length - criticalCount, compliance: 0 }
   };
   passResults.p2 = true;
+  await setProgress(jobId, `Pass 2 — Found ${dedupedCandidates.length} requirement candidates across ${chunks.length} chunk(s)…`, 18);
   console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s), ${chunkFailCount} chunk(s) failed`);
 
   if (Date.now() > deadlineMs) {
@@ -441,7 +442,7 @@ export async function runFSEA(
   //
   // Strategy: try the tail 40k chars first (most likely to contain Section M), then
   // on failure try a full-document scan with the complete rfpBaseText.
-  await setProgress(jobId, 'Pass 3 — Parsing evaluation methodology…', 20);
+  await setProgress(jobId, 'Pass 3 — Locating Section M evaluation criteria…', 20);
 
   // Tail window: last 40k chars of rfpBaseText where Section M typically lives
   const P3_WINDOW = 40_000;
@@ -479,7 +480,9 @@ export async function runFSEA(
   }
   const p3 = p3Result.data!;
   passResults.p3 = true;
-  console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${p3.factors.length}, signals=${p3.strengthSignals.length}`);
+  const p3Window = p3TailResult.error ? 'full RFP' : 'Section M region';
+  await setProgress(jobId, `Pass 3 — Found ${(p3.factors ?? []).length} evaluation factor(s) [${p3Window}]…`, 26);
+  console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${(p3.factors ?? []).length}, signals=${(p3.strengthSignals ?? []).length}`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline paused after Pass 3 — deadline exceeded' });
@@ -506,7 +509,8 @@ export async function runFSEA(
   }
   const p4: P4Output = p4Result.data ?? buildFallbackOntology(p3);
   passResults.p4 = !p4Result.error;
-  console.log(`[fsea] Pass 4: criteria=${p4.criteria.length}, surface=${p4.evaluationSurface.length}, SO=${p4.strengthOpportunities.length}`);
+  await setProgress(jobId, `Pass 4 — Built ontology: ${(p4.factors ?? []).length} factors, ${(p4.criteria ?? []).length} criteria${p4Result.error ? ' (degraded)' : ''}…`, 34);
+  console.log(`[fsea] Pass 4: criteria=${(p4.criteria ?? []).length}, surface=${(p4.evaluationSurface ?? []).length}, SO=${(p4.strengthOpportunities ?? []).length}`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline paused after Pass 4' });
@@ -529,7 +533,8 @@ export async function runFSEA(
   const p5 = p5Result.data!;
   passResults.p5 = true;
   const matrixReqs = p5.classified.filter(r => r.disposition === 'MATRIX');
-  console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary.discarded}, clusters=${p5.clusters.length}`);
+  await setProgress(jobId, `Pass 5 — Classified ${p5.classified?.length ?? 0} requirements: ${matrixReqs.length} for matrix…`, 43);
+  console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary?.discarded ?? 0}, clusters=${(p5.clusters ?? []).length}`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline paused after Pass 5' });
@@ -575,7 +580,7 @@ export async function runFSEA(
   }
   const p7: P7Output = p7Result.data ?? buildFallbackP7();
   passResults.p7 = !p7Result.error;
-  console.log(`[fsea] Pass 7: maps=${p7.paragraphMaps.length}, cross-wires=${p7.crossParagraphWires.length}`);
+  console.log(`[fsea] Pass 7: maps=${(p7.paragraphMaps ?? []).length}, cross-wires=${(p7.crossParagraphWires ?? []).length}`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline paused after Pass 7' });
@@ -598,7 +603,8 @@ export async function runFSEA(
   }
   const p8: P8Output = p8Result.data ?? { strengthOpportunities: [], summary: { total: 0, byParagraph: {}, top5: [] }, criticalGapAdvisory: '' };
   passResults.p8 = !p8Result.error;
-  console.log(`[fsea] Pass 8: strengths=${p8.strengthOpportunities.length}`);
+  await setProgress(jobId, `Pass 8 — Identified ${(p8.strengthOpportunities ?? []).length} strength opportunities${p8Result.error ? ' (degraded)' : ''}…`, 67);
+  console.log(`[fsea] Pass 8: strengths=${(p8.strengthOpportunities ?? []).length}`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline paused after Pass 8' });
@@ -661,10 +667,10 @@ export async function runFSEA(
     ];
   }
 
-  console.log(`[fsea] Pass 10: matrix=${p10.sectionA.length}, SO=${p10.sectionB.length}, WR=${p10.sectionC.length}, AC=${p10.sectionD.length}`);
+  console.log(`[fsea] Pass 10: matrix=${(p10.sectionA ?? []).length}, SO=${(p10.sectionB ?? []).length}, WR=${(p10.sectionC ?? []).length}, AC=${(p10.sectionD ?? []).length}`);
 
   // ── Persist ────────────────────────────────────────────────────────────────────
-  await setProgress(jobId, `Saving ${p10.sectionA.length} requirements and ${p10.sectionB.length} strength opportunities…`, 92);
+  await setProgress(jobId, `Pass 10 complete — saving ${(p10.sectionA ?? []).length} requirements, ${(p10.sectionB ?? []).length} strength opportunities, ${(p10.sectionD ?? []).length} checklist items…`, 92);
 
   try {
     await writeFseaResults({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, p10 });
