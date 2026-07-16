@@ -435,16 +435,45 @@ export async function runFSEA(
   }
 
   // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
-  // Uses rfpBaseText only — evaluation factors live exclusively in the base RFP (Section M).
-  // Sending the full document risks pushing Section M past the context window on large packages.
+  // Section M (evaluation factors) is almost always in the second half of the base RFP.
+  // Sending the entire rfpBaseText at ~64k tokens pushes Haiku to its output limit and
+  // produces a truncated response that fails the factors array validation.
+  //
+  // Strategy: try the tail 40k chars first (most likely to contain Section M), then
+  // on failure try a full-document scan with the complete rfpBaseText.
   await setProgress(jobId, 'Pass 3 — Parsing evaluation methodology…', 20);
-  const p3Result = await runLlmPass<P3Output>({
+
+  // Tail window: last 40k chars of rfpBaseText where Section M typically lives
+  const P3_WINDOW = 40_000;
+  const rfpTail = p1.rfpBaseText.length > P3_WINDOW
+    ? p1.rfpBaseText.slice(-P3_WINDOW)
+    : p1.rfpBaseText;
+  const tailNote = p1.rfpBaseText.length > P3_WINDOW
+    ? `\n[Note: showing final ${P3_WINDOW} characters of the base RFP — Section M typically appears in this range]`
+    : '';
+
+  const p3TailResult = await runLlmPass<P3Output>({
     system: PASS_3_SYSTEM,
-    user: `SOLICITATION PACKAGE (base RFP):\n\n${p1.rfpBaseText}`,
+    user: `SOLICITATION PACKAGE (base RFP — Section M region):${tailNote}\n\n${rfpTail}`,
     provider, model, apiKey, companyId,
-    passName: 'Pass 3',
+    passName: 'Pass 3 (tail)',
     retryOnParseFailure: true
   });
+
+  // If the tail window found factors, use it — otherwise fall back to full rfpBaseText
+  let p3Result = p3TailResult;
+  if (p3TailResult.error) {
+    console.warn(`[fsea] Pass 3 tail window failed — retrying with full rfpBaseText: ${p3TailResult.error}`);
+    await setProgress(jobId, 'Pass 3 — Scanning full RFP for evaluation methodology…', 22);
+    p3Result = await runLlmPass<P3Output>({
+      system: PASS_3_SYSTEM,
+      user: `SOLICITATION PACKAGE (base RFP):\n\n${p1.rfpBaseText}`,
+      provider, model, apiKey, companyId,
+      passName: 'Pass 3 (full)',
+      retryOnParseFailure: true
+    });
+  }
+
   if (p3Result.error) {
     return { ok: false, error: `Pass 3 failed: ${p3Result.error}. Without an evaluation model, requirement classification cannot proceed.` };
   }
