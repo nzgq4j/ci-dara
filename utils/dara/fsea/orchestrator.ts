@@ -36,7 +36,7 @@ import { writeFseaResults, writeFseaPartial, readFseaCheckpoint } from './persis
 // Oversized ceilings cause slow calls and unnecessary cost — a P2 chunk producing
 // 21k tokens of ontology JSON is a sign MAX_TOKENS was too high.
 const MAX_TOKENS = 16000;          // default / fallback
-const MAX_TOKENS_P2_CHUNK = 8000;  // candidate list per chunk: reqId + sectionId + isCritical + exactText
+const MAX_TOKENS_P2_CHUNK = 16000; // candidate list per chunk: reqId + sectionId + isCritical + exactText
 const MAX_TOKENS_P3 = 6000;        // evaluation model: factors, rating scale, strength signals
 const MAX_TOKENS_P4 = 12000;       // ontology: 10 object levels, more complex
 const MAX_TOKENS_P5 = 12000;       // classification: one entry per candidate
