@@ -461,15 +461,23 @@ export async function runFSEA(
     }
 
     if (chunkResults.length === 0) {
-      // Sequential fallback
-      await setProgress(jobId, `Pass 2 — Processing ${chunks.length} chunks sequentially…`, 13);
+      // Batch failed. For multi-chunk documents, sequential fallback will always exceed
+      // Vercel's 300s function limit (each chunk takes 90-180s). Fail fast so the
+      // checkpoint/resume mechanism can retry cleanly on the next invocation rather
+      // than burning the remaining Vercel budget on a guaranteed timeout.
+      if (chunks.length > 1) {
+        return { ok: false, error: `Pass 2 batch failed on a ${chunks.length}-chunk document. Sequential fallback would exceed the function time limit. Re-run to retry via the batch API.` };
+      }
+      // Single chunk only — sequential is safe
+      await setProgress(jobId, `Pass 2 — Processing single chunk sequentially…`, 13);
       chunkResults = await Promise.all(chunks.map((chunk, ci) =>
         runLlmPass<P2Output>({
           system: PASS_2_SYSTEM,
           user: `SOLICITATION PACKAGE (chunk ${ci + 1}/${chunks.length}):\n\n${chunk}`,
           provider, model, apiKey, companyId,
           passName: `Pass 2 (chunk ${ci + 1})`,
-          retryOnParseFailure: true
+          retryOnParseFailure: true,
+          maxTokens: MAX_TOKENS_P2_CHUNK
         })
       ));
     }
