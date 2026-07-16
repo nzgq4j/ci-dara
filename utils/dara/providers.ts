@@ -103,10 +103,21 @@ async function aiFetch(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
-// ── Anthropic Message Batches API ─────────────────────────────────────────────
-// Submits multiple requests in a single HTTP call; Anthropic processes them in
-// parallel server-side. Eliminates the Vercel serialization that was causing
-// Promise.all chunks to execute sequentially.
+// ── Parallel streaming ────────────────────────────────────────────────────────
+// Fires all chunk requests simultaneously as streaming calls. Each stream starts
+// returning tokens within seconds of submission, so all chunks progress in true
+// parallel and total wall time ≈ slowest single chunk (not sum of all chunks).
+//
+// Why not the Anthropic Batch API: the Batch API is an async bulk queue —
+// processing time is unpredictable (30s–5+ min) and requires polling, which
+// burns Vercel function time waiting. Streaming connections are synchronous and
+// complete in real time.
+//
+// Why streaming beats non-streaming Promise.all: non-streaming requests block
+// on the full response body before resolving. Vercel does not serialise
+// concurrent outbound fetch calls, but streaming keeps the connection alive
+// from first token, so Vercel's 300s wall clock is spent on actual generation
+// rather than queue wait or polling.
 
 export interface BatchRequest {
   customId: string;
@@ -122,112 +133,96 @@ export interface BatchResult {
   error: string | null;
 }
 
-// Submit a batch and poll until all results are ready. Returns results in the
-// same order as requests. Polling interval backs off from 2s to 10s.
+// Stream a single Anthropic request to completion, accumulating the full text.
+async function anthropicStream(
+  request: BatchRequest,
+  model: string,
+  apiKey: string,
+  maxTokens: number
+): Promise<BatchResult> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'interleaved-thinking-2025-05-14'
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        stream: true,
+        system: request.system,
+        messages: [{ role: 'user', content: request.user }]
+      }),
+      signal: ctrl.signal
+    });
+
+    if (!res.ok) {
+      const errData: any = await res.json().catch(() => ({}));
+      throw new Error(errData?.error?.message ?? `Anthropic HTTP ${res.status}`);
+    }
+
+    // Accumulate SSE stream
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('No response body from Anthropic streaming endpoint');
+
+    const decoder = new TextDecoder();
+    let text = '';
+    let tokenIn = 0;
+    let tokenOut = 0;
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? ''; // keep incomplete last line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const evt: any = JSON.parse(payload);
+          if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+            text += evt.delta.text ?? '';
+          } else if (evt.type === 'message_delta' && evt.usage) {
+            tokenOut = Number(evt.usage.output_tokens ?? 0);
+          } else if (evt.type === 'message_start' && evt.message?.usage) {
+            tokenIn = Number(evt.message.usage.input_tokens ?? 0);
+          }
+        } catch { /* skip malformed SSE line */ }
+      }
+    }
+
+    return { customId: request.customId, text, tokenIn, tokenOut, error: null };
+  } catch (e) {
+    const msg = (e as Error)?.name === 'AbortError'
+      ? `AI request timed out after ${Math.round(AI_TIMEOUT_MS / 1000)}s`
+      : ((e as Error)?.message ?? 'Unknown streaming error');
+    return { customId: request.customId, text: '', tokenIn: 0, tokenOut: 0, error: msg };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Fire all requests in parallel as streams. Returns results in request order.
+// Total wall time ≈ slowest single chunk, not sum of all chunks.
 export async function anthropicBatch(
   requests: BatchRequest[],
   model: string,
   apiKey: string,
-  maxTokens: number,
-  timeoutMs = 270_000
+  maxTokens: number
 ): Promise<BatchResult[]> {
-  // Submit batch
-  const submitRes = await aiFetch('https://api.anthropic.com/v1/messages/batches', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'message-batches-2024-09-24'
-    },
-    body: JSON.stringify({
-      requests: requests.map(r => ({
-        custom_id: r.customId,
-        params: {
-          model,
-          max_tokens: maxTokens,
-          system: r.system,
-          messages: [{ role: 'user', content: r.user }]
-        }
-      }))
-    })
-  });
-
-  const submitData: any = await submitRes.json().catch(() => ({}));
-  if (!submitRes.ok) {
-    throw new Error(submitData?.error?.message ?? `Anthropic Batch submit HTTP ${submitRes.status}`);
-  }
-
-  const batchId: string = submitData.id;
-  const deadline = Date.now() + timeoutMs;
-  let pollInterval = 2_000;
-
-  // Poll until processing_status === 'ended'
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, pollInterval));
-    pollInterval = Math.min(pollInterval * 1.5, 10_000);
-
-    const statusRes = await aiFetch(`https://api.anthropic.com/v1/messages/batches/${batchId}`, {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'message-batches-2024-09-24'
-      }
-    });
-
-    const statusData: any = await statusRes.json().catch(() => ({}));
-    if (!statusRes.ok) continue; // transient — keep polling
-
-    if (statusData.processing_status !== 'ended') continue;
-
-    // Fetch results JSONL
-    const resultsRes = await aiFetch(statusData.results_url, {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'message-batches-2024-09-24'
-      }
-    });
-
-    const resultsText = await resultsRes.text();
-    const lines = resultsText.trim().split('\n').filter(Boolean);
-    const resultMap = new Map<string, BatchResult>();
-
-    for (const line of lines) {
-      try {
-        const item: any = JSON.parse(line);
-        const customId: string = item.custom_id;
-        if (item.result?.type === 'succeeded') {
-          resultMap.set(customId, {
-            customId,
-            text: item.result.message?.content?.[0]?.text ?? '',
-            tokenIn: Number(item.result.message?.usage?.input_tokens ?? 0),
-            tokenOut: Number(item.result.message?.usage?.output_tokens ?? 0),
-            error: null
-          });
-        } else {
-          resultMap.set(customId, {
-            customId,
-            text: '',
-            tokenIn: 0,
-            tokenOut: 0,
-            error: item.result?.error?.message ?? 'Batch item failed'
-          });
-        }
-      } catch { /* skip malformed line */ }
-    }
-
-    // Return in request order, filling any missing results as errors
-    return requests.map(r => resultMap.get(r.customId) ?? {
-      customId: r.customId,
-      text: '',
-      tokenIn: 0,
-      tokenOut: 0,
-      error: 'Result missing from batch response'
-    });
-  }
-
-  throw new Error(`Anthropic batch ${batchId} did not complete within ${Math.round(timeoutMs / 1000)}s`);
+  return Promise.all(requests.map(r => anthropicStream(r, model, apiKey, maxTokens)));
 }
 
 /** Dispatch a completion to the configured provider. */
