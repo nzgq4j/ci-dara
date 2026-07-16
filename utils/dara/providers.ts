@@ -83,8 +83,10 @@ function providerMaxOutput(provider: string): number {
 // Hard ceiling on a single LLM HTTP call. Set well inside the Vercel function budget so
 // a hung or very slow call throws a catchable AbortError rather than being killed externally
 // by Vercel — an external kill bypasses all catch/finally cleanup including checkpoint saves.
-// 90s is generous for any single Haiku call (typical P4 at 17k in/21k out takes ~60-80s).
-const AI_TIMEOUT_MS = 90_000;
+// 180s: Pass 2 with MAX_TOKENS_P2_CHUNK=16000 on dense documents can take 120-150s.
+// Set well inside Vercel's 300s function budget so a hung call throws a catchable
+// AbortError rather than being killed externally (which bypasses checkpoint saves).
+const AI_TIMEOUT_MS = 180_000;
 
 async function aiFetch(url: string, init: RequestInit): Promise<Response> {
   const ctrl = new AbortController();
@@ -127,7 +129,7 @@ export async function anthropicBatch(
   model: string,
   apiKey: string,
   maxTokens: number,
-  timeoutMs = 240_000
+  timeoutMs = 270_000
 ): Promise<BatchResult[]> {
   // Submit batch
   const submitRes = await aiFetch('https://api.anthropic.com/v1/messages/batches', {
