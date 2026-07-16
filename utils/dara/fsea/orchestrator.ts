@@ -513,7 +513,7 @@ export async function runFSEA(
     return true;
   });
   const criticalCount = dedupedCandidates.filter(c => c.isCritical).length;
-  const p2: P2Output = {
+  p2 = {
     candidates: dedupedCandidates,
     summary: { total: dedupedCandidates.length, critical: criticalCount, nonCritical: dedupedCandidates.length - criticalCount, compliance: 0 }
   };
@@ -577,7 +577,7 @@ export async function runFSEA(
   if (p3Result.error) {
     return { ok: false, error: `Pass 3 failed: ${p3Result.error}. Without an evaluation model, requirement classification cannot proceed.` };
   }
-  const p3 = p3Result.data!;
+  p3 = p3Result.data!;
   passResults.p3 = true;
   const p3Window = p3TailResult.error ? 'full RFP' : 'Section M region';
   await setProgress(jobId, `Pass 3 — Found ${(p3.factors ?? []).length} evaluation factor(s) [${p3Window}]…`, 26);
