@@ -27,7 +27,7 @@ import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { runFSEA } from '@/utils/dara/fsea/orchestrator';
-import { fetchClauseSync, upsertClauses } from '@/utils/dara/extraction/clause-library';
+import { fetchClauseSync, upsertClauses } from '@/utils/dara/fsea/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
 import { parseAndPersist } from '@/utils/dara/modal-parser';
