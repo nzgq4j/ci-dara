@@ -172,7 +172,7 @@ async function runLlmPass<T>(
     return { data: null, error: `${passName}: produced invalid JSON on both attempts. ${parsed.error}` };
   }
 
-  return { data: null, error: parsed.error };
+  return { data: null, error: parsed.error ?? `${passName}: unknown parse error` };
 }
 
 // ── Pass 1 — Document assembly (deterministic, no LLM) ────────────────────────
