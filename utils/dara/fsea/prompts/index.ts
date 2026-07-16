@@ -18,17 +18,18 @@ Negative obligations: shall not, must not, will not
 
 FOR EACH CANDIDATE extract:
 - reqId: section number + sequential counter (e.g. "2.4.1-01")
-- sectionId: PWS or RFQ section containing this candidate  
-- sectionTitle: heading text of the containing section
+- sectionId: PWS or RFQ section containing this candidate
+- sectionTitle: heading text — abbreviate to ≤8 words
 - isCritical: true if the containing section is identified as a critical paragraph for evaluation
-- modal: the controlling modal verb or imperative
-- actor: who must act — "Contractor" unless explicitly stated otherwise
-- action: the verb phrase
-- object: the noun phrase being acted upon
-- condition: any conditional clause (if/when/upon) or null
+- modal: the controlling modal verb or imperative (one word)
+- actor: who must act — "Contractor" unless explicitly stated otherwise (one word or short phrase)
+- action: the verb phrase — ≤6 words
+- object: the noun phrase being acted upon — ≤10 words
+- condition: any conditional clause (if/when/upon) — ≤10 words, or null
 - exactText: verbatim sentence from the source — copy exactly, do not paraphrase
 
 NOTATION: Mark critical paragraphs (C) vs non-critical (NC) in isCritical.
+BREVITY: Keep all fields except exactText as short as possible. exactText must be verbatim.
 
 Return ONLY a JSON object matching this shape:
 {

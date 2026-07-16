@@ -193,7 +193,22 @@ export async function isComplianceCheckActive(solicitationId: bigint, companyId:
 
 /** Enqueue an async matrix shred ("Generate from solicitation") for a solicitation. */
 export function enqueueShred(solicitationId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
-  return enqueueUniqueJob(companyId, 'shred', 'solicitationId', solicitationId);
+  // maxAttempts=1: the FSEA orchestrator handles its own per-pass retry logic internally.
+  // Job-level retries re-execute the entire pipeline from Pass 1, wasting tokens on passes
+  // that already succeeded. A deterministic failure (temperature 0, same input) will produce
+  // the same output on every retry anyway. Surface the error immediately; the user can
+  // investigate and re-run manually after addressing the root cause.
+  return withTenant(companyId, async (tx) => {
+    const active = await tx.jobQueue.findMany({
+      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
+      select: { payload: true }
+    });
+    if (active.some((j) => jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId))) return { ok: true };
+    await tx.jobQueue.create({
+      data: { companyId, jobType: 'evaluate', payload: { kind: 'shred', solicitationId: solicitationId.toString() }, status: 'pending', maxAttempts: 1 }
+    });
+    return { ok: true };
+  });
 }
 
 /** True when a shred is queued/running for this solicitation. */
