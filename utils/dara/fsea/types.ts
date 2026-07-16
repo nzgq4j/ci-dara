@@ -12,7 +12,9 @@ export interface P1DocumentStructure {
   sections: P1Section[];
   criticalParagraphs: string[];      // e.g. ['2.4.1', '2.4.2', '2.4.3', '2.5', '2.6.1', '2.6.2', '2.6.3']
   cdrlItems: P1Cdrl[];
-  documentText: string;              // full concatenated text for downstream passes
+  documentText: string;              // full concatenated text (rfp_base + pws_sow)
+  rfpBaseText: string;               // rfp_base only — fed to Pass 3; eval methodology lives here
+  chunks: string[];                  // documentText split into overlapping segments for chunked passes
 }
 
 export interface P1Document {

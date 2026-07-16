@@ -34,8 +34,12 @@ import { writeFseaResults, writeFseaPartial } from './persist/write-results';
 
 const MAX_TOKENS = 32000;
 const MAX_DOC_CHARS = 500_000;
-// Context budget per pass — each pass gets full doc plus prior outputs.
-// Trim prior outputs to this many chars when building user message.
+// Chunk size for large documents fed to Passes 2 and 4.
+// 80k chars ≈ 60k tokens — comfortably within Haiku's 200k context with room for system prompt and output.
+const CHUNK_SIZE = 80_000;
+// Overlap between chunks so requirements spanning chunk boundaries are not missed.
+const CHUNK_OVERLAP = 5_000;
+// Context budget per pass — trim prior pass outputs to this many chars when building user message.
 const MAX_PRIOR_CONTEXT_CHARS = 80_000;
 
 // ── Progress helper ────────────────────────────────────────────────────────────
@@ -189,6 +193,28 @@ async function runLlmPass<T>(
   return { data: null, error: parsed.error ?? `${passName}: unknown parse error` };
 }
 
+// ── Chunk helper ──────────────────────────────────────────────────────────────
+
+// Split a document into overlapping chunks for large-document passes.
+// Splits at paragraph boundaries (double newline) to avoid cutting mid-sentence.
+function chunkDocument(text: string, chunkSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
+  if (text.length <= chunkSize) return [text];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + chunkSize, text.length);
+    if (end < text.length) {
+      const boundary = text.lastIndexOf('\n\n', end);
+      if (boundary > start + chunkSize / 2) end = boundary + 2;
+    }
+    chunks.push(text.slice(start, end));
+    if (end >= text.length) break;
+    start = Math.max(start + 1, end - overlap);
+  }
+  console.log(`[fsea] chunkDocument: ${text.length} chars → ${chunks.length} chunks`);
+  return chunks;
+}
+
 // ── Pass 1 — Document assembly (deterministic, no LLM) ────────────────────────
 
 async function runPass1(
@@ -216,12 +242,12 @@ async function runPass1(
     return { structure: null, error: hint };
   }
 
-  const docTexts: string[] = [];
+  const rfpBaseTexts: string[] = [];
+  const pwsSowTexts: string[] = [];
   const packageInventory: P1DocumentStructure['packageInventory'] = [];
   const warnings: string[] = [];
 
   for (const doc of eligibleDocs) {
-    // Try structured parse result first
     const parseRows = await withTenant(companyId, async (tx) =>
       tx.daraParseResult.findMany({
         where: { solDocId: doc.id, supersededAt: null },
@@ -235,7 +261,6 @@ async function runPass1(
       const pr = asParseResult(parseRows[0].result);
       if (pr) text = joinParagraphs(pr);
     }
-    // Fall back to flat extracted text
     if (!text.trim()) {
       text = decryptField(doc.extractedText) ?? '';
     }
@@ -245,7 +270,13 @@ async function runPass1(
       continue;
     }
 
-    docTexts.push(`=== DOCUMENT: ${doc.originalFilename} [${doc.documentRole ?? 'unclassified'}] ===\n\n${text}`);
+    const tagged = `=== DOCUMENT: ${doc.originalFilename} [${doc.documentRole ?? 'unclassified'}] ===\n\n${text}`;
+    if (doc.documentRole === 'rfp_base') {
+      rfpBaseTexts.push(tagged);
+    } else {
+      pwsSowTexts.push(tagged);
+    }
+
     packageInventory.push({
       name: doc.originalFilename,
       role: (doc.documentRole as P1DocumentStructure['packageInventory'][0]['role']) ?? 'other',
@@ -257,7 +288,7 @@ async function runPass1(
     packageInventory.push({ name: doc.originalFilename, role: 'other', present: false });
   }
 
-  if (docTexts.length === 0) {
+  if (rfpBaseTexts.length === 0 && pwsSowTexts.length === 0) {
     return { structure: null, error: `All eligible documents have empty text. ${warnings.join('; ')}` };
   }
 
@@ -265,11 +296,16 @@ async function runPass1(
     console.warn('[fsea] Pass 1 warnings:', warnings.join('; '));
   }
 
-  let documentText = docTexts.join('\n\n');
-  if (documentText.length > MAX_DOC_CHARS) {
-    console.warn(`[fsea] Document text truncated from ${documentText.length} to ${MAX_DOC_CHARS} chars`);
-    documentText = documentText.slice(0, MAX_DOC_CHARS) + '\n\n[Document truncated — remaining text omitted to fit context limit]';
+  // rfp_base first, then pws_sow — ensures eval methodology is never pushed past the truncation point
+  const rfpBaseText = rfpBaseTexts.join('\n\n').slice(0, MAX_DOC_CHARS);
+  const documentText = [...rfpBaseTexts, ...pwsSowTexts].join('\n\n').slice(0, MAX_DOC_CHARS);
+
+  if (documentText.length === MAX_DOC_CHARS) {
+    console.warn('[fsea] Pass 1: documentText truncated to MAX_DOC_CHARS');
   }
+
+  // Pre-compute chunks for chunked pass execution on large documents
+  const chunks = chunkDocument(documentText);
 
   return {
     structure: {
@@ -277,7 +313,9 @@ async function runPass1(
       sections: [],
       criticalParagraphs: [],
       cdrlItems: [],
-      documentText
+      documentText,
+      rfpBaseText,
+      chunks
     },
     error: null
   };
@@ -339,20 +377,47 @@ export async function runFSEA(
   const docText = p1.documentText;
 
   // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
+  // Run against each document chunk separately, then merge results.
+  // This allows Haiku to process large solicitations without hitting context limits.
   await setProgress(jobId, 'Pass 2 — Detecting requirement candidates…', 12);
-  const p2Result = await runLlmPass<P2Output>({
-    system: PASS_2_SYSTEM,
-    user: `SOLICITATION PACKAGE:\n\n${docText}`,
-    provider, model, apiKey, companyId,
-    passName: 'Pass 2',
-    retryOnParseFailure: true
-  });
-  if (p2Result.error) {
-    return { ok: false, error: `Pass 2 failed: ${p2Result.error}. The pipeline cannot continue without a requirement candidate list.` };
+  const allCandidates: P2Output['candidates'] = [];
+  const chunks = p1.chunks;
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunkLabel = chunks.length > 1 ? ` (chunk ${ci + 1}/${chunks.length})` : '';
+    await setProgress(jobId, `Pass 2 — Scanning requirements${chunkLabel}…`, 12 + Math.floor((ci / chunks.length) * 6));
+    const chunkResult = await runLlmPass<P2Output>({
+      system: PASS_2_SYSTEM,
+      user: `SOLICITATION PACKAGE${chunkLabel}:\n\n${chunks[ci]}`,
+      provider, model, apiKey, companyId,
+      passName: `Pass 2${chunkLabel}`,
+      retryOnParseFailure: true
+    });
+    if (chunkResult.data) {
+      allCandidates.push(...(chunkResult.data.candidates ?? []));
+    } else if (ci === 0 && chunks.length === 1) {
+      // Only abort if there is a single chunk and it completely failed
+      return { ok: false, error: `Pass 2 failed: ${chunkResult.error}. The pipeline cannot continue without a requirement candidate list.` };
+    } else {
+      console.warn(`[fsea] Pass 2 chunk ${ci + 1} failed — continuing with other chunks: ${chunkResult.error}`);
+    }
   }
-  const p2 = p2Result.data!;
+  // Deduplicate candidates by reqId prefix to remove cross-chunk overlaps
+  const seenIds = new Set<string>();
+  const dedupedCandidates = allCandidates.filter(c => {
+    if (seenIds.has(c.reqId)) return false;
+    seenIds.add(c.reqId);
+    return true;
+  });
+  if (dedupedCandidates.length === 0) {
+    return { ok: false, error: 'Pass 2 failed: no requirement candidates found across any document chunk.' };
+  }
+  const criticalCount = dedupedCandidates.filter(c => c.isCritical).length;
+  const p2: P2Output = {
+    candidates: dedupedCandidates,
+    summary: { total: dedupedCandidates.length, critical: criticalCount, nonCritical: dedupedCandidates.length - criticalCount, compliance: 0 }
+  };
   passResults.p2 = true;
-  console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${p2.summary.critical} critical, ${p2.summary.nonCritical} non-critical)`);
+  console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s)`);
 
   if (Date.now() > deadlineMs) {
     await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline paused after Pass 2 — deadline exceeded' });
@@ -360,10 +425,12 @@ export async function runFSEA(
   }
 
   // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
+  // Uses rfpBaseText only — evaluation factors live exclusively in the base RFP (Section M).
+  // Sending the full document risks pushing Section M past the context window on large packages.
   await setProgress(jobId, 'Pass 3 — Parsing evaluation methodology…', 20);
   const p3Result = await runLlmPass<P3Output>({
     system: PASS_3_SYSTEM,
-    user: `SOLICITATION PACKAGE:\n\n${docText}`,
+    user: `SOLICITATION PACKAGE (base RFP):\n\n${p1.rfpBaseText}`,
     provider, model, apiKey, companyId,
     passName: 'Pass 3',
     retryOnParseFailure: true
@@ -382,9 +449,11 @@ export async function runFSEA(
 
   // ── Pass 4 — Evaluation ontology (RETRYABLE) ──────────────────────────────────
   await setProgress(jobId, 'Pass 4 — Building evaluation ontology…', 28);
+  // Pass 4 uses rfpBaseText + compressed prior outputs — the full PWS is already
+  // represented in the P2 candidate list, so we don't need to resend it raw.
   const p4Result = await runLlmPass<P4Output>({
     system: PASS_4_SYSTEM,
-    user: `SOLICITATION PACKAGE:\n\n${docText}\n\n` +
+    user: `SOLICITATION PACKAGE (base RFP):\n\n${p1.rfpBaseText}\n\n` +
       `PASS 2 — CANDIDATES:\n${trimContext(p2)}\n\n` +
       `PASS 3 — EVALUATION FACTORS:\n${trimContext(p3)}`,
     provider, model, apiKey, companyId,
