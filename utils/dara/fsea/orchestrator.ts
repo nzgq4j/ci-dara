@@ -88,10 +88,20 @@ function validatePassOutput(data: unknown, passName: string): string | null {
       if (!Array.isArray(obj.candidates)) return 'Pass 2: candidates array missing';
       if ((obj.candidates as unknown[]).length === 0) return 'Pass 2: no candidates extracted — document may be unreadable or contain no requirements';
       return null;
-    case 'Pass 3':
-      if (!Array.isArray(obj.factors)) return 'Pass 3: factors array missing';
-      if ((obj.factors as unknown[]).length === 0) return 'Pass 3: no evaluation factors found — check that Section M or evaluation criteria language is present in the document';
+    case 'Pass 3': {
+      if (!obj.factors && !Array.isArray(obj.factors)) {
+        // Attempt common schema mismatch recovery before failing
+        const alt = obj.evaluation_factors ?? obj.evaluationFactors ?? obj.factor_list ?? obj.factorList;
+        if (Array.isArray(alt) && alt.length > 0) {
+          (obj as Record<string, unknown>).factors = alt;
+          console.warn('[fsea] Pass 3: recovered factors from alternate field name');
+          return null; // valid after recovery
+        }
+        return 'Pass 3: factors array missing — check that the solicitation contains Section M / evaluation criteria language and that the model received it within the context window';
+      }
+      if ((obj.factors as unknown[]).length === 0) return 'Pass 3: factors array is empty — no evaluation factors found in the solicitation';
       return null;
+    }
     case 'Pass 4':
       if (!Array.isArray(obj.criteria)) return 'Pass 4: criteria array missing';
       if (!Array.isArray(obj.factors)) return 'Pass 4: factors array missing';
@@ -160,7 +170,11 @@ async function runLlmPass<T>(
   // Retry with a clarifying prefix when parse fails and retry is enabled
   if (retryOnParseFailure) {
     console.warn(`[fsea] ${passName} retrying after parse failure`);
-    const retryUser = `IMPORTANT: Your previous response could not be parsed as JSON. Return ONLY a valid JSON object — no prose, no markdown code fences, no explanation. Begin your response with { and end with }.\n\n${user.slice(0, MAX_PRIOR_CONTEXT_CHARS)}`;
+    const isP3 = passName === 'Pass 3';
+    const retryPrefix = isP3
+      ? `CRITICAL: Your previous response was missing the required "factors" array. You MUST return a JSON object with a "factors" array containing at least one evaluation factor. Look for language like "will be evaluated", "evaluation factor", "basis for award", "Section M", "adjectival rating", "Outstanding/Good/Acceptable/Marginal/Unacceptable" in the solicitation text. Return ONLY valid JSON — no prose, no markdown. Begin with { and end with }.\n\n`
+      : `IMPORTANT: Your previous response could not be parsed as JSON. Return ONLY a valid JSON object — no prose, no markdown code fences, no explanation. Begin your response with { and end with }.\n\n`;
+    const retryUser = retryPrefix + user.slice(0, MAX_PRIOR_CONTEXT_CHARS);
     const retryRaw = await attempt(retryUser);
     if (!retryRaw) return { data: null, error: `${passName}: retry AI call also failed.` };
     const retryParsed = parsePassOutput<T>(retryRaw, `${passName} (retry)`);
