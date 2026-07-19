@@ -49,11 +49,18 @@ const MAX_DOC_CHARS = 500_000;
 // Tail window for Pass 3 and Pass 4 — last N chars of rfpBaseText where Section M typically lives.
 // Declared at module scope because both Pass 3 and Pass 4 reference it.
 const P3_WINDOW = 40_000;
-// Chunk size for large documents fed to Passes 2 and 4.
-// 80k chars ≈ 60k tokens — comfortably within Haiku's 200k context with room for system prompt and output.
-const CHUNK_SIZE = 120_000;
-// Overlap between chunks so requirements spanning chunk boundaries are not missed.
-const CHUNK_OVERLAP = 5_000;
+// Chunk size for Pass 2 candidate detection. This is OUTPUT-bound, not input-bound: the
+// binding limit is the candidate JSON Pass 2 emits, not the input context. Pass 2 produces
+// ~1 candidate per ~280 source chars at ~70 output tokens each, so a chunk must be small
+// enough that its full candidate list stays well under MAX_TOKENS_P2_CHUNK — otherwise the
+// JSON truncates at the cap and parses to ZERO candidates, and the Pass 2 hard gate aborts
+// the whole shred (this happened on a modest 4-doc solicitation at the old 120k size).
+// 30k chars ≈ ~110 candidates ≈ ~8k output tokens (~half the cap), leaving headroom for
+// candidate-dense documents; large docs simply split into more chunks (run in parallel).
+const CHUNK_SIZE = 30_000;
+// Overlap so a requirement spanning a chunk boundary appears whole in at least one chunk;
+// duplicates from the overlap zone are removed by the reqId dedup after Pass 2.
+const CHUNK_OVERLAP = 3_000;
 // Context budget per pass — trim prior pass outputs to this many chars when building user message.
 const MAX_PRIOR_CONTEXT_CHARS = 80_000;
 
