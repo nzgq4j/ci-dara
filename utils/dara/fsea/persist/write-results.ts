@@ -151,7 +151,8 @@ interface WriteFseaPartialArgs {
   p7?: P7Output;
   p8?: P8Output;
   p9?: P9Output;
-  error: string;
+  error: string;    // progress/status message for this checkpoint, or the failure reason
+  failed?: boolean; // true only when this partial write is due to a genuine failure
 }
 
 export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void> {
@@ -202,7 +203,11 @@ export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void
           notes: JSON.stringify({
             fseaOutput: {
               partial: true,
-              error: args.error,
+              // Routine per-pass checkpoints are PROGRESS, not errors. Only a genuine failure
+              // populates `error`, which is what drives the UI "Pipeline incomplete" banner.
+              // A normal "Checkpoint after Pass N" must never render as an error.
+              stage: args.error,
+              error: args.failed ? args.error : null,
               passesCompleted: {
                 p2: !!args.p2,
                 p3: !!args.p3,

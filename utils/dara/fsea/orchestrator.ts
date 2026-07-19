@@ -843,7 +843,7 @@ export async function runFSEA(
   });
   if (p10Result.error) {
     // Save partial data so the run is not a total loss
-    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: `Pass 10 failed: ${p10Result.error}` });
+    await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: `Pass 10 failed: ${p10Result.error}`, failed: true });
     return { ok: false, error: `Pass 10 failed: ${p10Result.error}. Partial data from Passes 2-9 has been saved.` };
   }
   const p10 = p10Result.data!;
