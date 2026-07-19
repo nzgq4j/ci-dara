@@ -34,11 +34,18 @@ export async function middleware(request: NextRequest) {
 
   if (request.nextUrl.pathname.startsWith('/app')) {
     const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user }, error } = await supabase.auth.getUser();
 
     if (!user) {
+      // A transient auth rate-limit (429, over_request_rate_limit) or upstream 5xx must NOT
+      // sign the user out. The session cookie is a signed JWT that updateSession() just
+      // refreshed; getUser only failed to reach the auth server this instant. Rapid progress
+      // polling on the workspace page was tripping Supabase's auth rate limit and bouncing the
+      // user to /signin. Only redirect on a genuine missing/invalid session.
+      const st = error?.status ?? 0;
+      if (st === 429 || st >= 500) {
+        return response;
+      }
       return NextResponse.redirect(new URL('/signin', request.url));
     }
 
