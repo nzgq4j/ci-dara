@@ -136,13 +136,56 @@ function validatePassOutput(data: unknown, passName: string): string | null {
       if (!Array.isArray(obj.criteria)) return 'Pass 4: criteria array missing';
       if (!Array.isArray(obj.factors)) return 'Pass 4: factors array missing';
       return null;
-    case 'Pass 5':
-      if (!Array.isArray(obj.classified)) return 'Pass 5: classified array missing';
-      return null;
-    case 'Pass 10':
-      if (!Array.isArray(obj.sectionA)) return 'Pass 10: sectionA array missing';
+    case 'Pass 5': {
+      if (Array.isArray(obj.classified)) return null;
+      // Recovery: the model sometimes wraps output ({"pass5_output": {...}}) or renames the
+      // array. Peel single-key wrapper objects, then try alternate field names.
+      let src: Record<string, unknown> = obj;
+      for (let i = 0; i < 3; i++) {
+        const keys = Object.keys(src);
+        const only = keys.length === 1 ? src[keys[0]] : undefined;
+        if (only && typeof only === 'object' && !Array.isArray(only)) {
+          src = only as Record<string, unknown>;
+        } else break;
+      }
+      const alt = src.classified ?? src.classifications ?? src.classified_requirements
+        ?? src.classifiedRequirements ?? src.requirements ?? src.results;
+      if (Array.isArray(alt)) {
+        obj.classified = alt;
+        obj.clusters = obj.clusters ?? src.clusters ?? [];
+        obj.summary = obj.summary ?? src.summary ?? {};
+        console.warn('[fsea] Pass 5: recovered classified array from wrapper/alternate field');
+        return null;
+      }
+      return 'Pass 5: classified array missing';
+    }
+    case 'Pass 10': {
+      if (!Array.isArray(obj.sectionA)) {
+        // Same wrapper/rename recovery as Pass 5.
+        let src: Record<string, unknown> = obj;
+        for (let i = 0; i < 3; i++) {
+          const keys = Object.keys(src);
+          const only = keys.length === 1 ? src[keys[0]] : undefined;
+          if (only && typeof only === 'object' && !Array.isArray(only)) {
+            src = only as Record<string, unknown>;
+          } else break;
+        }
+        const alt = src.sectionA ?? src.section_a ?? src.matrix ?? src.matrixRows ?? src.rows;
+        if (Array.isArray(alt)) {
+          obj.sectionA = alt;
+          obj.sectionB = obj.sectionB ?? src.sectionB ?? [];
+          obj.sectionC = obj.sectionC ?? src.sectionC ?? [];
+          obj.sectionD = obj.sectionD ?? src.sectionD ?? [];
+          obj.executiveSummary = obj.executiveSummary ?? src.executiveSummary ?? { criticalActions: [] };
+          obj.paragraphWritingSequences = obj.paragraphWritingSequences ?? src.paragraphWritingSequences ?? [];
+          console.warn('[fsea] Pass 10: recovered sectionA from wrapper/alternate field');
+        } else {
+          return 'Pass 10: sectionA array missing';
+        }
+      }
       if ((obj.sectionA as unknown[]).length === 0) return 'Pass 10: evaluation matrix is empty — no actionable requirements were produced';
       return null;
+    }
     default:
       return null; // passes 6-9 are graceful-degradable
   }
