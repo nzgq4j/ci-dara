@@ -4,6 +4,7 @@
 // writeFseaPartial: partial save — called when the pipeline is interrupted or a
 //   late pass fails; saves whatever was produced so the run is not a total loss
 
+import { Prisma } from '@prisma/client';
 import { withTenant } from '@/utils/prisma';
 import type {
   P2Output, P3Output, P4Output, P5Output,
@@ -49,79 +50,90 @@ export async function writeFseaResults(args: WriteFseaArgs): Promise<void> {
   const rows = p10.sectionA ?? [];
   const checklist = p10.sectionD ?? [];
 
+  // Build every requirement row in memory FIRST (pure, no DB round-trips). The
+  // withTenant callback below must stay short and DB-only: it runs inside a single
+  // interactive transaction on the pooled dara_app connection, which has the default
+  // ~5s Prisma timeout / 2s max-wait. The previous implementation issued one
+  // `tx.requirement.create()` per row *inside* that transaction, so a real
+  // solicitation (hundreds of Section A + Section D rows) exhausted the budget →
+  // "Unable to start a transaction in the given time" → full rollback → ZERO
+  // requirements persisted even on jobs reported "done". A single createMany() is
+  // one round-trip and completes well within budget. (See withTenant() doc note.)
+  const data: Prisma.RequirementCreateManyInput[] = [];
+
+  // Section A — matrix requirements (one row per actionable requirement)
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row?.reqId) continue;
+
+    const p5Req = p5ByReqId.get(row.reqId);
+    const criteriaIds = p5Req?.governingCriteriaIds ?? [];
+
+    data.push({
+      companyId,
+      solicitationId,
+      name: (row.requirement ?? '').slice(0, 300) || row.reqId,
+      description: row.proposalResponseObligation ?? null,
+      source: sourceFromCriteria(criteriaIds),
+      disposition: dispositionFromPriority(row.priority ?? 'medium'),
+      citation: (row.reqId ?? '').slice(0, 200),
+      complianceStatus: 'not_assessed',
+      sortOrder: i,
+      hrlr: {
+        fseaPassRow: true,
+        paragraphId: row.paragraphId ?? null,
+        evaluationCriterion: row.evaluationCriterion ?? null,
+        strengthGate: row.strengthGate ?? null,
+        crossReference: row.crossReference ?? null,
+        pageSignal: row.pageSignal ?? null,
+        priority: row.priority ?? null,
+        writingSequenceOrder: row.writingSequenceOrder ?? i,
+        pageBudgetMin: row.pageBudgetMin ?? null,
+        pageBudgetMax: row.pageBudgetMax ?? null,
+        type: p5Req?.type ?? null,
+        actionable: p5Req?.actionable ?? null,
+        governingCriteriaIds: criteriaIds,
+      }
+    });
+  }
+
+  // Section D — administrative compliance checklist
+  for (let i = 0; i < checklist.length; i++) {
+    const ac = checklist[i];
+    if (!ac?.acId) continue;
+
+    data.push({
+      companyId,
+      solicitationId,
+      name: (ac.requirement ?? '').slice(0, 300) || ac.acId,
+      description: `Source: ${ac.source ?? ''} | Responsible: ${ac.responsible ?? ''}`,
+      source: 'other',
+      disposition: 'administrative',
+      citation: (ac.acId ?? '').slice(0, 200),
+      complianceStatus: 'not_assessed',
+      sortOrder: rows.length + i,
+      hrlr: {
+        fseaPassRow: true,
+        isChecklist: true,
+        acId: ac.acId,
+        responsible: ac.responsible ?? null,
+        source: ac.source ?? null,
+      }
+    });
+  }
+
+  const notes = buildFseaNotesJson(args);
+
   await withTenant(companyId, async (tx) => {
-
-    // Section A — matrix requirements (one row per actionable requirement)
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row?.reqId) continue;
-
-      const p5Req = p5ByReqId.get(row.reqId);
-      const criteriaIds = p5Req?.governingCriteriaIds ?? [];
-
-      await tx.requirement.create({
-        data: {
-          companyId,
-          solicitationId,
-          name: (row.requirement ?? '').slice(0, 300) || row.reqId,
-          description: row.proposalResponseObligation ?? null,
-          source: sourceFromCriteria(criteriaIds),
-          disposition: dispositionFromPriority(row.priority ?? 'medium'),
-          citation: (row.reqId ?? '').slice(0, 200),
-          complianceStatus: 'not_assessed',
-          sortOrder: i,
-          hrlr: {
-            fseaPassRow: true,
-            paragraphId: row.paragraphId ?? null,
-            evaluationCriterion: row.evaluationCriterion ?? null,
-            strengthGate: row.strengthGate ?? null,
-            crossReference: row.crossReference ?? null,
-            pageSignal: row.pageSignal ?? null,
-            priority: row.priority ?? null,
-            writingSequenceOrder: row.writingSequenceOrder ?? i,
-            pageBudgetMin: row.pageBudgetMin ?? null,
-            pageBudgetMax: row.pageBudgetMax ?? null,
-            type: p5Req?.type ?? null,
-            actionable: p5Req?.actionable ?? null,
-            governingCriteriaIds: criteriaIds,
-          }
-        }
-      });
+    // skipDuplicates makes a re-run / retry an idempotent no-op rather than a
+    // P2002 that fails the whole batch (honors any partial unique index on spans).
+    if (data.length > 0) {
+      await tx.requirement.createMany({ data, skipDuplicates: true });
     }
-
-    // Section D — administrative compliance checklist
-    for (let i = 0; i < checklist.length; i++) {
-      const ac = checklist[i];
-      if (!ac?.acId) continue;
-
-      await tx.requirement.create({
-        data: {
-          companyId,
-          solicitationId,
-          name: (ac.requirement ?? '').slice(0, 300) || ac.acId,
-          description: `Source: ${ac.source ?? ''} | Responsible: ${ac.responsible ?? ''}`,
-          source: 'other',
-          disposition: 'administrative',
-          citation: (ac.acId ?? '').slice(0, 200),
-          complianceStatus: 'not_assessed',
-          sortOrder: rows.length + i,
-          hrlr: {
-            fseaPassRow: true,
-            isChecklist: true,
-            acId: ac.acId,
-            responsible: ac.responsible ?? null,
-            source: ac.source ?? null,
-          }
-        }
-      });
-    }
-
     // Store full FSEA output in solicitation notes for UI sub-tabs
     await tx.solicitation.update({
       where: { id: solicitationId },
-      data: {
-        notes: buildFseaNotesJson(args)
-      }
+      data: { notes }
     });
   });
 }
@@ -145,38 +157,42 @@ interface WriteFseaPartialArgs {
 export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void> {
   const { solicitationId, companyId } = args;
 
+  // Build minimal matrix rows in memory first (see writeFseaResults for why the
+  // withTenant callback must be a single round-trip, not a per-row create loop).
+  const partialData: Prisma.RequirementCreateManyInput[] = [];
+  if (args.p5) {
+    const candidateByReqId = new Map((args.p2?.candidates ?? []).map(c => [c.reqId, c]));
+    const matrixReqs = (args.p5.classified ?? []).filter(r => r.disposition === 'MATRIX');
+    for (let i = 0; i < matrixReqs.length; i++) {
+      const req = matrixReqs[i];
+      if (!req?.reqId) continue;
+      const candidate = candidateByReqId.get(req.reqId);
+      partialData.push({
+        companyId,
+        solicitationId,
+        name: (req.requirementSummary ?? req.reqId).slice(0, 300),
+        description: candidate?.exactText ?? null,
+        source: 'instruction',
+        disposition: 'compliance',
+        citation: (req.reqId ?? '').slice(0, 200),
+        complianceStatus: 'not_assessed',
+        sortOrder: i,
+        hrlr: {
+          fseaPassRow: true,
+          partial: true,
+          paragraphId: req.sectionId ?? null,
+          governingCriteriaIds: req.governingCriteriaIds ?? [],
+        }
+      });
+    }
+  }
+
   try {
     await withTenant(companyId, async (tx) => {
-      // If we have P5 classified requirements, write them as minimal matrix rows
-      if (args.p5) {
-        const matrixReqs = (args.p5.classified ?? []).filter(r => r.disposition === 'MATRIX');
-        for (let i = 0; i < matrixReqs.length; i++) {
-          const req = matrixReqs[i];
-          if (!req?.reqId) continue;
-
-          // Find the original candidate for the full requirement text
-          const candidate = (args.p2?.candidates ?? []).find(c => c.reqId === req.reqId);
-
-          await tx.requirement.create({
-            data: {
-              companyId,
-              solicitationId,
-              name: (req.requirementSummary ?? req.reqId).slice(0, 300),
-              description: candidate?.exactText ?? null,
-              source: 'instruction',
-              disposition: 'compliance',
-              citation: (req.reqId ?? '').slice(0, 200),
-              complianceStatus: 'not_assessed',
-              sortOrder: i,
-              hrlr: {
-                fseaPassRow: true,
-                partial: true,
-                paragraphId: req.sectionId ?? null,
-                governingCriteriaIds: req.governingCriteriaIds ?? [],
-              }
-            }
-          }).catch(() => { /* skip duplicate */ });
-        }
+      // If we have P5 classified requirements, write them as minimal matrix rows.
+      // skipDuplicates: a resume tick re-persisting the same rows is a no-op.
+      if (partialData.length > 0) {
+        await tx.requirement.createMany({ data: partialData, skipDuplicates: true });
       }
 
       // Save whatever pipeline data we have — includes full pass outputs for cross-tick resume
