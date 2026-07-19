@@ -35,16 +35,20 @@ import { writeFseaResults, writeFseaPartial, readFseaCheckpoint } from './persis
 // Per-pass output token ceilings calibrated to actual output size needs.
 // Oversized ceilings cause slow calls and unnecessary cost — a P2 chunk producing
 // 21k tokens of ontology JSON is a sign MAX_TOKENS was too high.
+// Output caps sized to what each pass actually emits. These were originally too low and
+// caused mid-JSON truncation -> unparseable output -> hard-gate aborts (Pass 4/5) or empty
+// results. Passes that emit one entry per candidate (P5) or the full matrix (P10) scale with
+// the candidate count, so they get generous ceilings. Haiku 4.5 supports large output.
 const MAX_TOKENS = 16000;          // default / fallback
 const MAX_TOKENS_P2_CHUNK = 16000; // candidate list per chunk: reqId + sectionId + isCritical + exactText
-const MAX_TOKENS_P3 = 6000;        // evaluation model: factors, rating scale, strength signals
-const MAX_TOKENS_P4 = 12000;       // ontology: 10 object levels, more complex
-const MAX_TOKENS_P5 = 12000;       // classification: one entry per candidate
-const MAX_TOKENS_P6 = 8000;        // actionability determinations + page budget
-const MAX_TOKENS_P7 = 8000;        // L-to-M wiring maps
+const MAX_TOKENS_P3 = 8000;        // evaluation model: factors, rating scale, strength signals
+const MAX_TOKENS_P4 = 24000;       // ontology: 10 object levels — was truncating at 12000
+const MAX_TOKENS_P5 = 32000;       // classification: one entry per candidate — scales with candidate count
+const MAX_TOKENS_P6 = 12000;       // actionability determinations + page budget (one per matrix req)
+const MAX_TOKENS_P7 = 12000;       // L-to-M wiring maps
 const MAX_TOKENS_P8 = 8000;        // strength opportunity register
-const MAX_TOKENS_P9 = 6000;        // cross-reference graph
-const MAX_TOKENS_P10 = 16000;      // four output sections — most complex
+const MAX_TOKENS_P9 = 8000;        // cross-reference graph
+const MAX_TOKENS_P10 = 24000;      // four output sections — most complex, scales with matrix size
 const MAX_DOC_CHARS = 500_000;
 // Tail window for Pass 3 and Pass 4 — last N chars of rfpBaseText where Section M typically lives.
 // Declared at module scope because both Pass 3 and Pass 4 reference it.
