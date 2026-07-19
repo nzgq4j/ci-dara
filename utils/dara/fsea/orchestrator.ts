@@ -600,7 +600,8 @@ export async function runFSEA(
       `PASS 3 — EVALUATION FACTORS:\n${trimContext(p3)}`,
     provider, model, apiKey, companyId,
     passName: 'Pass 4',
-    retryOnParseFailure: true
+    retryOnParseFailure: true,
+    maxTokens: MAX_TOKENS_P4
   });
   if (p4Result.error) {
     errors.p4 = p4Result.error;
@@ -624,7 +625,8 @@ export async function runFSEA(
       `REQUIREMENT CANDIDATES:\n${trimContext(p2.candidates)}`,
     provider, model, apiKey, companyId,
     passName: 'Pass 5',
-    retryOnParseFailure: true
+    retryOnParseFailure: true,
+    maxTokens: MAX_TOKENS_P5
   });
   if (p5Result.error) {
     return { ok: false, error: `Pass 5 failed: ${p5Result.error}. Cannot build the matrix without classified requirements.` };
@@ -646,7 +648,8 @@ export async function runFSEA(
       `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
       `CLUSTERS:\n${trimContext(p5.clusters)}`,
     provider, model, apiKey, companyId,
-    passName: 'Pass 6'
+    passName: 'Pass 6',
+    maxTokens: MAX_TOKENS_P6
   });
   if (p6Result.error) {
     errors.p6 = p6Result.error;
@@ -667,7 +670,8 @@ export async function runFSEA(
       `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
       `ACTIONABILITY:\n${trimContext(p6.actionabilityDeterminations)}`,
     provider, model, apiKey, companyId,
-    passName: 'Pass 7'
+    passName: 'Pass 7',
+    maxTokens: MAX_TOKENS_P7
   });
   if (p7Result.error) {
     errors.p7 = p7Result.error;
@@ -688,7 +692,8 @@ export async function runFSEA(
       `L-TO-M MAPPING:\n${trimContext(p7)}\n\n` +
       `STRENGTH DEFINITION:\n${trimContext(p4.constructs)}`,
     provider, model, apiKey, companyId,
-    passName: 'Pass 8'
+    passName: 'Pass 8',
+    maxTokens: MAX_TOKENS_P8
   });
   if (p8Result.error) {
     errors.p8 = p8Result.error;
@@ -712,7 +717,8 @@ export async function runFSEA(
       `PASS 8 STRENGTH OPPORTUNITIES:\n${trimContext(p8.strengthOpportunities.slice(0, 15))}\n\n` +
       `SOLICITATION (first 30000 chars):\n${docText.slice(0, 30000)}`,
     provider, model, apiKey, companyId,
-    passName: 'Pass 9'
+    passName: 'Pass 9',
+    maxTokens: MAX_TOKENS_P9
   });
   if (p9Result.error) {
     errors.p9 = p9Result.error;
@@ -738,7 +744,8 @@ export async function runFSEA(
       `PASS 9 — CROSS-REFERENCES:\n${trimContext(p9)}`,
     provider, model, apiKey, companyId,
     passName: 'Pass 10',
-    retryOnParseFailure: true
+    retryOnParseFailure: true,
+    maxTokens: MAX_TOKENS_P10
   });
   if (p10Result.error) {
     // Save partial data so the run is not a total loss
