@@ -463,8 +463,8 @@ export async function runFSEA(
     // Resume: reload from checkpoint, skip re-running
     p2 = checkpoint.p2;
     passResults.p2 = true;
-    await setProgress(jobId, `Resuming from checkpoint — ${p2.candidates.length} candidates loaded…`, 18);
-    console.log(`[fsea] Pass 2 resumed from checkpoint: ${p2.candidates.length} candidates`);
+    await setProgress(jobId, `Resuming from checkpoint — ${(p2.candidates ?? []).length} candidates loaded…`, 18);
+    console.log(`[fsea] Pass 2 resumed from checkpoint: ${(p2.candidates ?? []).length} candidates`);
   } else {
 
   // ── Pass 2 — Requirement candidate detection (HARD GATE) ─────────────────────
@@ -805,7 +805,7 @@ export async function runFSEA(
       user: `PASS 5 CLUSTERS:\n${trimContext(p5.clusters)}\n\n` +
         `PASS 6 CLUSTER CONSOLIDATION:\n${trimContext(p6.clusterConsolidation)}\n\n` +
         `PASS 7 CROSS-PARAGRAPH WIRES:\n${trimContext(p7.crossParagraphWires)}\n\n` +
-        `PASS 8 STRENGTH OPPORTUNITIES:\n${trimContext(p8.strengthOpportunities.slice(0, 15))}\n\n` +
+        `PASS 8 STRENGTH OPPORTUNITIES:\n${trimContext((p8.strengthOpportunities ?? []).slice(0, 15))}\n\n` +
         `SOLICITATION (first 30000 chars):\n${docText.slice(0, 30000)}`,
       provider, model, apiKey, companyId,
       passName: 'Pass 9',
@@ -848,9 +848,15 @@ export async function runFSEA(
   }
   const p10 = p10Result.data!;
   passResults.p10 = true;
+  // Defensive: the model sometimes omits sections; ensure the arrays exist so every .length
+  // access below (completion label + return) can't throw on a partial Pass 10 object.
+  p10.sectionA = p10.sectionA ?? [];
+  p10.sectionB = p10.sectionB ?? [];
+  p10.sectionC = p10.sectionC ?? [];
+  p10.sectionD = p10.sectionD ?? [];
 
   // Inject any pass errors into the executive summary so the UI can surface them
-  if (Object.keys(errors).length > 0) {
+  if (Object.keys(errors).length > 0 && p10.executiveSummary) {
     p10.executiveSummary.criticalActions = [
       ...Object.entries(errors).map(([pass, err]) => `${pass} degraded: ${err}`),
       ...(p10.executiveSummary.criticalActions ?? [])

@@ -158,44 +158,12 @@ interface WriteFseaPartialArgs {
 export async function writeFseaPartial(args: WriteFseaPartialArgs): Promise<void> {
   const { solicitationId, companyId } = args;
 
-  // Build minimal matrix rows in memory first (see writeFseaResults for why the
-  // withTenant callback must be a single round-trip, not a per-row create loop).
-  const partialData: Prisma.RequirementCreateManyInput[] = [];
-  if (args.p5) {
-    const candidateByReqId = new Map((args.p2?.candidates ?? []).map(c => [c.reqId, c]));
-    const matrixReqs = (args.p5.classified ?? []).filter(r => r.disposition === 'MATRIX');
-    for (let i = 0; i < matrixReqs.length; i++) {
-      const req = matrixReqs[i];
-      if (!req?.reqId) continue;
-      const candidate = candidateByReqId.get(req.reqId);
-      partialData.push({
-        companyId,
-        solicitationId,
-        name: (req.requirementSummary ?? req.reqId).slice(0, 300),
-        description: candidate?.exactText ?? null,
-        source: 'instruction',
-        disposition: 'compliance',
-        citation: (req.reqId ?? '').slice(0, 200),
-        complianceStatus: 'not_assessed',
-        sortOrder: i,
-        hrlr: {
-          fseaPassRow: true,
-          partial: true,
-          paragraphId: req.sectionId ?? null,
-          governingCriteriaIds: req.governingCriteriaIds ?? [],
-        }
-      });
-    }
-  }
-
+  // Requirement rows are persisted exactly ONCE — by writeFseaResults at Pass 10 — never here.
+  // Writing them on every per-pass checkpoint re-inserted the whole matrix each tick, and with
+  // null span offsets nothing deduped them, so a single run accumulated hundreds of duplicate
+  // rows. This partial write now only saves checkpoint data (pass outputs) for cross-tick resume.
   try {
     await withTenant(companyId, async (tx) => {
-      // If we have P5 classified requirements, write them as minimal matrix rows.
-      // skipDuplicates: a resume tick re-persisting the same rows is a no-op.
-      if (partialData.length > 0) {
-        await tx.requirement.createMany({ data: partialData, skipDuplicates: true });
-      }
-
       // Save whatever pipeline data we have — includes full pass outputs for cross-tick resume
       await tx.solicitation.update({
         where: { id: solicitationId },
