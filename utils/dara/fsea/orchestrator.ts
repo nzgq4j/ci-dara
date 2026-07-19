@@ -627,7 +627,7 @@ export async function runFSEA(
   }
   const p5 = p5Result.data!;
   passResults.p5 = true;
-  const matrixReqs = p5.classified.filter(r => r.disposition === 'MATRIX');
+  const matrixReqs = (p5.classified ?? []).filter(r => r.disposition === 'MATRIX');
   await setProgress(jobId, `Pass 5 — Classified ${p5.classified?.length ?? 0} requirements: ${matrixReqs.length} for matrix…`, 43);
   console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary?.discarded ?? 0}, clusters=${(p5.clusters ?? []).length}`);
 
@@ -789,17 +789,17 @@ function buildFallbackOntology(p3: P3Output): P4Output {
   return {
     evaluationStrategy: {
       type: p3.evaluationStrategy,
-      dominantFactor: p3.factors[0]?.name ?? 'Technical',
+      dominantFactor: p3.factors?.[0]?.name ?? 'Technical',
       priceRole: 'Secondary',
       interchangeIntent: p3.interchangeIntent ?? '',
       awardQuantity: '1',
       setAside: null
     },
-    factors: p3.factors.map((f, i) => ({ id: `F${i + 1}`, name: f.name, orderOfImportance: f.orderOfImportance, ratingMethod: f.ratingMethod })),
+    factors: (p3.factors ?? []).map((f, i) => ({ id: `F${i + 1}`, name: f.name, orderOfImportance: f.orderOfImportance, ratingMethod: f.ratingMethod })),
     criteria: [],
     evaluationSurface: [],
     constructs: p3.constructDefinitions ?? [],
-    strengthOpportunities: p3.strengthSignals.map((s, i) => ({
+    strengthOpportunities: (p3.strengthSignals ?? []).map((s, i) => ({
       id: `SO-0${i + 1}`,
       signal: s.term,
       source: s.location,
