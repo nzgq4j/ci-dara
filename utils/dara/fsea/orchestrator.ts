@@ -509,11 +509,8 @@ export async function runFSEA(
   console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s), ${chunkFailCount} chunk(s) failed`);
   } // end of Pass 2 new-run block
 
-  // Yield after Pass 2 — always checkpoint so next tick starts at Pass 3
-  await writeFseaPartial({ solicitationId, companyId, p2, error: 'Pipeline yielding after Pass 2' });
-  if (!checkpoint.p3) {
-    return { ok: false, paused: true, error: 'Pass 2 complete. Pipeline will continue from Pass 3 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 2 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, error: 'Checkpoint after Pass 2' });
 
   // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
   let p3: P3Output;
@@ -571,11 +568,8 @@ export async function runFSEA(
   console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${(p3.factors ?? []).length}, signals=${(p3.strengthSignals ?? []).length}`);
   } // end of Pass 3 new-run block
 
-  // Yield after Pass 3 — checkpoint and continue on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Pipeline yielding after Pass 3' });
-  if (!checkpoint.p4) {
-    return { ok: false, paused: true, error: 'Pass 3 complete. Pipeline will continue from Pass 4 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 3 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Checkpoint after Pass 3' });
 
   // ── Pass 4 — Evaluation ontology (RETRYABLE) ──────────────────────────────────
   let p4: P4Output;
@@ -615,11 +609,8 @@ export async function runFSEA(
   console.log(`[fsea] Pass 4: criteria=${(p4.criteria ?? []).length}, surface=${(p4.evaluationSurface ?? []).length}, SO=${(p4.strengthOpportunities ?? []).length}`);
   } // end Pass 4 new-run block
 
-  // Yield after Pass 4 — checkpoint and continue on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Pipeline yielding after Pass 4' });
-  if (!checkpoint.p5) {
-    return { ok: false, paused: true, error: 'Pass 4 complete. Pipeline will continue from Pass 5 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 4 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Checkpoint after Pass 4' });
 
   // ── Pass 5 — Requirement classification (RETRYABLE) ───────────────────────────
   await setProgress(jobId, 'Pass 5 — Classifying requirements…', 38);
@@ -640,11 +631,8 @@ export async function runFSEA(
   await setProgress(jobId, `Pass 5 — Classified ${p5.classified?.length ?? 0} requirements: ${matrixReqs.length} for matrix…`, 43);
   console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary?.discarded ?? 0}, clusters=${(p5.clusters ?? []).length}`);
 
-  // Yield after Pass 5 — checkpoint and continue on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Pipeline yielding after Pass 5' });
-  if (!checkpoint.p6) {
-    return { ok: false, paused: true, error: 'Pass 5 complete. Pipeline will continue from Pass 6 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 5 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Checkpoint after Pass 5' });
 
   // ── Pass 6 — Proposal actionability (GRACEFUL DEGRADE) ───────────────────────
   await setProgress(jobId, 'Pass 6 — Determining page budget and actionability…', 46);
@@ -663,11 +651,8 @@ export async function runFSEA(
   const p6: P6Output = p6Result.data ?? buildFallbackP6(matrixReqs);
   passResults.p6 = !p6Result.error;
 
-  // Yield after Pass 6 — checkpoint and continue on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Pipeline yielding after Pass 6' });
-  if (!checkpoint.p7) {
-    return { ok: false, paused: true, error: 'Pass 6 complete. Pipeline will continue from Pass 7 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 6 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Checkpoint after Pass 6' });
 
   // ── Pass 7 — L-to-M mapping (GRACEFUL DEGRADE) ────────────────────────────────
   await setProgress(jobId, 'Pass 7 — Mapping Section L to evaluation criteria…', 54);
@@ -688,11 +673,8 @@ export async function runFSEA(
   passResults.p7 = !p7Result.error;
   console.log(`[fsea] Pass 7: maps=${(p7.paragraphMaps ?? []).length}, cross-wires=${(p7.crossParagraphWires ?? []).length}`);
 
-  // Yield after Pass 7 — checkpoint and continue on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Pipeline yielding after Pass 7' });
-  if (!checkpoint.p8) {
-    return { ok: false, paused: true, error: 'Pass 7 complete. Pipeline will continue from Pass 8 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 7 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Checkpoint after Pass 7' });
 
   // ── Pass 8 — Strength opportunity detection (GRACEFUL DEGRADE) ───────────────
   await setProgress(jobId, 'Pass 8 — Detecting strength opportunities…', 62);
@@ -713,11 +695,8 @@ export async function runFSEA(
   await setProgress(jobId, `Pass 8 — Identified ${(p8.strengthOpportunities ?? []).length} strength opportunities${p8Result.error ? ' (degraded)' : ''}…`, 67);
   console.log(`[fsea] Pass 8: strengths=${(p8.strengthOpportunities ?? []).length}`);
 
-  // Yield after Pass 8 — checkpoint and continue on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Pipeline yielding after Pass 8' });
-  if (!checkpoint.p9) {
-    return { ok: false, paused: true, error: 'Pass 8 complete. Pipeline will continue from Pass 9 on next tick.' };
-  }
+  // Incremental checkpoint after Pass 8 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Checkpoint after Pass 8' });
 
   // ── Pass 9 — Cross-reference resolution (GRACEFUL DEGRADE) ───────────────────
   await setProgress(jobId, 'Pass 9 — Resolving cross-references and citations…', 70);
@@ -738,9 +717,8 @@ export async function runFSEA(
   const p9: P9Output = p9Result.data ?? { internalCrossRefs: [], crossRefDependencyMap: '', regulatoryCitations: [], cdrlLinkages: [], solicitationAnchors: [], integrityStatus: 'Pass 9 did not complete', actionsRequired: [] };
   passResults.p9 = !p9Result.error;
 
-  // Yield after Pass 9 — checkpoint and continue to Pass 10 on next tick
-  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Pipeline yielding after Pass 9' });
-  return { ok: false, paused: true, error: 'Pass 9 complete. Pipeline will continue to Pass 10 on next tick.' };
+  // Incremental checkpoint after Pass 9 (pipeline runs straight through in one invocation)
+  await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Checkpoint after Pass 9' });
 
   // ── Pass 10 — Matrix and products generation (HARD GATE) ──────────────────────
   await setProgress(jobId, 'Pass 10 — Generating evaluation matrix and writing plan…', 80);
