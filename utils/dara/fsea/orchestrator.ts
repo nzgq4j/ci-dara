@@ -513,8 +513,12 @@ export async function runFSEA(
   console.log(`[fsea] Pass 2: ${p2.candidates.length} candidates (${criticalCount} critical) from ${chunks.length} chunk(s), ${chunkFailCount} chunk(s) failed`);
   } // end of Pass 2 new-run block
 
-  // Incremental checkpoint after Pass 2 (pipeline runs straight through in one invocation)
+  // Checkpoint after Pass 2, then yield — one pass per invocation. On resume, checkpoint.p2
+  // exists so the yield is skipped and execution falls through to the next pass.
   await writeFseaPartial({ solicitationId, companyId, p2, error: 'Checkpoint after Pass 2' });
+  if (!checkpoint.p2) {
+    return { ok: false, paused: true, error: 'Pass 2 complete — continuing at Pass 3 next tick.' };
+  }
 
   // ── Pass 3 — Evaluation factor discovery (HARD GATE) ─────────────────────────
   let p3: P3Output;
@@ -572,8 +576,11 @@ export async function runFSEA(
   console.log(`[fsea] Pass 3: strategy=${p3.evaluationStrategy}, factors=${(p3.factors ?? []).length}, signals=${(p3.strengthSignals ?? []).length}`);
   } // end of Pass 3 new-run block
 
-  // Incremental checkpoint after Pass 3 (pipeline runs straight through in one invocation)
+  // Checkpoint after Pass 3, then yield (one pass per invocation).
   await writeFseaPartial({ solicitationId, companyId, p2, p3, error: 'Checkpoint after Pass 3' });
+  if (!checkpoint.p3) {
+    return { ok: false, paused: true, error: 'Pass 3 complete — continuing at Pass 4 next tick.' };
+  }
 
   // ── Pass 4 — Evaluation ontology (RETRYABLE) ──────────────────────────────────
   let p4: P4Output;
@@ -614,121 +621,165 @@ export async function runFSEA(
   console.log(`[fsea] Pass 4: criteria=${(p4.criteria ?? []).length}, surface=${(p4.evaluationSurface ?? []).length}, SO=${(p4.strengthOpportunities ?? []).length}`);
   } // end Pass 4 new-run block
 
-  // Incremental checkpoint after Pass 4 (pipeline runs straight through in one invocation)
+  // Checkpoint after Pass 4, then yield (one pass per invocation).
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, error: 'Checkpoint after Pass 4' });
+  if (!checkpoint.p4) {
+    return { ok: false, paused: true, error: 'Pass 4 complete — continuing at Pass 5 next tick.' };
+  }
 
   // ── Pass 5 — Requirement classification (RETRYABLE) ───────────────────────────
-  await setProgress(jobId, 'Pass 5 — Classifying requirements…', 38);
-  const p5Result = await runLlmPass<P5Output>({
-    system: PASS_5_SYSTEM,
-    user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
-      `REQUIREMENT CANDIDATES:\n${trimContext(p2.candidates)}`,
-    provider, model, apiKey, companyId,
-    passName: 'Pass 5',
-    retryOnParseFailure: true,
-    maxTokens: MAX_TOKENS_P5
-  });
-  if (p5Result.error) {
-    return { ok: false, error: `Pass 5 failed: ${p5Result.error}. Cannot build the matrix without classified requirements.` };
+  let p5: P5Output;
+  if (isResume && checkpoint.p5) {
+    p5 = checkpoint.p5;
+    passResults.p5 = true;
+    await setProgress(jobId, `Resuming — ${(p5.classified ?? []).length} classified requirements loaded…`, 43);
+    console.log('[fsea] Pass 5 resumed from checkpoint');
+  } else {
+    await setProgress(jobId, 'Pass 5 — Classifying requirements…', 38);
+    const p5Result = await runLlmPass<P5Output>({
+      system: PASS_5_SYSTEM,
+      user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+        `REQUIREMENT CANDIDATES:\n${trimContext(p2.candidates)}`,
+      provider, model, apiKey, companyId,
+      passName: 'Pass 5',
+      retryOnParseFailure: true,
+      maxTokens: MAX_TOKENS_P5
+    });
+    if (p5Result.error) {
+      return { ok: false, error: `Pass 5 failed: ${p5Result.error}. Cannot build the matrix without classified requirements.` };
+    }
+    p5 = p5Result.data!;
+    passResults.p5 = true;
+    console.log(`[fsea] Pass 5: classified=${(p5.classified ?? []).length}, clusters=${(p5.clusters ?? []).length}`);
   }
-  const p5 = p5Result.data!;
-  passResults.p5 = true;
   const matrixReqs = (p5.classified ?? []).filter(r => r.disposition === 'MATRIX');
-  await setProgress(jobId, `Pass 5 — Classified ${p5.classified?.length ?? 0} requirements: ${matrixReqs.length} for matrix…`, 43);
-  console.log(`[fsea] Pass 5: matrix=${matrixReqs.length}, discard=${p5.summary?.discarded ?? 0}, clusters=${(p5.clusters ?? []).length}`);
-
-  // Incremental checkpoint after Pass 5 (pipeline runs straight through in one invocation)
+  await setProgress(jobId, `Pass 5 — ${matrixReqs.length} requirements for matrix…`, 43);
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, error: 'Checkpoint after Pass 5' });
+  if (!checkpoint.p5) {
+    return { ok: false, paused: true, error: 'Pass 5 complete — continuing at Pass 6 next tick.' };
+  }
 
   // ── Pass 6 — Proposal actionability (GRACEFUL DEGRADE) ───────────────────────
-  await setProgress(jobId, 'Pass 6 — Determining page budget and actionability…', 46);
-  const p6Result = await runLlmPass<P6Output>({
-    system: PASS_6_SYSTEM,
-    user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
-      `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
-      `CLUSTERS:\n${trimContext(p5.clusters)}`,
-    provider, model, apiKey, companyId,
-    passName: 'Pass 6',
-    maxTokens: MAX_TOKENS_P6
-  });
-  if (p6Result.error) {
-    errors.p6 = p6Result.error;
-    console.warn('[fsea] Pass 6 degraded — page budget will be absent:', p6Result.error);
+  let p6: P6Output;
+  if (isResume && checkpoint.p6) {
+    p6 = checkpoint.p6;
+    passResults.p6 = true;
+    console.log('[fsea] Pass 6 resumed from checkpoint');
+  } else {
+    await setProgress(jobId, 'Pass 6 — Determining page budget and actionability…', 46);
+    const p6Result = await runLlmPass<P6Output>({
+      system: PASS_6_SYSTEM,
+      user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+        `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
+        `CLUSTERS:\n${trimContext(p5.clusters)}`,
+      provider, model, apiKey, companyId,
+      passName: 'Pass 6',
+      maxTokens: MAX_TOKENS_P6
+    });
+    if (p6Result.error) {
+      errors.p6 = p6Result.error;
+      console.warn('[fsea] Pass 6 degraded — page budget will be absent:', p6Result.error);
+    }
+    p6 = p6Result.data ?? buildFallbackP6(matrixReqs);
+    passResults.p6 = !p6Result.error;
   }
-  const p6: P6Output = p6Result.data ?? buildFallbackP6(matrixReqs);
-  passResults.p6 = !p6Result.error;
-
-  // Incremental checkpoint after Pass 6 (pipeline runs straight through in one invocation)
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, error: 'Checkpoint after Pass 6' });
+  if (!checkpoint.p6) {
+    return { ok: false, paused: true, error: 'Pass 6 complete — continuing at Pass 7 next tick.' };
+  }
 
   // ── Pass 7 — L-to-M mapping (GRACEFUL DEGRADE) ────────────────────────────────
-  await setProgress(jobId, 'Pass 7 — Mapping Section L to evaluation criteria…', 54);
-  const p7Result = await runLlmPass<P7Output>({
-    system: PASS_7_SYSTEM,
-    user: `SOLICITATION (first 40000 chars):\n${docText.slice(0, 40000)}\n\n` +
-      `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
-      `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
-      `ACTIONABILITY:\n${trimContext(p6.actionabilityDeterminations)}`,
-    provider, model, apiKey, companyId,
-    passName: 'Pass 7',
-    maxTokens: MAX_TOKENS_P7
-  });
-  if (p7Result.error) {
-    errors.p7 = p7Result.error;
-    console.warn('[fsea] Pass 7 degraded — L-to-M wiring will be absent:', p7Result.error);
+  let p7: P7Output;
+  if (isResume && checkpoint.p7) {
+    p7 = checkpoint.p7;
+    passResults.p7 = true;
+    console.log('[fsea] Pass 7 resumed from checkpoint');
+  } else {
+    await setProgress(jobId, 'Pass 7 — Mapping Section L to evaluation criteria…', 54);
+    const p7Result = await runLlmPass<P7Output>({
+      system: PASS_7_SYSTEM,
+      user: `SOLICITATION (first 40000 chars):\n${docText.slice(0, 40000)}\n\n` +
+        `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+        `MATRIX REQUIREMENTS:\n${trimContext(matrixReqs)}\n\n` +
+        `ACTIONABILITY:\n${trimContext(p6.actionabilityDeterminations)}`,
+      provider, model, apiKey, companyId,
+      passName: 'Pass 7',
+      maxTokens: MAX_TOKENS_P7
+    });
+    if (p7Result.error) {
+      errors.p7 = p7Result.error;
+      console.warn('[fsea] Pass 7 degraded — L-to-M wiring will be absent:', p7Result.error);
+    }
+    p7 = p7Result.data ?? buildFallbackP7();
+    passResults.p7 = !p7Result.error;
+    console.log(`[fsea] Pass 7: maps=${(p7.paragraphMaps ?? []).length}`);
   }
-  const p7: P7Output = p7Result.data ?? buildFallbackP7();
-  passResults.p7 = !p7Result.error;
-  console.log(`[fsea] Pass 7: maps=${(p7.paragraphMaps ?? []).length}, cross-wires=${(p7.crossParagraphWires ?? []).length}`);
-
-  // Incremental checkpoint after Pass 7 (pipeline runs straight through in one invocation)
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, error: 'Checkpoint after Pass 7' });
+  if (!checkpoint.p7) {
+    return { ok: false, paused: true, error: 'Pass 7 complete — continuing at Pass 8 next tick.' };
+  }
 
   // ── Pass 8 — Strength opportunity detection (GRACEFUL DEGRADE) ───────────────
-  await setProgress(jobId, 'Pass 8 — Detecting strength opportunities…', 62);
-  const p8Result = await runLlmPass<P8Output>({
-    system: PASS_8_SYSTEM,
-    user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
-      `L-TO-M MAPPING:\n${trimContext(p7)}\n\n` +
-      `STRENGTH DEFINITION:\n${trimContext(p4.constructs)}`,
-    provider, model, apiKey, companyId,
-    passName: 'Pass 8',
-    maxTokens: MAX_TOKENS_P8
-  });
-  if (p8Result.error) {
-    errors.p8 = p8Result.error;
-    console.warn('[fsea] Pass 8 degraded — strength register will be absent:', p8Result.error);
+  let p8: P8Output;
+  if (isResume && checkpoint.p8) {
+    p8 = checkpoint.p8;
+    passResults.p8 = true;
+    console.log('[fsea] Pass 8 resumed from checkpoint');
+  } else {
+    await setProgress(jobId, 'Pass 8 — Detecting strength opportunities…', 62);
+    const p8Result = await runLlmPass<P8Output>({
+      system: PASS_8_SYSTEM,
+      user: `EVALUATION ONTOLOGY:\n${trimContext(p4)}\n\n` +
+        `L-TO-M MAPPING:\n${trimContext(p7)}\n\n` +
+        `STRENGTH DEFINITION:\n${trimContext(p4.constructs)}`,
+      provider, model, apiKey, companyId,
+      passName: 'Pass 8',
+      maxTokens: MAX_TOKENS_P8
+    });
+    if (p8Result.error) {
+      errors.p8 = p8Result.error;
+      console.warn('[fsea] Pass 8 degraded — strength register will be absent:', p8Result.error);
+    }
+    p8 = p8Result.data ?? { strengthOpportunities: [], summary: { total: 0, byParagraph: {}, top5: [] }, criticalGapAdvisory: '' };
+    passResults.p8 = !p8Result.error;
+    console.log(`[fsea] Pass 8: strengths=${(p8.strengthOpportunities ?? []).length}`);
   }
-  const p8: P8Output = p8Result.data ?? { strengthOpportunities: [], summary: { total: 0, byParagraph: {}, top5: [] }, criticalGapAdvisory: '' };
-  passResults.p8 = !p8Result.error;
-  await setProgress(jobId, `Pass 8 — Identified ${(p8.strengthOpportunities ?? []).length} strength opportunities${p8Result.error ? ' (degraded)' : ''}…`, 67);
-  console.log(`[fsea] Pass 8: strengths=${(p8.strengthOpportunities ?? []).length}`);
-
-  // Incremental checkpoint after Pass 8 (pipeline runs straight through in one invocation)
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, error: 'Checkpoint after Pass 8' });
+  if (!checkpoint.p8) {
+    return { ok: false, paused: true, error: 'Pass 8 complete — continuing at Pass 9 next tick.' };
+  }
 
   // ── Pass 9 — Cross-reference resolution (GRACEFUL DEGRADE) ───────────────────
-  await setProgress(jobId, 'Pass 9 — Resolving cross-references and citations…', 70);
-  const p9Result = await runLlmPass<P9Output>({
-    system: PASS_9_SYSTEM,
-    user: `PASS 5 CLUSTERS:\n${trimContext(p5.clusters)}\n\n` +
-      `PASS 6 CLUSTER CONSOLIDATION:\n${trimContext(p6.clusterConsolidation)}\n\n` +
-      `PASS 7 CROSS-PARAGRAPH WIRES:\n${trimContext(p7.crossParagraphWires)}\n\n` +
-      `PASS 8 STRENGTH OPPORTUNITIES:\n${trimContext(p8.strengthOpportunities.slice(0, 15))}\n\n` +
-      `SOLICITATION (first 30000 chars):\n${docText.slice(0, 30000)}`,
-    provider, model, apiKey, companyId,
-    passName: 'Pass 9',
-    maxTokens: MAX_TOKENS_P9
-  });
-  if (p9Result.error) {
-    errors.p9 = p9Result.error;
-    console.warn('[fsea] Pass 9 degraded — cross-reference graph will be absent:', p9Result.error);
+  let p9: P9Output;
+  if (isResume && checkpoint.p9) {
+    p9 = checkpoint.p9;
+    passResults.p9 = true;
+    console.log('[fsea] Pass 9 resumed from checkpoint');
+  } else {
+    await setProgress(jobId, 'Pass 9 — Resolving cross-references and citations…', 70);
+    const p9Result = await runLlmPass<P9Output>({
+      system: PASS_9_SYSTEM,
+      user: `PASS 5 CLUSTERS:\n${trimContext(p5.clusters)}\n\n` +
+        `PASS 6 CLUSTER CONSOLIDATION:\n${trimContext(p6.clusterConsolidation)}\n\n` +
+        `PASS 7 CROSS-PARAGRAPH WIRES:\n${trimContext(p7.crossParagraphWires)}\n\n` +
+        `PASS 8 STRENGTH OPPORTUNITIES:\n${trimContext(p8.strengthOpportunities.slice(0, 15))}\n\n` +
+        `SOLICITATION (first 30000 chars):\n${docText.slice(0, 30000)}`,
+      provider, model, apiKey, companyId,
+      passName: 'Pass 9',
+      maxTokens: MAX_TOKENS_P9
+    });
+    if (p9Result.error) {
+      errors.p9 = p9Result.error;
+      console.warn('[fsea] Pass 9 degraded — cross-reference graph will be absent:', p9Result.error);
+    }
+    p9 = p9Result.data ?? { internalCrossRefs: [], crossRefDependencyMap: '', regulatoryCitations: [], cdrlLinkages: [], solicitationAnchors: [], integrityStatus: 'Pass 9 did not complete', actionsRequired: [] };
+    passResults.p9 = !p9Result.error;
+    console.log(`[fsea] Pass 9: crossRefs=${(p9.internalCrossRefs ?? []).length}`);
   }
-  const p9: P9Output = p9Result.data ?? { internalCrossRefs: [], crossRefDependencyMap: '', regulatoryCitations: [], cdrlLinkages: [], solicitationAnchors: [], integrityStatus: 'Pass 9 did not complete', actionsRequired: [] };
-  passResults.p9 = !p9Result.error;
-
-  // Incremental checkpoint after Pass 9 (pipeline runs straight through in one invocation)
   await writeFseaPartial({ solicitationId, companyId, p2, p3, p4, p5, p6, p7, p8, p9, error: 'Checkpoint after Pass 9' });
+  if (!checkpoint.p9) {
+    return { ok: false, paused: true, error: 'Pass 9 complete — continuing at Pass 10 next tick.' };
+  }
 
   // ── Pass 10 — Matrix and products generation (HARD GATE) ──────────────────────
   await setProgress(jobId, 'Pass 10 — Generating evaluation matrix and writing plan…', 80);
