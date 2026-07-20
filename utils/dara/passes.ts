@@ -288,7 +288,7 @@ export async function runPass(
     });
     const requirements = await tx.requirement.findMany({
       where: { solicitationId: pass.review.solicitationId, companyId, removedAt: null },
-      select: { name: true, citation: true },
+      select: { name: true, citation: true, source: true, disposition: true, governingFactors: true },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }]
     });
     // Active company personas (the fallback lens when the review selected none).
@@ -329,8 +329,25 @@ export async function runPass(
 
   const proposalText = concatDocs(loaded.pass.review.documents);
   const solText = concatDocs(loaded.solDocs.filter((d) => d.docType === 'rfp'));
-  const requirementsRef = loaded.requirements
-    .map((r) => `- ${r.name}${r.citation ? ` (${r.citation})` : ''}`)
+  // Requirements context, scope-annotated so a review pass can tell what the proposal is actually
+  // EVALUATED on (Section M factors + the L→M linkage) apart from pure post-award performance tasks.
+  // This is the linkage backstop to the pass's own reading of Section L/M scope.
+  const factorReqs = loaded.requirements.filter((r) => r.source === 'evaluation_factor');
+  const otherReqs = loaded.requirements.filter((r) => r.source !== 'evaluation_factor');
+  const factorBlock = factorReqs.length
+    ? `SECTION M EVALUATION FACTORS (the standard the proposal is scored against):\n` +
+      factorReqs.map((r) => `- ${r.name}${r.citation ? ` (${r.citation})` : ''}`).join('\n') + '\n\n'
+    : '';
+  const requirementsRef = factorBlock + otherReqs
+    .map((r) => {
+      const linked = (r.governingFactors ?? []).length > 0;
+      const tag = linked
+        ? ` [evaluated under: ${(r.governingFactors ?? []).join(', ')}]`
+        : r.source === 'sow_pws'
+          ? ' [post-award performance task — not tied to a scored factor]'
+          : '';
+      return `- ${r.name}${r.citation ? ` (${r.citation})` : ''}${tag}`;
+    })
     .join('\n');
 
   const platform = loaded.company.aiKeyMode === 'platform' ? await getPlatformAI() : undefined;

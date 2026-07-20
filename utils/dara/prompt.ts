@@ -878,6 +878,27 @@ const FORMAT_VERIFIABILITY_RULE =
   'required form, or a font/size the proposal itself declares that violates the RFQ — flag it ' +
   'normally at the severity it warrants.';
 
+// Scope calibration for the Technical Responsiveness pass. Evaluate against what Section M actually
+// scores and Section L requires the offeror to submit — NOT a section-by-section response to the
+// entire PWS/SOW. Prevents false "PWS §X not addressed" criticals when the RFP evaluates technical
+// merit holistically and/or against a defined subset (a sample task, a "critical requirements list",
+// or specific subfactors).
+const TECH_SCOPE_RULE =
+  ' SCOPE — evaluate against the EVALUATED SCOPE, not the whole PWS/SOW. First read Section L (what ' +
+  'the offeror is instructed to submit) and Section M (how it is scored) to determine both the ' +
+  'STANDARD and the SCOPE. Many solicitations evaluate technical merit holistically ("demonstrate ' +
+  'clear understanding and ability to perform") and/or against a defined SUBSET — a sample/critical ' +
+  'task, a "critical requirements list", or named subfactors — NOT a written response to every PWS ' +
+  'task. Only raise a finding when the proposal fails something the offeror is actually required to ' +
+  'address and be scored on. Do NOT flag a PWS/SOW task as "not addressed" merely because the ' +
+  'proposal has no dedicated section for it: a task marked "[post-award performance task]" in the ' +
+  'requirements list, or one outside the evaluated subset, is executed after award and is NOT a ' +
+  'proposal-responsiveness gap. Use the "[evaluated under: …]" tags as a backup signal for what is ' +
+  'in evaluated scope when the Section L/M scope language is ambiguous. If the proposal demonstrates ' +
+  'the required understanding/ability across the evaluated subset, it is responsive even when other ' +
+  'PWS tasks are not separately narrated. Reserve "critical" for a genuine failure to cover ' +
+  'something the RFP requires the PROPOSAL (not just post-award performance) to address.';
+
 // Per-pass lens: the label, one-line description, what its score measures, and the
 // review instructions handed to the model. These three fixed lenses are the design's
 // Pass 1 / 2 / 3.
@@ -900,7 +921,8 @@ export const PASS_LENS: Record<PassTypeValue, {
     blurb: 'Evaluates alignment of the technical approach with PWS/SOW requirements and Section M subfactors',
     scoreMeans: 'how completely and strongly the technical approach responds to the requirements and evaluation factors',
     guidance:
-      'Evaluate how well the proposal\'s technical/management approach addresses every PWS/SOW performance requirement and each Section M evaluation factor/subfactor. Each finding is an unaddressed or weakly-addressed requirement/subfactor, a coverage gap, or a response that would not earn a strong rating. Cite the specific requirement/subfactor.'
+      'Evaluate how well the proposal\'s technical/management approach responds to what Section M actually evaluates and Section L requires the offeror to submit. Each finding is an unaddressed or weakly-addressed IN-SCOPE requirement/subfactor, a coverage gap within the evaluated scope, or a response that would not earn a strong rating. Cite the specific requirement/subfactor and, where relevant, the Section M factor it is evaluated under.' +
+      TECH_SCOPE_RULE
   },
   risk_competitive: {
     label: 'Risk & Competitive Assessment',
