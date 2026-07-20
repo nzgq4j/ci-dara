@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Loader2, CheckCircle2, AlertTriangle, RotateCcw, ChevronDown, Clock } from 'lucide-react';
 import { usePollRefresh } from '@/components/dara/usePollRefresh';
+import { scoreFromFindings } from '@/utils/dara/review-score';
 
 export type PassView = {
   id: string;
@@ -164,16 +165,20 @@ export default function ReviewPassPanel({
                 )}
               </div>
 
-              {/* Score */}
-              {status === 'complete' && pass?.score != null && (
-                <div className="flex flex-shrink-0 flex-col items-center">
-                  <span className={`text-[26px] font-bold leading-none ${scoreColor(pass.score)}`}>{pass.score}</span>
-                  <div className="mt-1 h-[3px] w-11 overflow-hidden rounded bg-line">
-                    <div className={`h-full rounded ${scoreBar(pass.score)}`} style={{ width: `${pass.score}%` }} />
+              {/* Score — derived LIVE from the pass's open findings so it reflects severity and
+                  climbs as findings are acknowledged/auto-verified (not the model's constant number). */}
+              {status === 'complete' && pass && (() => {
+                const liveScore = scoreFromFindings(pass.findings);
+                return (
+                  <div className="flex flex-shrink-0 flex-col items-center">
+                    <span className={`text-[26px] font-bold leading-none ${scoreColor(liveScore)}`}>{liveScore}</span>
+                    <div className="mt-1 h-[3px] w-11 overflow-hidden rounded bg-line">
+                      <div className={`h-full rounded ${scoreBar(liveScore)}`} style={{ width: `${liveScore}%` }} />
+                    </div>
+                    <span className="mt-0.5 text-[9px] text-t5">of 100</span>
                   </div>
-                  <span className="mt-0.5 text-[9px] text-t5">of 100</span>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Right controls */}
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">

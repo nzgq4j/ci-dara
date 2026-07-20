@@ -27,6 +27,7 @@ import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { verifyAdminFindings } from '@/utils/dara/review-verify';
+import { scoreFromFindings } from '@/utils/dara/review-score';
 import { fetchClauseSync, upsertClauses } from '@/utils/dara/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
@@ -428,11 +429,21 @@ export async function runPass(
         })
       });
     }
+    // Score is DERIVED from the pass's own open findings (severity-weighted), not the model's
+    // meaningless self-reported number — and excludes auto-verified/prior-resolved findings.
+    const scoreFindings = parsed.findings
+      .filter((f, i) => {
+        const prior = priorByKey.get(`${f.requirementRef} ${f.text}`);
+        const autoResolved = autoVerdicts.get(i)?.satisfied === true;
+        return !(prior?.status === 'resolved' || autoResolved);
+      })
+      .map((f) => ({ severity: f.severity as string }));
+    const computedScore = scoreFromFindings(scoreFindings);
     await tx.reviewPass.update({
       where: { id: passId },
       data: {
         status: 'complete',
-        score: parsed.score ?? 0,
+        score: computedScore,
         progress: 100,
         progressLabel: '',
         findingsCount: parsed.findings.length,
