@@ -1541,10 +1541,13 @@ export default async function SolicitationDetailPage({
 
   const sid = solicitation.id.toString();
   // Active matrix excludes requirements struck by an amendment (retained, not deleted).
-  // The compliance matrix shows only Section L instructions and Section M evaluation factors —
-  // PWS/SOW tasks, FAR clauses, and administrative items are reference data, not matrix rows.
-  const activeRequirements = solicitation.requirements.filter(
-    (r) => !r.removedAt && (r.source === 'instruction' || r.source === 'evaluation_factor')
+  // The requirements MATRIX shows the full extracted set — every source (Section L instructions,
+  // Section M factors, SOW/PWS tasks, FAR-clause obligations), grouped by disposition. The
+  // Evaluation tab (Section L→M linking) stays scoped to instructions + factors via
+  // `activeRequirements`.
+  const matrixRequirements = solicitation.requirements.filter((r) => !r.removedAt);
+  const activeRequirements = matrixRequirements.filter(
+    (r) => r.source === 'instruction' || r.source === 'evaluation_factor'
   );
   const removedRequirements = solicitation.requirements.filter((r) => r.removedAt);
   // The Review-tab scorecard covers only the EVALUATION FACTORS (scored) — the holistic
@@ -1775,7 +1778,9 @@ export default async function SolicitationDetailPage({
     </div>
   );
 
-  const requirements = activeRequirements;
+  // The matrix (matrixRows below) shows the full set across all sources; the Evaluation tab uses
+  // the L/M-only `activeRequirements` for its evalRows.
+  const requirements = matrixRequirements;
   // Map each requirement's source document id to its filename so the detail modal can name the
   // document the requirement was extracted from.
   const docNameById = new Map(solicitation.solDocs.map((d) => [d.id.toString(), d.originalFilename]));

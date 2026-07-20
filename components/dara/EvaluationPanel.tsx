@@ -192,27 +192,33 @@ function FactorDropZone({
 
   const isSynthetic = factorId === null && factor === null;
   const isUnlinked = factorId === 'unlinked';
+  const isAdmin = factorId === 'admin';
+  const nonDroppable = isUnlinked || isAdmin; // source-only lists — you drag FROM them, not onto them
 
   return (
     <div
-      className={`${card} overflow-hidden transition-colors ${dragOver && !isUnlinked ? 'ring-2 ring-navy/30 ring-offset-1' : ''}`}
-      onDragEnter={!isUnlinked ? handleDragEnter : undefined}
-      onDragLeave={!isUnlinked ? handleDragLeave : undefined}
-      onDragOver={!isUnlinked ? handleDragOver : undefined}
-      onDrop={!isUnlinked ? handleDrop : undefined}
+      className={`${card} overflow-hidden transition-colors ${dragOver && !nonDroppable ? 'ring-2 ring-navy/30 ring-offset-1' : ''}`}
+      onDragEnter={!nonDroppable ? handleDragEnter : undefined}
+      onDragLeave={!nonDroppable ? handleDragLeave : undefined}
+      onDragOver={!nonDroppable ? handleDragOver : undefined}
+      onDrop={!nonDroppable ? handleDrop : undefined}
     >
       {/* Header */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${dragOver && !isUnlinked ? 'bg-navy/5' : 'hover:bg-surf2'}`}
+        className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${dragOver && !nonDroppable ? 'bg-navy/5' : 'hover:bg-surf2'}`}
       >
         <span className="mt-0.5 flex-shrink-0 text-t4">
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            {isUnlinked ? (
+            {isAdmin ? (
+              <span className="inline-flex items-center gap-1 rounded bg-surf3 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-t4">
+                Administrative compliance
+              </span>
+            ) : isUnlinked ? (
               <span className="inline-flex items-center gap-1 rounded bg-surf3 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-t4">
                 <AlertCircle className="h-2.5 w-2.5" />
                 No factor link
@@ -248,12 +254,12 @@ function FactorDropZone({
           <span className="font-mono text-[11px] text-t5">
             {instructions.length} instruction{instructions.length === 1 ? '' : 's'}
           </span>
-          {!isUnlinked && dragOver && (
+          {!nonDroppable && dragOver && (
             <span className="font-mono text-[9px] font-bold uppercase tracking-wide text-navy">
               Drop to assign
             </span>
           )}
-          {!isUnlinked && !dragOver && saveAction && (
+          {!nonDroppable && !dragOver && saveAction && (
             <span className="font-mono text-[9px] text-t5">drag instructions here</span>
           )}
         </div>
@@ -272,11 +278,11 @@ function FactorDropZone({
                 inst={inst}
                 saving={savingId === inst.id}
                 saved={savedId === inst.id}
-                onRemove={!isUnlinked && saveAction ? () => handleUnassign(inst) : undefined}
+                onRemove={!nonDroppable && saveAction ? () => handleUnassign(inst) : undefined}
               />
             </div>
           ))}
-          {instructions.length === 0 && !isUnlinked && (
+          {instructions.length === 0 && !nonDroppable && (
             <div className={`px-4 py-4 pl-10 text-[11.5px] text-t5 ${dragOver ? 'bg-navy/5' : ''}`}>
               {dragOver
                 ? 'Release to assign this instruction to this factor'
@@ -330,7 +336,7 @@ export default function EvaluationPanel({
     [rows, localGf]
   );
 
-  const { factors, instructionsByFactor, unlinked, syntheticFactors } = useMemo(() => {
+  const { factors, instructionsByFactor, unlinked, adminCompliance, syntheticFactors } = useMemo(() => {
     const evalFactors = effectiveRows.filter((r) => r.source === 'evaluation_factor');
     const instructions = effectiveRows.filter((r) => r.source === 'instruction');
 
@@ -372,13 +378,18 @@ export default function EvaluationPanel({
       }
     }
 
-    const unlinkedInstructions = instructions.filter((i) => !linkedInstIds.has(i.id));
+    // Instructions with no factor link split two ways: administrative flow-downs (security,
+    // training, IT/cyber compliance, registrations) get their own bucket so they don't clutter
+    // the list of items that genuinely still need a factor assignment.
+    const notLinked = instructions.filter((i) => !linkedInstIds.has(i.id));
+    const adminComplianceInstructions = notLinked.filter((i) => i.disposition === 'administrative');
+    const unlinkedInstructions = notLinked.filter((i) => i.disposition !== 'administrative');
     const syntheticFactorEntries: { label: string; instructions: EvalRow[] }[] = [];
     instBySyntheticLabel.forEach((insts, label) => {
       syntheticFactorEntries.push({ label, instructions: insts });
     });
 
-    return { factors: evalFactors, instructionsByFactor: instByFactorId, unlinked: unlinkedInstructions, syntheticFactors: syntheticFactorEntries };
+    return { factors: evalFactors, instructionsByFactor: instByFactorId, unlinked: unlinkedInstructions, adminCompliance: adminComplianceInstructions, syntheticFactors: syntheticFactorEntries };
   }, [effectiveRows]);
 
   if (rows.length === 0) {
@@ -393,7 +404,9 @@ export default function EvaluationPanel({
   }
 
   const instructionCount = effectiveRows.filter((r) => r.source === 'instruction').length;
-  const linkedCount = instructionCount - unlinked.length;
+  // Admin-compliance instructions are intentionally not linked to a factor, so they count as
+  // neither "linked" nor "unlinked to be assigned".
+  const linkedCount = instructionCount - unlinked.length - adminCompliance.length;
 
   return (
     <div className="space-y-4">
@@ -483,6 +496,20 @@ export default function EvaluationPanel({
             onUnassign={handleUnassign}
           />
         ))}
+
+        {/* Administrative Compliance — standard flow-downs, grouped out of the unlinked list */}
+        {adminCompliance.length > 0 && (
+          <FactorDropZone
+            factorLabel="Administrative Compliance"
+            factorId="admin"
+            factor={null}
+            instructions={adminCompliance}
+            solId={solId ?? ''}
+            saveAction={undefined}
+            onAssign={handleAssign}
+            onUnassign={handleUnassign}
+          />
+        )}
 
         {/* Unlinked bucket — draggable source, not a drop target */}
         {unlinked.length > 0 && (
