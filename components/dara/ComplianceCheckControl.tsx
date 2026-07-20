@@ -15,6 +15,7 @@ export default function ComplianceCheckControl({
   graded,
   active,
   action,
+  idleLabel = 'Run compliance check',
   className
 }: {
   solId: string;
@@ -22,6 +23,7 @@ export default function ComplianceCheckControl({
   graded: number;
   active: boolean;
   action: (fd: FormData) => Promise<{ ok: boolean; error?: string }>;
+  idleLabel?: string;
   className?: string;
 }) {
   const router = useRouter();
@@ -46,10 +48,10 @@ export default function ComplianceCheckControl({
   const remaining = Math.max(0, total - graded);
   const busy = active || pending;
   const label = active
-    ? 'Checking compliance…'
+    ? 'Reconciling response…'
     : graded > 0 && remaining > 0
-      ? 'Continue compliance check'
-      : 'Run compliance check';
+      ? 'Continue reconcile'
+      : idleLabel;
 
   return (
     <div className="space-y-2">

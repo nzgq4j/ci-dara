@@ -342,13 +342,19 @@ async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; co
 
 // Standalone compliance sweep: check the pass/fail administrative requirements against
 // the current proposal draft and set their statuses (the compliance matrix).
-async function enqueueComplianceCheckAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+// Reconcile the proposal RESPONSE against the compliance requirements — a single action behind one
+// button (replacing the old separate "Sync from AI review" + "Run compliance check"):
+//   1) fold any completed AI-review Compliance & Format findings into the matrix (synchronous, no
+//      LLM, best-effort — a no-op when no review has run), then
+//   2) enqueue the background compliance grade that assesses each not-yet-graded compliance
+//      requirement (ANY source) against the uploaded proposal draft (Met / Partial / Gap).
+async function reconcileResponseAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  // Grade in the background worker (resumable) instead of a long synchronous request that
-  // stalls the UI and can time out on a large matrix.
+  // Fold review findings first so a subsequent grade only touches the still-ungraded rows.
+  await syncMatrixFromPasses(solId, daraUser.companyId).catch(() => ({ ok: false, synced: 0 }));
   const res = await enqueueComplianceCheck(solId, daraUser.companyId);
   if (res.ok) triggerWorker();
   await recordAudit({
@@ -367,17 +373,6 @@ async function enqueueComplianceCheckAction(formData: FormData): Promise<{ ok: b
   });
   revalidatePath(`/app/solicitations/${solId}`);
   return res;
-}
-
-// Fold the latest completed Compliance & Format pass's findings into the matrix (no LLM).
-async function syncMatrixAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
-  'use server';
-  const daraUser = await authedUser();
-  const solId = BigInt(String(formData.get('solId')));
-  await requireViewableSolicitation(solId, daraUser);
-  const res = await syncMatrixFromPasses(solId, daraUser.companyId);
-  revalidatePath(`/app/solicitations/${solId}`);
-  return { ok: res.ok, count: res.synced, error: res.error };
 }
 
 async function addRequirement(formData: FormData) {
@@ -1581,7 +1576,9 @@ export default async function SolicitationDetailPage({
   const canEvaluate = activeCount > 0 && activeRequirements.length > 0;
   // Compliance-check progress (async, background worker). `complianceActive` drives the live
   // poll; graded/total feed the real progress bar.
-  const complianceReqs = activeRequirements.filter((r) => r.disposition === 'compliance');
+  // Count compliance-disposition rows across ALL sources (SOW/PWS tasks and FAR obligations are the
+  // bulk on a services solicitation), matching what the grader actually assesses — not just L/M.
+  const complianceReqs = matrixRequirements.filter((r) => r.disposition === 'compliance');
   const complianceTotal = complianceReqs.length;
   const complianceGraded = complianceReqs.filter((r) => r.complianceStatus !== 'not_assessed').length;
   // complianceActive / reconcileActiveIds are loaded up front with the page data.
@@ -1916,8 +1913,9 @@ export default async function SolicitationDetailPage({
                   3
                 </span>
                 <span>
-                  <span className="font-semibold text-t2">Run compliance check</span> to grade the
-                  Compliance items (Met / Partial / Gap) against your proposal draft.
+                  <span className="font-semibold text-t2">Reconcile response</span> to grade the
+                  Compliance items (Met / Partial / Gap) against your proposal draft — folding in any
+                  AI-review findings along the way.
                 </span>
               </li>
             </ol>
@@ -1945,24 +1943,8 @@ export default async function SolicitationDetailPage({
                 total={complianceTotal}
                 graded={complianceGraded}
                 active={complianceActive}
-                action={enqueueComplianceCheckAction}
-                className={btnGhost}
-              />
-            )}
-            {requirements.length > 0 && (
-              <AiActionButton
-                action={syncMatrixAction}
-                fields={{ solId: sid }}
-                idle={<Sparkles className="h-4 w-4" />}
-                label="Sync from AI review"
-                pendingLabel="Folding the AI review's Compliance &amp; Format findings into the matrix…"
-                steps={[
-                  'Loading the latest AI review findings…',
-                  'Matching findings to matrix rows…',
-                  'Writing notes and updating statuses…'
-                ]}
-                noun="requirement"
-                verb="synced"
+                action={reconcileResponseAction}
+                idleLabel="Reconcile response"
                 className={btnGhost}
               />
             )}
