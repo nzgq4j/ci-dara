@@ -26,6 +26,7 @@ import { logUsage } from '@/utils/dara/usage';
 import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
+import { verifyAdminFindings } from '@/utils/dara/review-verify';
 import { fetchClauseSync, upsertClauses } from '@/utils/dara/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
@@ -372,6 +373,22 @@ export async function runPass(
   const priorByKey = new Map(
     loaded.priorFindings.map((p) => [`${p.requirementRef} ${p.text}`, p])
   );
+
+  // Auto-verify administrative/format findings against the proposal draft: the ones the draft
+  // demonstrably satisfies are auto-resolved; the rest stay open for the user to acknowledge.
+  // Only the compliance_format lens produces administrative findings, so gate it there.
+  let autoVerdicts = new Map<number, { satisfied: boolean; evidence: string }>();
+  if (passType === 'compliance_format' && parsed.findings.length > 0) {
+    const v = await verifyAdminFindings(
+      parsed.findings.map((f) => ({ text: f.text, requirementRef: f.requirementRef })),
+      proposalText,
+      provider,
+      model,
+      apiKey
+    );
+    autoVerdicts = v.verdicts;
+    await logUsage({ capability: 'review_pass', provider, model, companyId, tokenIn: v.tokenIn, tokenOut: v.tokenOut });
+  }
   // The Risk pass is the final, holistic one — it carries the consolidated report block, which
   // we persist on the parent Review (color-team's home for the report outputs).
   const isRiskPass = passType === 'risk_competitive';
@@ -385,18 +402,27 @@ export async function runPass(
       await tx.finding.createMany({
         data: parsed.findings.map((f, i) => {
           const prior = priorByKey.get(`${f.requirementRef} ${f.text}`);
+          const verdict = autoVerdicts.get(i);
+          const autoResolved = verdict?.satisfied === true;
+          // A finding is resolved if the user already resolved it OR the draft demonstrably
+          // satisfies it. Auto-resolved findings carry their evidence in the recommendation so the
+          // reviewer can see why it was cleared.
+          const status = prior?.status === 'resolved' || autoResolved ? 'resolved' : (prior?.status ?? 'open');
+          const recommendedAction = autoResolved
+            ? `Auto-verified in the draft — ${verdict!.evidence || 'the item appears satisfied'}.`.slice(0, 1000)
+            : f.recommendedAction;
           return {
             companyId,
             passId,
             severity: f.severity,
             text: f.text,
             requirementRef: f.requirementRef,
-            recommendedAction: f.recommendedAction,
+            recommendedAction,
             ownerRole: f.ownerRole,
             ownerName: prior?.ownerName ?? '',
             effortBand: f.effortBand,
             effortEstimate: f.effortEstimate,
-            status: prior?.status ?? 'open',
+            status,
             sortOrder: i
           };
         })

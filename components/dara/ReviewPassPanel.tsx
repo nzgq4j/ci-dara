@@ -20,6 +20,7 @@ export type PassView = {
     text: string;
     requirementRef: string;
     recommendedAction: string;
+    status: 'open' | 'in_progress' | 'resolved';
   }[];
 };
 
@@ -54,6 +55,7 @@ export default function ReviewPassPanel({
   passes,
   runAction,
   rerunAction,
+  setFindingStatusAction,
   canRun,
   disabledReason
 }: {
@@ -62,6 +64,7 @@ export default function ReviewPassPanel({
   passes: PassView[];
   runAction: (fd: FormData) => Promise<{ ok: boolean }>;
   rerunAction: (fd: FormData) => Promise<{ ok: boolean }>;
+  setFindingStatusAction?: (fd: FormData) => Promise<{ ok: boolean }>;
   canRun: boolean;
   disabledReason?: string;
 }) {
@@ -174,9 +177,16 @@ export default function ReviewPassPanel({
 
               {/* Right controls */}
               <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
-                {status === 'complete' && (
-                  <span className="text-[11px] text-t4">{pass?.findingsCount ?? 0} findings</span>
-                )}
+                {status === 'complete' && (() => {
+                  const all = pass?.findings ?? [];
+                  const open = all.filter((f) => f.status !== 'resolved').length;
+                  const resolved = all.length - open;
+                  return (
+                    <span className="text-[11px] text-t4">
+                      {open} open{resolved > 0 && <span className="text-[#166534]"> · {resolved} resolved</span>}
+                    </span>
+                  );
+                })()}
                 {(status === 'complete' || status === 'error') && (
                   <button
                     type="button"
@@ -209,16 +219,16 @@ export default function ReviewPassPanel({
             {/* Findings */}
             {status === 'complete' && isOpen && (pass?.findings.length ?? 0) > 0 && (
               <div className="border-t border-line">
-                <div className="grid grid-cols-[78px_minmax(0,1fr)_72px_minmax(0,1fr)] gap-2 border-b border-line bg-surf2 px-3.5 py-1.5 font-mono text-[9px] uppercase tracking-wide text-t5">
-                  <span>Severity</span><span>Finding</span><span>Ref</span><span>Recommended action</span>
+                <div className="grid grid-cols-[24px_78px_minmax(0,1fr)_72px_minmax(0,1fr)] gap-2 border-b border-line bg-surf2 px-3.5 py-1.5 font-mono text-[9px] uppercase tracking-wide text-t5">
+                  <span title="Acknowledge / resolve">✓</span><span>Severity</span><span>Finding</span><span>Ref</span><span>Recommended action</span>
                 </div>
                 {pass!.findings.map((f) => (
-                  <div key={f.id} className="grid grid-cols-[78px_minmax(0,1fr)_72px_minmax(0,1fr)] items-start gap-2 border-b border-line px-3.5 py-2 last:border-b-0">
-                    <span className={`inline-block w-fit rounded px-1.5 py-0.5 text-[9px] font-bold ${SEV[f.severity].cls}`}>{SEV[f.severity].label}</span>
-                    <span className="text-[11.5px] leading-snug text-t2">{f.text}</span>
-                    <span className="font-mono text-[10px] text-t4">{f.requirementRef || '—'}</span>
-                    <span className="text-[11px] leading-snug text-t4">{f.recommendedAction || '—'}</span>
-                  </div>
+                  <FindingRow
+                    key={f.id}
+                    solId={solId}
+                    finding={f}
+                    setStatusAction={setFindingStatusAction}
+                  />
                 ))}
               </div>
             )}
@@ -228,6 +238,58 @@ export default function ReviewPassPanel({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// One finding row with an acknowledge/resolve checkbox. Checking it marks the finding resolved
+// (auto-verified ones arrive pre-checked); resolved rows dim + strike so open work stays prominent.
+function FindingRow({
+  solId,
+  finding,
+  setStatusAction
+}: {
+  solId: string;
+  finding: PassView['findings'][number];
+  setStatusAction?: (fd: FormData) => Promise<{ ok: boolean }>;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [status, setStatus] = useState(finding.status);
+  const resolved = status === 'resolved';
+
+  const toggle = () => {
+    if (!setStatusAction) return;
+    const next = resolved ? 'open' : 'resolved';
+    setStatus(next);
+    const fd = new FormData();
+    fd.set('solId', solId);
+    fd.set('findingId', finding.id);
+    fd.set('status', next);
+    startTransition(async () => {
+      const res = await setStatusAction(fd);
+      if (res?.ok) router.refresh();
+      else setStatus(finding.status); // revert on failure
+    });
+  };
+
+  return (
+    <div className={`grid grid-cols-[24px_78px_minmax(0,1fr)_72px_minmax(0,1fr)] items-start gap-2 border-b border-line px-3.5 py-2 last:border-b-0 ${resolved ? 'bg-[#166534]/[0.04]' : ''}`}>
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={!setStatusAction || pending}
+        title={resolved ? 'Mark open' : 'Acknowledge / mark resolved'}
+        className={`mt-0.5 flex h-4 w-4 items-center justify-center rounded border transition-colors disabled:opacity-50 ${
+          resolved ? 'border-[#166534] bg-[#166534] text-white' : 'border-line bg-bg hover:border-[#166534]'
+        }`}
+      >
+        {resolved && <CheckCircle2 className="h-3 w-3" />}
+      </button>
+      <span className={`inline-block w-fit rounded px-1.5 py-0.5 text-[9px] font-bold ${SEV[finding.severity].cls} ${resolved ? 'opacity-50' : ''}`}>{SEV[finding.severity].label}</span>
+      <span className={`text-[11.5px] leading-snug ${resolved ? 'text-t4 line-through' : 'text-t2'}`}>{finding.text}</span>
+      <span className="font-mono text-[10px] text-t4">{finding.requirementRef || '—'}</span>
+      <span className={`text-[11px] leading-snug ${resolved ? 'text-t5' : 'text-t4'}`}>{finding.recommendedAction || '—'}</span>
     </div>
   );
 }

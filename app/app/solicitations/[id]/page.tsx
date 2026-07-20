@@ -549,6 +549,31 @@ async function setReviewStatusAction(formData: FormData): Promise<{ ok: boolean 
   return { ok: true };
 }
 
+const VALID_FINDING_STATUSES = new Set(['open', 'in_progress', 'resolved']);
+
+// Acknowledge / re-open a review finding (the reviewer clearing an administrative item). BOLA-safe:
+// the finding must belong to this company AND chain up to the gated solicitation via its pass/review.
+async function setFindingStatusAction(formData: FormData): Promise<{ ok: boolean }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const findingId = BigInt(String(formData.get('findingId')));
+  const next = String(formData.get('status') ?? '');
+  if (!VALID_FINDING_STATUSES.has(next)) return { ok: false };
+  const ok = await withTenant(daraUser.companyId, async (tx) => {
+    const owned = await tx.finding.findFirst({
+      where: { id: findingId, companyId: daraUser.companyId, pass: { review: { solicitationId: solId } } }
+    });
+    if (!owned) return false;
+    await tx.finding.update({ where: { id: findingId }, data: { status: next as any } });
+    return true;
+  });
+  if (!ok) return { ok: false };
+  revalidatePath(`/app/solicitations/${solId}`);
+  return { ok: true };
+}
+
 // ---- Compliance matrix export (CSV / Word) ----
 async function exportMatrixAction(
   formData: FormData
@@ -2183,6 +2208,7 @@ export default async function SolicitationDetailPage({
                 }
                 runAction={runReviewAction}
                 rerunAction={rerunPassAction}
+                setFindingStatusAction={setFindingStatusAction}
                 passes={rv.passes.map((p) => ({
                   id: p.id.toString(),
                   passType: p.passType,
@@ -2197,7 +2223,8 @@ export default async function SolicitationDetailPage({
                     severity: f.severity,
                     text: f.text,
                     requirementRef: f.requirementRef,
-                    recommendedAction: f.recommendedAction
+                    recommendedAction: f.recommendedAction,
+                    status: f.status
                   }))
                 }))}
               />
