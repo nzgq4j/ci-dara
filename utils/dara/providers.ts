@@ -316,6 +316,87 @@ async function openaiComplete(
   };
 }
 
+// ── Structured output via Anthropic tool-use ─────────────────────────────────
+// The linchpin of the shred. Forcing a single tool call whose `input_schema` is a JSON
+// Schema makes the model's output CONFORM by construction: it cannot wrap, rename, or omit
+// fields, and it cannot return prose instead of JSON. This removes the entire class of
+// "wrong-shaped JSON" failures (0 factors, "classified array missing", wrapper nesting) that
+// sank the previous pipeline. Anthropic-only (the shred capability runs on an Anthropic model);
+// any other provider throws loudly rather than silently degrading.
+
+export interface StructuredResult<T> {
+  data: T;
+  tokenIn: number;
+  tokenOut: number;
+  stopReason: string;
+}
+
+export async function completeStructured<T>(opts: {
+  provider: string;
+  model: string;
+  apiKey: string;
+  system: string;
+  user: string;
+  toolName: string;
+  toolDescription: string;
+  inputSchema: Record<string, unknown>; // JSON Schema (type: 'object', ...)
+  maxTokens?: number;
+  temperature?: number;
+}): Promise<StructuredResult<T>> {
+  const { provider, model, apiKey, system, user, toolName, toolDescription, inputSchema } = opts;
+  if (!apiKey) throw new Error(`No API key configured for provider "${provider}".`);
+  if (provider !== 'anthropic') {
+    throw new Error(
+      `completeStructured requires an Anthropic model; got provider "${provider}". ` +
+      `Set the shred capability to an Anthropic model in Admin → AI.`
+    );
+  }
+  const maxTokens = Math.max(1024, Math.min(opts.maxTokens ?? 8000, providerMaxOutput('anthropic')));
+  const temperature = opts.temperature ?? 0;
+
+  const res = await aiFetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      temperature,
+      system,
+      tools: [{ name: toolName, description: toolDescription, input_schema: inputSchema }],
+      tool_choice: { type: 'tool', name: toolName },
+      messages: [{ role: 'user', content: user }]
+    })
+  });
+
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error?.message ?? `Anthropic HTTP ${res.status}`);
+  }
+  const stopReason: string = data?.stop_reason ?? 'unknown';
+  // tool_choice forces the assistant turn to be a single tool_use block whose `input` is the
+  // schema-validated object. If max_tokens was hit mid-JSON the API returns stop_reason
+  // 'max_tokens' and no complete tool_use — we surface that as a specific, catchable error.
+  const block = Array.isArray(data?.content)
+    ? data.content.find((b: any) => b?.type === 'tool_use' && b?.name === toolName)
+    : undefined;
+  if (!block || typeof block.input !== 'object' || block.input === null) {
+    throw new Error(
+      `Structured call "${toolName}" returned no tool result (stop_reason=${stopReason})` +
+      (stopReason === 'max_tokens' ? ' — output hit max_tokens; reduce the chunk size.' : '.')
+    );
+  }
+  return {
+    data: block.input as T,
+    tokenIn: Number(data?.usage?.input_tokens ?? 0),
+    tokenOut: Number(data?.usage?.output_tokens ?? 0),
+    stopReason
+  };
+}
+
 async function googleComplete(
   system: string,
   user: string,

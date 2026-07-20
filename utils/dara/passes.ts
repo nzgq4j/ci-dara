@@ -26,8 +26,7 @@ import { logUsage } from '@/utils/dara/usage';
 import { withRunContext } from '@/utils/dara/run-context';
 import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/capability-model';
 import { runComplianceCheck } from '@/utils/dara/evaluator';
-import { runFSEA } from '@/utils/dara/fsea/orchestrator';
-import { fetchClauseSync, upsertClauses } from '@/utils/dara/fsea/clause-library';
+import { fetchClauseSync, upsertClauses } from '@/utils/dara/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
 import { parseAndPersist } from '@/utils/dara/modal-parser';
@@ -191,51 +190,9 @@ export async function isComplianceCheckActive(solicitationId: bigint, companyId:
   return jobs.some((j) => jobPayloadMatches(j.payload, 'compliance_check', 'solicitationId', solicitationId));
 }
 
-/** Enqueue an async matrix shred ("Generate from solicitation") for a solicitation. */
-export function enqueueShred(solicitationId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
-  // maxAttempts=1: the FSEA orchestrator handles its own per-pass retry logic internally.
-  // Job-level retries re-execute the entire pipeline from Pass 1, wasting tokens on passes
-  // that already succeeded. A deterministic failure (temperature 0, same input) will produce
-  // the same output on every retry anyway. Surface the error immediately; the user can
-  // investigate and re-run manually after addressing the root cause.
-  return withTenant(companyId, async (tx) => {
-    const active = await tx.jobQueue.findMany({
-      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
-      select: { payload: true }
-    });
-    if (active.some((j) => jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId))) return { ok: true };
-    await tx.jobQueue.create({
-      data: { companyId, jobType: 'evaluate', payload: { kind: 'shred', solicitationId: solicitationId.toString() }, status: 'pending', maxAttempts: 1 }
-    });
-    return { ok: true };
-  });
-}
-
-/** True when a shred is queued/running for this solicitation. */
-export async function isShredActive(solicitationId: bigint, companyId: bigint): Promise<boolean> {
-  const jobs = await activeEvaluatePayloads(companyId);
-  return jobs.some((j) => jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId));
-}
-
-/** Returns whether a shred is active AND its current progress label. */
-export async function getShredStatus(
-  solicitationId: bigint,
-  companyId: bigint,
-): Promise<{ active: boolean; progressLabel: string | null }> {
-  const jobs = await withTenant(companyId, (tx) =>
-    tx.jobQueue.findMany({
-      where: { companyId, jobType: 'evaluate', status: { in: ['pending', 'running'] } },
-      select: { payload: true, progressLabel: true },
-    })
-  );
-  const match = jobs.find((j) =>
-    jobPayloadMatches(j.payload, 'shred', 'solicitationId', solicitationId)
-  );
-  return {
-    active: !!match,
-    progressLabel: match?.progressLabel ?? null,
-  };
-}
+// The compliance-matrix shred is no longer a background job: it runs synchronously to completion
+// inside the "Generate" server action via runShred() (utils/dara/shred/run.ts). There is therefore
+// no enqueueShred / isShredActive / getShredStatus, no 'shred' job kind, and no cron worker branch.
 
 /** Enqueue an async structural re-parse (Modal) of a single solicitation document. */
 export function enqueueReparse(solDocId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
@@ -649,9 +606,9 @@ async function reapOrphanedJobs(): Promise<void> {
   // Defensive: this sweep is the FIRST thing every worker tick does. If any single update here
   // threw, it would abort the whole tick (no jobs drained). Isolate each step in try/catch so a
   // transient DB blip on one row can never stop the reaper OR the drain — an orphaned job left
-  // `running` is exactly what pins the workspace poll (shred/compliance/reconcile jobs have no
-  // entity to reset; failing the JobQueue row is what releases `isComplianceCheckActive` /
-  // `isShredActive`, so the reap MUST run to completion every tick).
+  // `running` is exactly what pins the workspace poll (compliance/reconcile jobs have no
+  // entity to reset; failing the JobQueue row is what releases `isComplianceCheckActive`,
+  // so the reap MUST run to completion every tick).
   let staleJobs: { id: bigint; attempts: number; maxAttempts: number; payload: unknown }[] = [];
   try {
     staleJobs = await prismaAdmin.jobQueue.findMany({
@@ -777,11 +734,9 @@ async function runReparse(solDocId: bigint, companyId: bigint): Promise<void> {
     createdBy: null // system-initiated re-parse (no interactive actor on the worker)
   });
 
-  // Only an RFP feeds the compliance-matrix shred; a proposal/amendment re-parse just refreshes
-  // its parse history.
-  if (doc.docType === 'rfp') {
-    await enqueueShred(doc.solicitationId, companyId);
-  }
+  // A re-parse only refreshes the document's parse candidates. The compliance-matrix shred is now
+  // user-initiated and synchronous (the "Generate" button → runShred), so a re-parse no longer
+  // auto-triggers one; the user regenerates the matrix when ready.
 }
 
 export async function processReviewJobs(deadlineMs: number): Promise<{ processed: number }> {
@@ -818,30 +773,10 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
         await runPass(BigInt(payload.passId), companyId, deadlineMs);
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
-      } else if (payload.kind === 'shred' && payload.solicitationId) {
-        // FSEA pipeline is multi-tick: each invocation runs exactly one pass, writes a
-        // checkpoint, and returns paused=true. The next invocation is triggered immediately
-        // via triggerWorker() rather than waiting for the next cron tick — this keeps
-        // pass-to-pass latency near zero instead of up to 60s.
-        const shredRes = await runFSEA(
-          BigInt(payload.solicitationId),
-          companyId,
-          deadlineMs,
-          pending.id,
-        );
-        if (shredRes.paused) {
-          // Pass complete — requeue first, then trigger so the next invocation
-          // finds a pending job to claim rather than seeing it as still running.
-          done = false;
-        } else if (!shredRes.ok) {
-          throw new Error(shredRes.error ?? 'FSEA pipeline failed.');
-        } else {
-          done = true;
-        }
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.kind === 'reparse' && payload.solDocId) {
-        // Structural re-parse (Modal) — one-shot; enqueues its own follow-on shred.
+        // Structural re-parse (Modal) — one-shot; refreshes the document's parse candidates.
         await runReparse(BigInt(payload.solDocId), companyId);
       } else if (payload.kind === 'sync_clauses') {
         // Global clause-library sync — Modal clones the GSA repos + parses DITA; we upsert into the
@@ -867,9 +802,6 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
           where: { id: pending.id },
           data: { status: 'pending', availableAt: new Date() }
         });
-        if ((payload as { kind?: string }).kind === 'shred') {
-          triggerWorker();
-        }
         break; // one pass per tick
       }
     } catch (e) {

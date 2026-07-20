@@ -21,7 +21,8 @@ import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { parseAndPersist } from '@/utils/dara/modal-parser';
 import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShred, getShredStatus, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
+import { runShred } from '@/utils/dara/shred/run';
 import { isPlatformAdmin } from '@/utils/dara/admin';
 import ParseHistory, { type ParseSummary } from '@/components/dara/ParseHistory';
 import type { ParseResult } from '@/utils/dara/parse-result';
@@ -48,8 +49,7 @@ import AnnotatedExportButton from '@/components/dara/AnnotatedExportButton';
 import EditableSolTitle from '@/components/dara/EditableSolTitle';
 import ComplianceMatrix from '@/components/dara/ComplianceMatrix';
 import EvaluationPanel, { type EvalRow } from '@/components/dara/EvaluationPanel';
-import ComplianceSubTabs, { type FseaOutput } from '@/components/dara/ComplianceSubTabs';
-import type { P10MatrixRow } from '@/utils/dara/fsea/types';
+import ComplianceSubTabs from '@/components/dara/ComplianceSubTabs';
 import SolMetaEditor from '@/components/dara/SolMetaEditor';
 import RunningBanner from '@/components/dara/RunningBanner';
 import { ModeChip } from '@/components/dara/ReviewModeBits';
@@ -310,15 +310,15 @@ const VALID_SOURCES = new Set(REQUIREMENT_SOURCES.map((s) => s.value));
 const VALID_STATUSES = new Set(COMPLIANCE_STATUSES.map((s) => s.value));
 
 // AI-shred the solicitation documents into requirement rows (appended).
-async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  // Shred in the background worker (multiple AI passes) instead of a long synchronous
-  // request that stalls the UI and can time out on a large solicitation.
-  const res = await enqueueShred(solId, daraUser.companyId);
-  if (res.ok) triggerWorker();
+  // Run the shred synchronously to completion: discrete structured calls made IN SEQUENCE within
+  // one request — no background worker, no cron, no multi-tick. Targets <=120s, well inside the
+  // Vercel function limit. The finished matrix is persisted before this returns.
+  const result = await runShred(solId, daraUser.companyId);
   await recordAudit({
     action: 'requirement.shred',
     companyId: daraUser.companyId,
@@ -327,14 +327,17 @@ async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; er
     entityType: 'solicitation',
     entityId: solId,
     metadata: {
-      enqueued: res.ok,
-      error: res.error ?? null,
+      ok: result.ok,
+      error: result.error ?? null,
+      counts: result.counts,
+      totalMs: result.trace.totalMs,
+      estCostUsd: result.trace.estCostUsd,
       provider: daraUser.company.activeProvider,
       mode: daraUser.company.aiKeyMode
     }
   });
   revalidatePath(`/app/solicitations/${solId}`);
-  return res;
+  return { ok: result.ok, count: result.counts.factors + result.counts.requirements, error: result.error };
 }
 
 // Standalone compliance sweep: check the pass/fail administrative requirements against
@@ -1415,7 +1418,7 @@ export default async function SolicitationDetailPage({
   });
   if (!gate || !gate.viewable) notFound();
 
-  const [meta, reviewGroup, amendEval, complianceActive, shredStatus, reconcileActiveIds] =
+  const [meta, reviewGroup, amendEval, complianceActive, reconcileActiveIds] =
     await Promise.all([
       withTenant(companyId, async (tx) => ({
         requirements: await tx.requirement.findMany({
@@ -1466,11 +1469,8 @@ export default async function SolicitationDetailPage({
         })
       })),
       isComplianceCheckActive(solId, companyId),
-      getShredStatus(solId, companyId),
       activeReconcileAmendmentIds(companyId).then((ids) => new Set(ids))
     ]);
-  const shredActive = shredStatus.active;
-  const shredProgressLabel = shredStatus.progressLabel;
 
   const solicitation = {
     ...gate.sol,
@@ -1556,7 +1556,7 @@ export default async function SolicitationDetailPage({
   const complianceReqs = activeRequirements.filter((r) => r.disposition === 'compliance');
   const complianceTotal = complianceReqs.length;
   const complianceGraded = complianceReqs.filter((r) => r.complianceStatus !== 'not_assessed').length;
-  // complianceActive / shredActive / reconcileActiveIds are loaded up front with the page data.
+  // complianceActive / reconcileActiveIds are loaded up front with the page data.
   const reviews = solicitation.reviews;
   const amendments = solicitation.amendments;
   const rfpDocs = solicitation.solDocs.filter((d) => d.docType === 'rfp');
@@ -1850,43 +1850,6 @@ export default async function SolicitationDetailPage({
     detail: matrixRows.find((m) => m.id === r.id.toString())?.detail
   }));
 
-  // Parse FSEA pipeline output stored in solicitation notes (written by writeFseaResults).
-  // Safe to fail — if notes is absent or malformed the sub-tabs show empty states.
-  let fseaOutput: FseaOutput | null = null;
-  let sectionARows: P10MatrixRow[] = [];
-  try {
-    if (solicitation.notes) {
-      const parsed = JSON.parse(solicitation.notes as string);
-      if (parsed?.fseaOutput) {
-        fseaOutput = parsed.fseaOutput as FseaOutput;
-        // Build Section A rows from dara_requirements hrlr metadata
-        // (the writing plan needs the proposalResponseObligation from description)
-        sectionARows = requirements
-          .filter(r => r.hrlr && (r.hrlr as Record<string, unknown>)?.fseaPassRow === true
-            && (r.hrlr as Record<string, unknown>)?.isChecklist !== true)
-          .map((r, i) => {
-            const h = r.hrlr as Record<string, unknown>;
-            return {
-              reqId: r.citation ?? `req-${i}`,
-              paragraphId: (h?.paragraphId as string) ?? 'Other',
-              requirement: r.name,
-              proposalResponseObligation: r.description ?? '',
-              evaluationCriterion: (h?.evaluationCriterion as string) ?? '',
-              strengthGate: (h?.strengthGate as string) ?? null,
-              crossReference: (h?.crossReference as string) ?? null,
-              pageSignal: (h?.pageSignal as string) ?? 'Medium',
-              priority: (h?.priority as P10MatrixRow['priority']) ?? 'medium',
-              writingSequenceOrder: (h?.writingSequenceOrder as number) ?? i,
-              pageBudgetMin: (h?.pageBudgetMin as number) ?? null,
-              pageBudgetMax: (h?.pageBudgetMax as number) ?? null,
-            } satisfies P10MatrixRow;
-          });
-      }
-    }
-  } catch {
-    // Notes parse failed — sub-tabs show empty states gracefully
-  }
-
   const compliancePanel = (
     <div className="space-y-4">
 
@@ -1929,16 +1892,20 @@ export default async function SolicitationDetailPage({
             </ol>
           </div>
           <div className="no-print flex flex-shrink-0 flex-col gap-2">
-            <AsyncJobControl
+            <AiActionButton
               action={enqueueShredAction}
               fields={{ solId: sid }}
-              idleIcon={<Sparkles className="h-4 w-4" />}
-              idleLabel={requirements.length ? 'Generate more' : 'Generate from solicitation'}
-              activeLabel="Extracting requirements — running in background, updates every few seconds…"
-              progressLabel={shredProgressLabel ?? undefined}
-              active={shredActive}
-              count={requirements.length}
-              countNoun="requirement"
+              idle={<Sparkles className="h-4 w-4" />}
+              label={requirements.length ? 'Regenerate matrix' : 'Generate from solicitation'}
+              pendingLabel="Shredding the solicitation into a compliance matrix…"
+              steps={[
+                'Loading the parsed requirement candidates…',
+                'Extracting Section M evaluation factors…',
+                'Classifying and linking each requirement…',
+                'Running quality control and writing the matrix…'
+              ]}
+              noun="requirement"
+              verb="generated"
               className={btnPrimary}
             />
             {complianceTotal > 0 && (
@@ -1984,13 +1951,11 @@ export default async function SolicitationDetailPage({
       <ComplianceSubTabs
         sid={sid}
         matrixRows={matrixRows}
-        sectionARows={sectionARows}
         evalRows={evalRows}
         requirementsCount={requirements.length}
         saveAction={saveMatrixRow}
         setReviewStatusAction={setReviewStatusAction}
         saveGoverningFactorsAction={saveGoverningFactorsAction}
-        fseaOutput={fseaOutput}
       />
 
       {/* Removed by amendment (retained, excluded from the active matrix) */}
