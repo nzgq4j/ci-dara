@@ -49,10 +49,15 @@ export type ReqSource = 'instruction' | 'evaluation_factor' | 'sow_pws' | 'far_c
 export type ReqDisposition = 'scored' | 'compliance' | 'administrative';
 export type ReqConfidence = 'high' | 'medium' | 'low';
 
+// The classifier may NOT emit 'evaluation_factor' — the Section M factors are produced solely by
+// Step A. A candidate is an offeror obligation that LINKS to those factors, never a factor itself.
+export type ClassifySource = Exclude<ReqSource, 'evaluation_factor'>;
+
 export interface CandidateClassification {
   candidateId: string;
-  isRequirement: boolean;   // a real, actionable obligation (not narrative, definition, or boilerplate)
-  source: ReqSource;
+  isRequirement: boolean;   // a real, actionable obligation the OFFEROR must satisfy (not narrative,
+                            // definition, boilerplate, or a description of what the GOVERNMENT does)
+  source: ClassifySource;
   disposition: ReqDisposition;
   name: string;             // short label summarizing the obligation
   governingFactors: string[]; // Section M factor names this obligation is evaluated under (from Step A)
@@ -83,14 +88,17 @@ export const CLASSIFY_TOOL = {
             candidateId: { type: 'string', description: 'The exact candidateId being classified.' },
             isRequirement: {
               type: 'boolean',
-              description: 'true only if this is a real, actionable obligation the offeror must satisfy. ' +
-                'false for narrative, definitions, table-of-contents, or FAR "incorporated by reference" list entries.'
+              description: 'true ONLY if this is a real, actionable obligation the OFFEROR must satisfy or address. ' +
+                'false for: narrative/background, definitions, table-of-contents, FAR "incorporated by reference" ' +
+                'list entries, AND any statement describing what the GOVERNMENT does (how it evaluates, assesses, ' +
+                'reviews, rates, or determines) — those are evaluation methodology, not offeror obligations.'
             },
             source: {
               type: 'string',
-              enum: ['instruction', 'evaluation_factor', 'sow_pws', 'far_clause', 'other'],
-              description: 'instruction = Section L proposal instruction; evaluation_factor = Section M factor; ' +
-                'sow_pws = SOW/PWS performance task; far_clause = a FAR/DFARS clause obligation; other = anything else.'
+              enum: ['instruction', 'sow_pws', 'far_clause', 'other'],
+              description: 'instruction = Section L proposal-submission instruction; sow_pws = SOW/PWS performance ' +
+                'task; far_clause = a FAR/DFARS clause obligation; other = anything else. Do NOT classify anything ' +
+                'as an evaluation factor — the Section M factors are already provided; link to them via governingFactors.'
             },
             disposition: {
               type: 'string',

@@ -23,9 +23,13 @@ import {
 import { FACTORS_SYSTEM, CLASSIFY_SYSTEM } from '@/utils/dara/shred/prompts';
 import { persistMatrix } from '@/utils/dara/shred/persist';
 
-const CHUNK = 50;              // candidates per Step B call (processed strictly one chunk at a time)
+// Candidates per Step B call. Still processed strictly one chunk at a time (sequential, each awaited
+// before the next) — larger chunks just mean FEWER sequential calls, which is the main lever on total
+// wall-time. 150 keeps ~500-candidate solicitations to ~4 calls (was ~11 at 50 → 259s) while staying
+// well under the output cap. Anthropic allows 64k output tokens; a 150-item classification is ~12k.
+const CHUNK = 150;
 const STEP_A_MAX_TOKENS = 6000;
-const STEP_B_MAX_TOKENS = 8000;
+const STEP_B_MAX_TOKENS = 20000;
 const now = () => Date.now();
 
 // Estimate for the trace only; the authoritative cost is logged to dara_ai_usage_log.
@@ -174,7 +178,12 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
     const name = (!rawName || isParserHandle(rawName)) ? c.text.slice(0, 120) : rawName.slice(0, 300);
     const flag = !grounded || cl.confidence === 'low';
     if (flag) flagged++;
-    if (cl.source === 'instruction' || cl.source === 'sow_pws') { instrTotal++; if (links.length) linkedInstr++; }
+    // Linkage rate measures only rows that SHOULD map to a scored factor: substantive Section L /
+    // SOW obligations. Administrative rows (page limits, submission mechanics, set-aside facts)
+    // legitimately map to no factor, so counting them would understate real linkage.
+    if ((cl.source === 'instruction' || cl.source === 'sow_pws') && cl.disposition !== 'administrative') {
+      instrTotal++; if (links.length) linkedInstr++;
+    }
 
     reqRows.push({
       companyId, solicitationId,
