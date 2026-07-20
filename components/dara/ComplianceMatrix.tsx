@@ -8,13 +8,25 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Loader2, Check } from 'lucide-react';
+import { Search, Loader2, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import RequirementDetail, { type RequirementDetailData } from '@/components/dara/RequirementDetail';
+
+// Section grouping for the matrix, in display order. Every requirement falls into exactly one
+// disposition; administrative-compliance items (security, training, background checks, IT/cyber
+// compliance, registrations — the standard flow-downs) sit in their own bucket so they don't
+// clutter the substantive requirements. `defaultCollapsed` folds the boilerplate away by default.
+const DISPOSITION_GROUPS: { key: string; label: string; sub: string; defaultCollapsed: boolean }[] = [
+  { key: 'scored', label: 'Scored', sub: 'Evaluated under a Section M factor', defaultCollapsed: false },
+  { key: 'compliance', label: 'Compliance', sub: 'Must be met or addressed — not scored', defaultCollapsed: false },
+  { key: 'administrative', label: 'Administrative Compliance', sub: 'Standard flow-downs & submission mechanics', defaultCollapsed: true }
+];
 
 export type MatrixRowData = {
   id: string;
   name: string;
   citation: string;
+  // Disposition drives the matrix's section grouping (Scored / Compliance / Administrative Compliance).
+  disposition?: string;
   complianceStatus: string;
   proposalRef: string;
   notes: string;
@@ -61,6 +73,9 @@ export default function ComplianceMatrix({
   const [filter, setFilter] = useState('all');
   const [needsReview, setNeedsReview] = useState(false);
   const [query, setQuery] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(DISPOSITION_GROUPS.filter((g) => g.defaultCollapsed).map((g) => [g.key, true]))
+  );
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: rows.length };
@@ -140,16 +155,47 @@ export default function ComplianceMatrix({
             <span>Status</span>
             <span>Notes</span>
           </div>
-          {visible.map((r, i) => (
-            <MatrixRow
-              key={r.id}
-              solId={solId}
-              row={r}
-              index={i + 1}
-              saveAction={saveAction}
-              setReviewStatusAction={setReviewStatusAction}
-            />
-          ))}
+          {(() => {
+            // Bucket visible rows by disposition; anything unknown falls into 'compliance'.
+            const byGroup: Record<string, MatrixRowData[]> = {};
+            for (const r of visible) {
+              const key = DISPOSITION_GROUPS.some((g) => g.key === r.disposition) ? (r.disposition as string) : 'compliance';
+              (byGroup[key] ??= []).push(r);
+            }
+            let running = 0;
+            return DISPOSITION_GROUPS.map((g) => {
+              const groupRows = byGroup[g.key] ?? [];
+              if (groupRows.length === 0) return null;
+              const isCollapsed = collapsed[g.key];
+              return (
+                <div key={g.key}>
+                  <button
+                    type="button"
+                    onClick={() => setCollapsed((c) => ({ ...c, [g.key]: !c[g.key] }))}
+                    className="flex w-full items-center gap-2 border-t border-line bg-surf px-4 py-2 text-left hover:bg-surf2"
+                  >
+                    {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 text-t4" /> : <ChevronDown className="h-3.5 w-3.5 text-t4" />}
+                    <span className="text-[12px] font-semibold text-t2">{g.label}</span>
+                    <span className="rounded-full bg-surf3 px-1.5 py-0.5 font-mono text-[10px] font-bold text-t4">{groupRows.length}</span>
+                    <span className="ml-1 truncate text-[11px] text-t5">{g.sub}</span>
+                  </button>
+                  {!isCollapsed && groupRows.map((r) => {
+                    running += 1;
+                    return (
+                      <MatrixRow
+                        key={r.id}
+                        solId={solId}
+                        row={r}
+                        index={running}
+                        saveAction={saveAction}
+                        setReviewStatusAction={setReviewStatusAction}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            });
+          })()}
           {visible.length === 0 && (
             <div className="px-4 py-6 text-center text-[13px] text-t5">
               No requirements match this filter{q ? ' / search' : ''}.

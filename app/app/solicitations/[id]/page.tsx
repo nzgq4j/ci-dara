@@ -1786,6 +1786,7 @@ export default async function SolicitationDetailPage({
       id: r.id.toString(),
       name: r.name,
       citation: r.citation,
+      disposition: r.disposition,
       complianceStatus: r.complianceStatus,
       proposalRef: r.proposalRef,
       notes: r.notes ?? '',

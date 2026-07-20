@@ -106,8 +106,12 @@ export const CLASSIFY_TOOL = {
             disposition: {
               type: 'string',
               enum: ['scored', 'compliance', 'administrative'],
-              description: 'scored = affects the evaluation rating; compliance = must be met/answered but not scored; ' +
-                'administrative = forms, formatting, submission mechanics, or boilerplate.'
+              description: 'scored = affects the evaluation rating; compliance = a substantive, solicitation-specific ' +
+                'pass/fail obligation particular to this effort; administrative = non-scored, non-differentiating ' +
+                'boilerplate that recurs on every contract — submission mechanics (forms/formatting/page limits) AND ' +
+                'standard flow-downs: security clearances/DD-254, mandatory training (OPSEC/AT/iWATCH/TARP/cyber-awareness), ' +
+                'background checks & identity verification (PIV/HSPD-12), IT/cyber compliance (NIST 800-171, DFARS 7012), ' +
+                'and registrations (SAM). When unsure between compliance and administrative for boilerplate, choose administrative.'
             },
             governingFactors: {
               type: 'array',
