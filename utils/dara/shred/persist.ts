@@ -23,5 +23,8 @@ export async function persistMatrix(
       await tx.solicitation.update({ where: { id: solicitationId }, data: { notes: solicitationNotes } });
     }
     return { inserted, cleared: del.count };
-  });
+  // Three statements, but a full-matrix clear + a several-hundred-row createMany under pooler
+  // contention can approach the default 5s budget. Raise the ceiling to remove that tail risk;
+  // this is the only place the shred writes, so it never competes with itself.
+  }, { timeout: 15_000 });
 }

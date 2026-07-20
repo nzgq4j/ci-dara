@@ -353,48 +353,77 @@ export async function completeStructured<T>(opts: {
   }
   const maxTokens = Math.max(1024, Math.min(opts.maxTokens ?? 8000, providerMaxOutput('anthropic')));
   const temperature = opts.temperature ?? 0;
-
-  const res = await aiFetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      system,
-      tools: [{ name: toolName, description: toolDescription, input_schema: inputSchema }],
-      tool_choice: { type: 'tool', name: toolName },
-      messages: [{ role: 'user', content: user }]
-    })
+  const body = JSON.stringify({
+    model,
+    max_tokens: maxTokens,
+    temperature,
+    system,
+    tools: [{ name: toolName, description: toolDescription, input_schema: inputSchema }],
+    tool_choice: { type: 'tool', name: toolName },
+    messages: [{ role: 'user', content: user }]
   });
 
-  const data: any = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data?.error?.message ?? `Anthropic HTTP ${res.status}`);
+  // Bounded retry on TRANSIENT failures only (429 rate-limit, 529 overloaded, 5xx, network/timeout).
+  // A long shred is a chain of ~2–20 sequential calls; without this a single transient blip aborts
+  // the whole run and wastes all prior spend. Permanent errors (max_tokens, 400/401/refusal) are
+  // re-thrown immediately — retrying them is pointless and only burns tokens. temperature=0 keeps
+  // a re-issued request deterministic, so a retry returns the same result a first success would have.
+  const MAX_ATTEMPTS = 3;
+  let lastErr: Error | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await aiFetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body
+      });
+    } catch (e) {
+      // Network error / timeout / abort from aiFetch — transient, retry.
+      lastErr = e instanceof Error ? e : new Error('Network error calling Anthropic');
+      if (attempt < MAX_ATTEMPTS) { await sleep(attempt * 1500); continue; }
+      throw lastErr;
+    }
+
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data?.error?.message ?? `Anthropic HTTP ${res.status}`;
+      const transient = res.status === 429 || res.status === 529 || res.status >= 500;
+      if (transient && attempt < MAX_ATTEMPTS) { lastErr = new Error(msg); await sleep(attempt * 1500); continue; }
+      throw new Error(msg);
+    }
+
+    const stopReason: string = data?.stop_reason ?? 'unknown';
+    // tool_choice forces the assistant turn to be a single tool_use block whose `input` is the
+    // schema-validated object. If max_tokens was hit mid-JSON the API returns stop_reason
+    // 'max_tokens' and no complete tool_use — we surface that as a specific, catchable error.
+    // This is NOT retried (it is deterministic; the caller must reduce the chunk instead).
+    const block = Array.isArray(data?.content)
+      ? data.content.find((b: any) => b?.type === 'tool_use' && b?.name === toolName)
+      : undefined;
+    if (!block || typeof block.input !== 'object' || block.input === null) {
+      throw new Error(
+        `Structured call "${toolName}" returned no tool result (stop_reason=${stopReason})` +
+        (stopReason === 'max_tokens' ? ' — output hit max_tokens; reduce the chunk size.' : '.')
+      );
+    }
+    return {
+      data: block.input as T,
+      tokenIn: Number(data?.usage?.input_tokens ?? 0),
+      tokenOut: Number(data?.usage?.output_tokens ?? 0),
+      stopReason
+    };
   }
-  const stopReason: string = data?.stop_reason ?? 'unknown';
-  // tool_choice forces the assistant turn to be a single tool_use block whose `input` is the
-  // schema-validated object. If max_tokens was hit mid-JSON the API returns stop_reason
-  // 'max_tokens' and no complete tool_use — we surface that as a specific, catchable error.
-  const block = Array.isArray(data?.content)
-    ? data.content.find((b: any) => b?.type === 'tool_use' && b?.name === toolName)
-    : undefined;
-  if (!block || typeof block.input !== 'object' || block.input === null) {
-    throw new Error(
-      `Structured call "${toolName}" returned no tool result (stop_reason=${stopReason})` +
-      (stopReason === 'max_tokens' ? ' — output hit max_tokens; reduce the chunk size.' : '.')
-    );
-  }
-  return {
-    data: block.input as T,
-    tokenIn: Number(data?.usage?.input_tokens ?? 0),
-    tokenOut: Number(data?.usage?.output_tokens ?? 0),
-    stopReason
-  };
+  // Exhausted all transient retries.
+  throw lastErr ?? new Error(`Structured call "${toolName}" failed after ${MAX_ATTEMPTS} attempts.`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function googleComplete(

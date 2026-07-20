@@ -106,11 +106,15 @@ export type TenantTx = Prisma.TransactionClient;
  */
 export function withTenant<T>(
   companyId: bigint,
-  fn: (tx: TenantTx) => Promise<T>
+  fn: (tx: TenantTx) => Promise<T>,
+  options?: { maxWait?: number; timeout?: number }
 ): Promise<T> {
+  // `options` is optional and passed straight through to $transaction. Existing callers are
+  // unaffected (undefined = Prisma defaults: 2s maxWait / 5s timeout). A caller doing a single
+  // large clear-then-write (e.g. the shred persist) can raise `timeout` for headroom.
   return prismaTenant.$transaction(async (tx) => {
     // set_config(setting, value, is_local=true) == SET LOCAL. Parameterized.
     await tx.$executeRaw`select set_config('app.company_id', ${companyId.toString()}, true)`;
     return fn(tx);
-  });
+  }, options);
 }

@@ -9,7 +9,11 @@
 import type { ModalCandidate, ParseResult, Section } from '@/utils/dara/parse-result';
 
 // Internal parser id handles that must never surface as a user-facing citation or name.
-const PARSER_HANDLE = /^(cand|sent|para|trigger|t|ac|so|es|f)[-\d]/i;
+// Anchored to the Modal parser's ACTUAL id shapes (verified against live data): candidates are
+// `cand-sent-para-…`, sentences `sent-para-…`, paragraphs `para-…`; `trigger-`/`t\d` are legacy
+// conditional-trigger ids. Deliberately narrow so real content like "F-16", "T-1 Technical", or
+// "SO-2" is NOT mistaken for a handle.
+const PARSER_HANDLE = /^(cand|sent|para|trigger)-|^t\d/i;
 
 /** True if a string is (or starts as) an internal parser/model id handle, not real content. */
 export function isParserHandle(s: string | null | undefined): boolean {

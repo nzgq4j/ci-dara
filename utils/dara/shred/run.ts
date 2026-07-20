@@ -110,7 +110,10 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
       name: f.name.slice(0, 300),
       description: ((f.description ?? '').slice(0, 4000)) || null,
       source: 'evaluation_factor', disposition: 'scored', isScored: true,
-      citation: (isParserHandle(f.citation) ? '' : (f.citation ?? '')).slice(0, 200),
+      // Only surface the model's citation when the factor itself is grounded in Section M; an
+      // ungrounded factor's citation is unverifiable, so blank it rather than show a figure a
+      // reviewer might trust. Parser-handle leakage is also rejected.
+      citation: (grounded && !isParserHandle(f.citation) ? (f.citation ?? '') : '').slice(0, 200),
       farReference: '', complianceStatus: 'not_assessed',
       reviewStatus: grounded ? 'approved' : 'flagged',
       governingFactors: [], sortOrder: sortOrder++
@@ -189,10 +192,12 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
     });
   }
 
-  // 6) Sanity gate — candidates present but nothing classified is an explicit failure, not a silent
-  //    empty matrix.
-  if (input.candidates.length > 0 && reqRows.length === 0) {
-    return fail(`Sanity check failed: ${input.candidates.length} candidates but 0 classified as requirements. Not persisting an empty matrix.`);
+  // 6) Sanity gate — candidates present but NOTHING to persist (no requirements AND no factors) is
+  //    an explicit failure, not a silent empty matrix. If factors were extracted we still persist
+  //    them even when 0 candidates classified as requirements, so paid-for Section M work is never
+  //    thrown away; the trace + flagged counts make the low requirement count visible.
+  if (input.candidates.length > 0 && reqRows.length === 0 && factorRows.length === 0) {
+    return fail(`Sanity check failed: ${input.candidates.length} candidates but 0 classified as requirements and 0 factors extracted. Not persisting an empty matrix.`);
   }
 
   // 7) Persist once (clear + write) and store the run trace on the solicitation for transparency.
