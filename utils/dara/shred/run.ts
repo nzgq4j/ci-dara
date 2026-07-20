@@ -174,9 +174,10 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
     const links = (cl.governingFactors ?? [])
       .map(n => (n ?? '').trim())
       .filter(n => factorNameSet.has(n.toLowerCase()));            // reject any invented factor name
-    const rawName = (cl.name ?? '').trim();
-    const name = (!rawName || isParserHandle(rawName)) ? c.text.slice(0, 120) : rawName.slice(0, 300);
-    const flag = !grounded || cl.confidence === 'low';
+    // The row's label is the parser's verbatim sentence (grounded), not a model-written name — the
+    // model no longer emits one. Flagging is grounding-driven (confidence was dropped from Step B).
+    const name = c.text.slice(0, 160);
+    const flag = !grounded;
     if (flag) flagged++;
     // Linkage rate measures only rows that SHOULD map to a scored factor: substantive Section L /
     // SOW obligations. Administrative rows (page limits, submission mechanics, set-aside facts)

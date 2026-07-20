@@ -53,15 +53,17 @@ export type ReqConfidence = 'high' | 'medium' | 'low';
 // Step A. A candidate is an offeror obligation that LINKS to those factors, never a factor itself.
 export type ClassifySource = Exclude<ReqSource, 'evaluation_factor'>;
 
+// Deliberately MINIMAL output per candidate — every field the model must generate multiplies the
+// serial output-token cost across a whole solicitation. The requirement's name and its detail are
+// the parser's own verbatim text (grounded, not model-authored), and QA flagging is driven by
+// grounding, so neither a model-written `name` nor a `confidence` is asked for here.
 export interface CandidateClassification {
   candidateId: string;
   isRequirement: boolean;   // a real, actionable obligation the OFFEROR must satisfy (not narrative,
                             // definition, boilerplate, or a description of what the GOVERNMENT does)
   source: ClassifySource;
   disposition: ReqDisposition;
-  name: string;             // short label summarizing the obligation
   governingFactors: string[]; // Section M factor names this obligation is evaluated under (from Step A)
-  confidence: ReqConfidence;
 }
 
 export interface ClassifyOutput {
@@ -73,8 +75,9 @@ export const CLASSIFY_TOOL = {
   description:
     'Classify each provided requirement CANDIDATE. You may NOT add, remove, merge, or reword ' +
     'candidates — classify exactly the candidateIds given, one classification each. For each: decide ' +
-    'if it is a real actionable requirement, assign its source and disposition, write a short name, and ' +
-    'link it to the Section M factor(s) it is evaluated under (choose only from the provided factor names).',
+    'if it is a real actionable OFFEROR requirement, assign its source and disposition, and ' +
+    'link it to the Section M factor(s) it is evaluated under (choose only from the provided factor names). ' +
+    'Do NOT write a name or a confidence — keep each classification minimal.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -106,16 +109,14 @@ export const CLASSIFY_TOOL = {
               description: 'scored = affects the evaluation rating; compliance = must be met/answered but not scored; ' +
                 'administrative = forms, formatting, submission mechanics, or boilerplate.'
             },
-            name: { type: 'string', description: 'Concise label (≤ 120 chars) summarizing the obligation.' },
             governingFactors: {
               type: 'array',
               items: { type: 'string' },
               description: 'Names of the Section M factor(s) this obligation is evaluated under. Use ONLY names from ' +
                 'the provided factor list. Empty if it maps to no scored factor.'
-            },
-            confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
+            }
           },
-          required: ['candidateId', 'isRequirement', 'source', 'disposition', 'name', 'governingFactors', 'confidence']
+          required: ['candidateId', 'isRequirement', 'source', 'disposition', 'governingFactors']
         }
       }
     },
