@@ -922,6 +922,28 @@ model Finding {
   @@map("dara_findings")
 }
 
+// Transparency run-log for the v2 shred pipeline. One row per run; `steps` is appended/updated live
+// (a JSON array of {step,status,detail,count,ms,at}) as the ordered passes execute, and the UI polls
+// the latest row for a solicitation to stream the process live and to reopen a saved log.
+model ShredRun {
+  id             BigInt    @id @default(autoincrement())
+  companyId      BigInt    @map("company_id")
+  solicitationId BigInt    @map("solicitation_id")
+  status         String    @default("running") @db.VarChar(20) // running | complete | failed
+  currentStep    String    @default("") @map("current_step") @db.VarChar(200)
+  steps          Json      // JSON array of {step,status,detail,count,ms,at}; DB default '[]'
+  counts         Json      // final tallies; DB default '{}'
+  error          String?   @db.VarChar(600)
+  startedAt      DateTime  @default(now()) @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([solicitationId, id])
+  @@index([companyId])
+  @@map("dara_shred_runs")
+}
+
 // A Direct AI review: one unified AI analysis of the solicitation's proposal working draft
 // against the RFP, producing a single 0-100 score and a flat, severity-ranked findings list
 // (no passes, no gates). One per solicitation — a re-run replaces its findings in place.
