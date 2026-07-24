@@ -28,6 +28,14 @@ const CHUNK = 150;
 const STEP_A_MAX_TOKENS = 6000;
 const STEP_B_MAX_TOKENS = 20000;
 
+// A short, human-readable origin hint fed to the classifier so it can tell a PWS/SOW performance task
+// (→ sow_pws, substantive) from a base-RFP instruction. Candidates only come from shred-eligible roles.
+function originLabel(role: string | null): string {
+  return role === 'pws_sow' ? 'PWS/SOW document'
+    : role === 'rfp_base' ? 'base RFP/solicitation'
+    : 'solicitation';
+}
+
 export interface ShredV2Result {
   ok: boolean;
   error?: string;
@@ -119,7 +127,7 @@ export async function runShredV2(solicitationId: bigint, companyId: bigint): Pro
         `SECTION M FACTORS (governingFactors must come only from these names):\n` +
         (factorNames.length ? factorNames.map((n) => `- ${n}`).join('\n') : '(none)') +
         `\n\nCANDIDATES (classify each by candidateId):\n` +
-        chunk.map((c) => `[${c.candidateId}] (${c.modalClass}; ${c.citation}) ${c.text}`).join('\n');
+        chunk.map((c) => `[${c.candidateId}] (${c.modalClass}; from ${originLabel(c.docRole)}; ${c.citation}) ${c.text}`).join('\n');
       try {
         const r = await completeStructured<ClassifyOutput>({
           provider, model, apiKey, system: CLASSIFY_SYSTEM, user,

@@ -20,6 +20,7 @@ const SECTION_M_TAIL_CHARS = 45_000; // fallback: Section M almost always lives 
 export interface ShredCandidate {
   candidateId: string;
   docId: string;              // bigint as string (safe to carry through JSON to the model)
+  docRole: string | null;     // originating document's role (pws_sow | rfp_base | …) — a source hint for the classifier
   text: string;               // cleaned verbatim sentence — the requirement text (grounded by construction)
   modalClass: string;         // MANDATORY | PROHIBITION | PERMISSION | PREDICTIVE | AMBIGUOUS
   sectionId: string | null;
@@ -131,6 +132,7 @@ export async function loadShredInput(solicitationId: bigint, companyId: bigint):
       candidates.push({
         candidateId: c.candidate_id,
         docId: doc.id.toString(),
+        docRole: doc.documentRole ?? null,
         text,
         modalClass: c.modal_class,
         sectionId: c.section_id ?? null,

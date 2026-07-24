@@ -108,7 +108,7 @@ export default function ShredProcessPanel({
             className="flex w-full items-center gap-2 px-3 py-2 text-left"
           >
             {open ? <ChevronDown className="h-3.5 w-3.5 text-t4" /> : <ChevronRight className="h-3.5 w-3.5 text-t4" />}
-            <span className="text-[12px] font-semibold text-t2">Process log</span>
+            <span className="text-[12px] font-semibold text-t2">Progress</span>
             <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase ${statusChip}`}>{run.status}</span>
             {countBits.length > 0 && <span className="ml-1 truncate text-[11px] text-t5">{countBits.join(' · ')}</span>}
           </button>
