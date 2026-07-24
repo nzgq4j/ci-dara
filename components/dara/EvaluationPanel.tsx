@@ -14,7 +14,7 @@
 
 import { useMemo, useState, useTransition, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, AlertCircle, BookOpen, ClipboardList, GripVertical, Loader2, Check, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, AlertCircle, BookOpen, ClipboardList, GripVertical, Loader2, Check, X, Wrench } from 'lucide-react';
 import { card, eyebrow } from '@/components/dara/theme';
 import RequirementDetail, { type RequirementDetailData } from '@/components/dara/RequirementDetail';
 
@@ -33,6 +33,7 @@ export interface EvalRow {
 
 const FACTOR_CHIP = 'inline-flex items-center rounded bg-navy/10 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-navy';
 const INST_CHIP   = 'inline-flex items-center rounded bg-gold/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#92400E]';
+const TASK_CHIP   = 'inline-flex items-center rounded bg-[#166534]/12 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-[#166534]';
 
 function CitationBadge({ text }: { text: string }) {
   if (!text) return null;
@@ -52,6 +53,10 @@ function DraggableInstruction({
   saving?: boolean;
   saved?: boolean;
 }) {
+  // Section L instructions are draggable (you assign them to a factor by hand). SOW/PWS tasks are the
+  // performance work auto-linked to the factor — shown here as the roll-up, read-only for now.
+  const isInstruction = inst.source === 'instruction';
+
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('text/plain', inst.id);
     e.dataTransfer.effectAllowed = 'move';
@@ -59,15 +64,26 @@ function DraggableInstruction({
 
   return (
     <div
-      draggable
-      onDragStart={handleDragStart}
-      className="group flex cursor-grab items-start gap-3 px-4 py-2.5 pl-10 active:cursor-grabbing"
+      draggable={isInstruction}
+      onDragStart={isInstruction ? handleDragStart : undefined}
+      className={`group flex items-start gap-3 px-4 py-2.5 pl-10 ${isInstruction ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
-      <GripVertical className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-t5 opacity-0 transition-opacity group-hover:opacity-100" />
-      <span className={`mt-0.5 flex-shrink-0 ${INST_CHIP}`}>
-        <ClipboardList className="mr-1 h-2.5 w-2.5" />
-        Sec L
-      </span>
+      {isInstruction ? (
+        <GripVertical className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-t5 opacity-0 transition-opacity group-hover:opacity-100" />
+      ) : (
+        <span className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+      )}
+      {isInstruction ? (
+        <span className={`mt-0.5 flex-shrink-0 ${INST_CHIP}`}>
+          <ClipboardList className="mr-1 h-2.5 w-2.5" />
+          Sec L
+        </span>
+      ) : (
+        <span className={`mt-0.5 flex-shrink-0 ${TASK_CHIP}`}>
+          <Wrench className="mr-1 h-2.5 w-2.5" />
+          PWS/SOW
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <CitationBadge text={inst.citation} />
@@ -85,7 +101,7 @@ function DraggableInstruction({
       <div className="flex flex-shrink-0 items-center gap-1">
         {saving && <Loader2 className="h-3 w-3 animate-spin text-t5" />}
         {saved && !saving && <Check className="h-3 w-3 text-[#166534]" />}
-        {onRemove && !saving && (
+        {isInstruction && onRemove && !saving && (
           <button
             type="button"
             onClick={onRemove}
@@ -252,7 +268,16 @@ function FactorDropZone({
         </div>
         <div className="flex flex-shrink-0 flex-col items-end gap-0.5">
           <span className="font-mono text-[11px] text-t5">
-            {instructions.length} instruction{instructions.length === 1 ? '' : 's'}
+            {(() => {
+              // On a real factor card the list is the roll-up: Section L instructions + SOW/PWS tasks.
+              if (nonDroppable) return `${instructions.length} item${instructions.length === 1 ? '' : 's'}`;
+              const nInstr = instructions.filter((i) => i.source === 'instruction').length;
+              const nTask = instructions.length - nInstr;
+              const parts = [];
+              if (nInstr) parts.push(`${nInstr} instruction${nInstr === 1 ? '' : 's'}`);
+              if (nTask) parts.push(`${nTask} task${nTask === 1 ? '' : 's'}`);
+              return parts.length ? `${parts.join(' · ')} evaluated` : '0 evaluated';
+            })()}
           </span>
           {!nonDroppable && dragOver && (
             <span className="font-mono text-[9px] font-bold uppercase tracking-wide text-navy">
@@ -339,6 +364,10 @@ export default function EvaluationPanel({
   const { factors, instructionsByFactor, unlinked, adminCompliance, syntheticFactors } = useMemo(() => {
     const evalFactors = effectiveRows.filter((r) => r.source === 'evaluation_factor');
     const instructions = effectiveRows.filter((r) => r.source === 'instruction');
+    // Obligations that roll up under a factor: Section L instructions AND SOW/PWS performance tasks.
+    // (The unlinked / administrative buckets below stay Section-L-only — those are the items a human
+    // still assigns; unlinked PWS tasks live in the matrix's Compliance group, not here.)
+    const governed = effectiveRows.filter((r) => r.source === 'instruction' || r.source === 'sow_pws');
 
     const factorByLabel = new Map<string, EvalRow>();
     for (const f of evalFactors) {
@@ -360,7 +389,7 @@ export default function EvaluationPanel({
     const instBySyntheticLabel = new Map<string, EvalRow[]>();
     const linkedInstIds = new Set<string>();
 
-    for (const inst of instructions) {
+    for (const inst of governed) {
       if (!inst.governingFactors || inst.governingFactors.length === 0) continue;
       for (const gfLabel of inst.governingFactors) {
         const factor = resolve(gfLabel);
@@ -388,6 +417,12 @@ export default function EvaluationPanel({
     instBySyntheticLabel.forEach((insts, label) => {
       syntheticFactorEntries.push({ label, instructions: insts });
     });
+
+    // Within each factor, list Section L instructions before SOW/PWS tasks for a readable roll-up.
+    const instrFirst = (a: EvalRow, b: EvalRow) =>
+      (a.source === 'instruction' ? 0 : 1) - (b.source === 'instruction' ? 0 : 1);
+    instByFactorId.forEach((arr) => arr.sort(instrFirst));
+    syntheticFactorEntries.forEach((e) => e.instructions.sort(instrFirst));
 
     return { factors: evalFactors, instructionsByFactor: instByFactorId, unlinked: unlinkedInstructions, adminCompliance: adminComplianceInstructions, syntheticFactors: syntheticFactorEntries };
   }, [effectiveRows]);
@@ -450,6 +485,11 @@ export default function EvaluationPanel({
         <span className="flex items-center gap-1.5">
           <span className={INST_CHIP}><ClipboardList className="mr-1 h-2.5 w-2.5" />Sec L</span>
           Proposal instruction
+        </span>
+        <span className="text-t5">·</span>
+        <span className="flex items-center gap-1.5">
+          <span className={TASK_CHIP}><Wrench className="mr-1 h-2.5 w-2.5" />PWS/SOW</span>
+          Performance task evaluated under the factor
         </span>
         {saveGoverningFactorsAction && (
           <>

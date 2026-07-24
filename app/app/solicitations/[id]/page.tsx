@@ -1850,7 +1850,9 @@ export default async function SolicitationDetailPage({
       id: r.id.toString(),
       name: r.name,
       citation: r.citation,
+      source: r.source,
       disposition: r.disposition,
+      governingFactors: (r.governingFactors ?? []) as string[],
       complianceStatus: r.complianceStatus,
       proposalRef: r.proposalRef,
       notes: r.notes ?? '',
@@ -1902,9 +1904,17 @@ export default async function SolicitationDetailPage({
     };
   });
 
-  // Evaluation sub-panel rows — Section L instructions + Section M factors only.
-  // activeRequirements is already filtered to these two sources, so we just reshape.
-  const evalRows: EvalRow[] = activeRequirements.map((r) => ({
+  // Evaluation sub-panel rows — Section M factors + Section L instructions, PLUS the SOW/PWS tasks
+  // that are evaluated under a factor (governingFactors non-empty), so each factor card shows its full
+  // evaluated scope (its roll-up), not just the Section L instructions. Unlinked PWS tasks are omitted
+  // here — they live in the matrix's Compliance group; the Evaluation tab is the factor roll-up view.
+  const evalSourceRequirements = matrixRequirements.filter(
+    (r) =>
+      r.source === 'instruction' ||
+      r.source === 'evaluation_factor' ||
+      (r.source === 'sow_pws' && (r.governingFactors ?? []).length > 0)
+  );
+  const evalRows: EvalRow[] = evalSourceRequirements.map((r) => ({
     id: r.id.toString(),
     name: r.name,
     citation: r.citation,

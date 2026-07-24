@@ -8,7 +8,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Loader2, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, Loader2, Check, ChevronDown, ChevronRight, CornerDownRight } from 'lucide-react';
 import RequirementDetail, { type RequirementDetailData } from '@/components/dara/RequirementDetail';
 
 // Section grouping for the matrix, in display order. Every requirement falls into exactly one
@@ -25,8 +25,12 @@ export type MatrixRowData = {
   id: string;
   name: string;
   citation: string;
+  // Source distinguishes an evaluation_factor row (the scored parent) from the obligations under it.
+  source?: string;
   // Disposition drives the matrix's section grouping (Scored / Compliance / Administrative Compliance).
   disposition?: string;
+  // Section M factor name(s) this obligation is evaluated under — the L/PWS→M roll-up link.
+  governingFactors?: string[];
   complianceStatus: string;
   proposalRef: string;
   notes: string;
@@ -76,6 +80,25 @@ export default function ComplianceMatrix({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(
     () => Object.fromEntries(DISPOSITION_GROUPS.filter((g) => g.defaultCollapsed).map((g) => [g.key, true]))
   );
+  // Which Scored factors are expanded to show their roll-up (the obligations evaluated under them).
+  const [expandedFactors, setExpandedFactors] = useState<Record<string, boolean>>({});
+
+  // The roll-up: every requirement evaluated under each Section M factor, keyed by lower-cased factor
+  // name. Built from ALL rows (not just the filtered view) so a factor's evaluated scope is complete.
+  const governedByFactor = useMemo(() => {
+    const m = new Map<string, MatrixRowData[]>();
+    for (const r of rows) {
+      if (r.source === 'evaluation_factor') continue; // a factor is not evaluated under itself
+      for (const gf of r.governingFactors ?? []) {
+        const k = gf.trim().toLowerCase();
+        if (!k) continue;
+        const bucket = m.get(k);
+        if (bucket) bucket.push(r);
+        else m.set(k, [r]);
+      }
+    }
+    return m;
+  }, [rows]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: rows.length };
@@ -181,15 +204,32 @@ export default function ComplianceMatrix({
                   </button>
                   {!isCollapsed && groupRows.map((r) => {
                     running += 1;
+                    const isFactor = g.key === 'scored' && r.source === 'evaluation_factor';
+                    const governed = isFactor ? (governedByFactor.get(r.name.trim().toLowerCase()) ?? []) : [];
+                    const isOpen = isFactor && !!expandedFactors[r.id];
                     return (
-                      <MatrixRow
-                        key={r.id}
-                        solId={solId}
-                        row={r}
-                        index={running}
-                        saveAction={saveAction}
-                        setReviewStatusAction={setReviewStatusAction}
-                      />
+                      <div key={r.id}>
+                        <MatrixRow
+                          solId={solId}
+                          row={r}
+                          index={running}
+                          saveAction={saveAction}
+                          setReviewStatusAction={setReviewStatusAction}
+                          governedCount={isFactor ? governed.length : undefined}
+                          expanded={isOpen}
+                          onToggleExpand={isFactor && governed.length > 0 ? () => setExpandedFactors((s) => ({ ...s, [r.id]: !s[r.id] })) : undefined}
+                        />
+                        {isOpen && governed.length > 0 && (
+                          <div className="border-t border-line bg-surf2/30">
+                            <div className="px-4 py-1.5 pl-12 font-mono text-[10px] uppercase tracking-wide text-t5">
+                              Evaluated under this factor · {governed.length} obligation{governed.length === 1 ? '' : 's'}
+                            </div>
+                            {governed.map((gr) => (
+                              <GovernedChildRow key={gr.id} row={gr} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -215,13 +255,20 @@ function MatrixRow({
   row,
   index,
   saveAction,
-  setReviewStatusAction
+  setReviewStatusAction,
+  governedCount,
+  expanded,
+  onToggleExpand
 }: {
   solId: string;
   row: MatrixRowData;
   index: number;
   saveAction: (fd: FormData) => Promise<{ ok: boolean }>;
   setReviewStatusAction?: (fd: FormData) => Promise<{ ok: boolean }>;
+  // When this row is a Section M factor, its governing-obligation count + expand control (the roll-up).
+  governedCount?: number;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(row.complianceStatus);
@@ -278,7 +325,7 @@ function MatrixRow({
         ) : (
           <div className="text-[12.5px] leading-snug text-t2">{row.name}</div>
         )}
-        <div className="mt-0.5 flex items-center gap-1.5">
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
           {row.reviewStatus === 'flagged' && (
             <span className="rounded bg-[#FEF3C7] px-1 py-0.5 font-mono text-[8px] font-bold uppercase text-[#92400E]">flagged</span>
           )}
@@ -290,7 +337,28 @@ function MatrixRow({
               amended v{row.version}
             </span>
           )}
+          {/* Roll-up link: which Section M factor(s) this obligation is evaluated under. */}
+          {row.source !== 'evaluation_factor' && (row.governingFactors?.length ?? 0) > 0 &&
+            row.governingFactors!.map((gf) => (
+              <span key={gf} className="inline-flex items-center rounded bg-navy/10 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-navy">
+                evaluated under: {gf}
+              </span>
+            ))}
         </div>
+        {/* When this row is a Section M factor: the expand control revealing its roll-up. */}
+        {onToggleExpand && (
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className="mt-1 inline-flex items-center gap-1 rounded text-[11px] font-semibold text-navy hover:underline"
+          >
+            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {expanded ? 'Hide' : 'Show'} {governedCount} evaluated obligation{governedCount === 1 ? '' : 's'}
+          </button>
+        )}
+        {governedCount === 0 && row.source === 'evaluation_factor' && (
+          <span className="mt-1 block text-[10.5px] text-t5">No obligations linked to this factor yet</span>
+        )}
       </div>
 
       <span className="inline-flex w-fit items-center rounded bg-surf3 px-1.5 py-0.5 font-mono text-[10px] text-t3">
@@ -333,6 +401,37 @@ function MatrixRow({
         {pending && <Loader2 className="absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 animate-spin text-t5" />}
         {saved && !pending && <Check className="absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#166534]" />}
       </div>
+    </div>
+  );
+}
+
+// A read-only nested row shown under an expanded Section M factor: one obligation evaluated under it.
+// This is the visual roll-up — the scored factor's rating is built from these. Editing still happens on
+// the obligation's own row in the Compliance group; here it's a reference view of the evaluated scope.
+function GovernedChildRow({ row }: { row: MatrixRowData }) {
+  const meta = STATUS_META[row.complianceStatus] ?? STATUS_META.not_assessed;
+  return (
+    <div className="grid grid-cols-[36px_minmax(0,1.4fr)_96px_minmax(0,0.9fr)_130px_minmax(0,1fr)] items-start gap-3 border-t border-line/50 px-4 py-2 pl-12">
+      <span className="pt-0.5 text-t5">
+        <CornerDownRight className="h-3 w-3" />
+      </span>
+      <div className="min-w-0">
+        {row.detail ? (
+          <RequirementDetail detail={row.detail}>
+            <span className="text-[12px] leading-snug text-t3 hover:underline">{row.name}</span>
+          </RequirementDetail>
+        ) : (
+          <div className="text-[12px] leading-snug text-t3">{row.name}</div>
+        )}
+      </div>
+      <span className="inline-flex w-fit items-center rounded bg-surf3 px-1.5 py-0.5 font-mono text-[10px] text-t4">
+        {row.citation || '—'}
+      </span>
+      <span className="truncate text-[11px] text-t5">{row.proposalRef || '—'}</span>
+      <span className={`inline-flex w-fit items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${meta.chip}`}>
+        {meta.glyph} {meta.label}
+      </span>
+      <span className="text-[11px] text-t5">{row.notes || ''}</span>
     </div>
   );
 }
