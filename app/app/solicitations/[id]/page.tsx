@@ -21,9 +21,10 @@ import { uploadAndExtract, removeStored } from '@/utils/dara/documents';
 import { parseAndPersist } from '@/utils/dara/modal-parser';
 import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult, setResultArchived } from '@/utils/dara/evaluator';
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
-import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
+import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueShredV2, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
 import { runShred } from '@/utils/dara/shred/run';
-import { runShredV2Proof } from '@/utils/dara/shred-v2/run';
+import { latestRun } from '@/utils/dara/shred-v2/run-log';
+import ShredProcessPanel, { type ShredRunView } from '@/components/dara/ShredProcessPanel';
 import { isPlatformAdmin } from '@/utils/dara/admin';
 import ParseHistory, { type ParseSummary } from '@/components/dara/ParseHistory';
 import type { ParseResult } from '@/utils/dara/parse-result';
@@ -341,29 +342,43 @@ async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; co
   return { ok: result.ok, count: result.counts.factors + result.counts.requirements, error: result.error };
 }
 
-// TEMPORARY — single-call "shred v2" proof. Runs the whole canonical knowledge-base extraction in one
-// AI call and records whether it truncated + how much came back (stashed on the solicitation notes as
-// shredV2Proof). Does NOT touch the live matrix. Used to decide single-call vs sequenced for production.
-async function shredV2ProofAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+// Shred v2 — sequenced, OBSERVABLE run. Enqueues the run on the worker (returns immediately so the
+// page's poll requests aren't blocked by a long synchronous action); the worker executes the ordered
+// passes to completion, streaming each step into dara_shred_runs which the process panel polls live.
+async function runShredV2Action(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   'use server';
   const daraUser = await authedUser();
   const solId = BigInt(String(formData.get('solId')));
   await requireViewableSolicitation(solId, daraUser);
-  const r = await runShredV2Proof(solId, daraUser.companyId);
+  const res = await enqueueShredV2(solId, daraUser.companyId);
+  if (res.ok) triggerWorker();
   await recordAudit({
     action: 'requirement.shred', companyId: daraUser.companyId, actorId: daraUser.id, actorEmail: daraUser.email,
-    entityType: 'solicitation', entityId: solId,
-    metadata: { v2Proof: true, truncated: r.truncated, stopReason: r.stopReason, counts: r.counts, jsonBytes: r.jsonBytes, tokenOut: r.tokenOut }
+    entityType: 'solicitation', entityId: solId, metadata: { v2: true, enqueued: res.ok, error: res.error ?? null }
   });
   revalidatePath(`/app/solicitations/${solId}`);
-  const err = r.truncated
-    ? `Single call truncated at ${r.tokenOut} output tokens (${r.jsonBytes} bytes, ${r.counts.requirements} requirements before cutoff).`
-    : r.error;
-  return { ok: r.ok, count: r.counts.requirements, error: err };
+  return res;
 }
 
-// Standalone compliance sweep: check the pass/fail administrative requirements against
-// the current proposal draft and set their statuses (the compliance matrix).
+// Lightweight poll: latest run-log for this solicitation (drives the live process panel).
+async function getShredRunAction(formData: FormData): Promise<ShredRunView | null> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const run = await latestRun(daraUser.companyId, solId);
+  if (!run) return null;
+  return {
+    status: run.status,
+    currentStep: run.currentStep,
+    steps: (Array.isArray(run.steps) ? run.steps : []) as ShredRunView['steps'],
+    counts: (run.counts && typeof run.counts === 'object' ? run.counts : {}) as Record<string, number>,
+    error: run.error ?? null,
+    startedAt: run.startedAt ? run.startedAt.toISOString() : null,
+    finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null
+  };
+}
+
 // Reconcile the proposal RESPONSE against the compliance requirements — a single action behind one
 // button (replacing the old separate "Sync from AI review" + "Run compliance check"):
 //   1) fold any completed AI-review Compliance & Format findings into the matrix (synchronous, no
@@ -1900,6 +1915,20 @@ export default async function SolicitationDetailPage({
     detail: matrixRows.find((m) => m.id === r.id.toString())?.detail
   }));
 
+  // Latest v2 run-log (the saved process log; also the seed the live panel updates from).
+  const latestShredRun = await latestRun(companyId, solId);
+  const initialShredRun: ShredRunView | null = latestShredRun
+    ? {
+        status: latestShredRun.status,
+        currentStep: latestShredRun.currentStep,
+        steps: (Array.isArray(latestShredRun.steps) ? latestShredRun.steps : []) as ShredRunView['steps'],
+        counts: (latestShredRun.counts && typeof latestShredRun.counts === 'object' ? latestShredRun.counts : {}) as Record<string, number>,
+        error: latestShredRun.error ?? null,
+        startedAt: latestShredRun.startedAt ? latestShredRun.startedAt.toISOString() : null,
+        finishedAt: latestShredRun.finishedAt ? latestShredRun.finishedAt.toISOString() : null
+      }
+    : null;
+
   const compliancePanel = (
     <div className="space-y-4">
 
@@ -1959,16 +1988,12 @@ export default async function SolicitationDetailPage({
               verb="generated"
               className={btnPrimary}
             />
-            <AiActionButton
-              action={shredV2ProofAction}
-              fields={{ solId: sid }}
-              idle={<Sparkles className="h-4 w-4" />}
-              label="Shred v2 (single-call proof)"
-              pendingLabel="Running the whole knowledge-base extraction in ONE call…"
-              steps={['Sending the full corpus in a single call…', 'Model is emitting the canonical JSON…', 'Recording completion vs. truncation…']}
-              noun="requirement"
-              verb="extracted"
-              className={btnGhost}
+            <ShredProcessPanel
+              solId={sid}
+              initialRun={initialShredRun}
+              runAction={runShredV2Action}
+              pollAction={getShredRunAction}
+              buttonClass={btnGhost}
             />
             {complianceTotal > 0 && (
               <ComplianceCheckControl

@@ -28,6 +28,7 @@ import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/ca
 import { runComplianceCheck } from '@/utils/dara/evaluator';
 import { verifyAdminFindings } from '@/utils/dara/review-verify';
 import { scoreFromFindings } from '@/utils/dara/review-score';
+import { runShredV2 } from '@/utils/dara/shred-v2/engine';
 import { fetchClauseSync, upsertClauses } from '@/utils/dara/clause-library';
 import { reconcileAmendment } from '@/utils/dara/amendments';
 import { runDirectReview, submitDateFromDays } from '@/utils/dara/direct-review';
@@ -184,6 +185,11 @@ async function enqueueUniqueJob(
     });
     return { ok: true };
   });
+}
+
+/** Enqueue an observable shred v2 run (streams to dara_shred_runs; the process panel polls it). */
+export function enqueueShredV2(solicitationId: bigint, companyId: bigint): Promise<{ ok: boolean; error?: string }> {
+  return enqueueUniqueJob(companyId, 'shred_v2', 'solicitationId', solicitationId);
 }
 
 /** True when a compliance check is queued/running for this solicitation (drives the UI poll). */
@@ -827,6 +833,10 @@ export async function processReviewJobs(deadlineMs: number): Promise<{ processed
         await runPass(BigInt(payload.passId), companyId, deadlineMs);
       } else if (payload.kind === 'compliance_check' && payload.solicitationId) {
         done = await runComplianceJob(BigInt(payload.solicitationId), companyId, deadlineMs);
+      } else if (payload.kind === 'shred_v2' && payload.solicitationId) {
+        // Observable shred: runs the ordered passes to completion in one tick, streaming each step
+        // to the dara_shred_runs log which the process panel polls live. One-shot.
+        await runShredV2(BigInt(payload.solicitationId), companyId);
       } else if (payload.kind === 'reconcile' && payload.amendmentId) {
         await reconcileAmendment(BigInt(payload.amendmentId), companyId);
       } else if (payload.kind === 'reparse' && payload.solDocId) {
