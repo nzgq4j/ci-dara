@@ -45,10 +45,13 @@ const ADMIN_SIGNAL = new RegExp(
 /**
  * Correct an over-broad 'administrative' label. Returns the disposition to persist. Only ever downgrades
  * administrative → compliance (never touches scored/compliance). FAR-clause boilerplate is left as-is.
+ *
+ * Generic over the disposition type so it preserves the caller's Prisma enum (RequirementDisposition)
+ * rather than widening to `string`; 'compliance' is a valid member, so the cast is sound.
  */
-export function gateDisposition(text: string, disposition: string, source: string): string {
+export function gateDisposition<T extends string>(text: string, disposition: T, source: string): T {
   if (disposition === 'administrative' && source !== 'far_clause' && !ADMIN_SIGNAL.test(text)) {
-    return 'compliance';
+    return 'compliance' as T;
   }
   return disposition;
 }
