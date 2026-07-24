@@ -16,6 +16,7 @@ import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/ca
 import { logUsage } from '@/utils/dara/usage';
 import { loadShredInput, type ShredCandidate } from '@/utils/dara/shred/input';
 import { buildHaystack, isGrounded, isParserHandle } from '@/utils/dara/shred/citation';
+import { gateDisposition } from '@/utils/dara/shred/disposition';
 import {
   FACTORS_TOOL, CLASSIFY_TOOL,
   type FactorsOutput, type ClassifyOutput, type CandidateClassification, type ExtractedFactor
@@ -182,6 +183,9 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
     const links = (cl.governingFactors ?? [])
       .map(n => (n ?? '').trim())
       .filter(n => factorNameSet.has(n.toLowerCase()));            // reject any invented factor name
+    // Guardrail: a substantive scope-of-work task the model mislabeled 'administrative' (no genuine
+    // boilerplate signal) is corrected to 'compliance' so the real requirement isn't hidden.
+    const disposition = gateDisposition(c.text, cl.disposition, cl.source);
     // The row's label is the parser's verbatim sentence (grounded), not a model-written name — the
     // model no longer emits one. Flagging is grounding-driven (confidence was dropped from Step B).
     const name = c.text.slice(0, 160);
@@ -190,7 +194,7 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
     // Linkage rate measures only rows that SHOULD map to a scored factor: substantive Section L /
     // SOW obligations. Administrative rows (page limits, submission mechanics, set-aside facts)
     // legitimately map to no factor, so counting them would understate real linkage.
-    if ((cl.source === 'instruction' || cl.source === 'sow_pws') && cl.disposition !== 'administrative') {
+    if ((cl.source === 'instruction' || cl.source === 'sow_pws') && disposition !== 'administrative') {
       instrTotal++; if (links.length) linkedInstr++;
     }
 
@@ -198,7 +202,7 @@ export async function runShred(solicitationId: bigint, companyId: bigint): Promi
       companyId, solicitationId,
       name,
       description: c.text.slice(0, 8000),
-      source: cl.source, disposition: cl.disposition, isScored: cl.disposition === 'scored',
+      source: cl.source, disposition, isScored: disposition === 'scored',
       citation: c.citation.slice(0, 200), citationSynthesized: c.citationSynthesized,
       farReference: '', complianceStatus: 'not_assessed',
       reviewStatus: flag ? 'flagged' : 'approved',

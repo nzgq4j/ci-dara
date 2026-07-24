@@ -16,6 +16,7 @@ import { applyCapabilityOverride, getCapabilityOverrides } from '@/utils/dara/ca
 import { logUsage } from '@/utils/dara/usage';
 import { loadShredInput, type ShredCandidate } from '@/utils/dara/shred/input';
 import { buildHaystack, isGrounded, isParserHandle } from '@/utils/dara/shred/citation';
+import { gateDisposition } from '@/utils/dara/shred/disposition';
 import {
   FACTORS_TOOL, CLASSIFY_TOOL,
   type FactorsOutput, type ClassifyOutput, type CandidateClassification, type ExtractedFactor
@@ -149,22 +150,26 @@ export async function runShredV2(solicitationId: bigint, companyId: bigint): Pro
     await beginStep(companyId, rid, 'Quality control', 'Grounding, dedupe, link, sanity');
     const reqRows: Prisma.RequirementCreateManyInput[] = [];
     const seen = new Set<string>();
-    let flagged = 0, linkedInstr = 0, instrTotal = 0;
+    let flagged = 0, linkedInstr = 0, instrTotal = 0, corrected = 0;
     for (const c of input.candidates) {
       const cl = classifications.get(c.candidateId);
       if (!cl || !cl.isRequirement) continue;
       const key = (c.spanStart != null && c.spanEnd != null) ? `${c.docId}:${c.spanStart}:${c.spanEnd}` : `${c.citation}::${c.text.slice(0, 80)}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      // Guardrail: a substantive scope-of-work task the model mislabeled 'administrative' (no genuine
+      // boilerplate signal) is corrected to 'compliance' so the real requirement isn't hidden.
+      const disposition = gateDisposition(c.text, cl.disposition, cl.source);
+      if (disposition !== cl.disposition) corrected++;
       const grounded = isGrounded(c.text, haystack);
       const links = (cl.governingFactors ?? []).map((n) => (n ?? '').trim()).filter((n) => factorNameSet.has(n.toLowerCase()));
       const name = c.text.slice(0, 160);
       const flag = !grounded;
       if (flag) flagged++;
-      if ((cl.source === 'instruction' || cl.source === 'sow_pws') && cl.disposition !== 'administrative') { instrTotal++; if (links.length) linkedInstr++; }
+      if ((cl.source === 'instruction' || cl.source === 'sow_pws') && disposition !== 'administrative') { instrTotal++; if (links.length) linkedInstr++; }
       reqRows.push({
         companyId, solicitationId, name, description: c.text.slice(0, 8000),
-        source: cl.source, disposition: cl.disposition, isScored: cl.disposition === 'scored',
+        source: cl.source, disposition, isScored: disposition === 'scored',
         citation: c.citation.slice(0, 200), citationSynthesized: c.citationSynthesized,
         farReference: '', complianceStatus: 'not_assessed', reviewStatus: flag ? 'flagged' : 'approved',
         governingFactors: links, documentId: BigInt(c.docId),
@@ -176,7 +181,8 @@ export async function runShredV2(solicitationId: bigint, companyId: bigint): Pro
     }
     await endStep(companyId, rid, 'Quality control', 'done', {
       count: reqRows.length, ms: t() - s,
-      detail: `${reqRows.length} requirements, ${factorRows.length} factors, ${flagged} flagged`
+      detail: `${reqRows.length} requirements, ${factorRows.length} factors, ${flagged} flagged` +
+        (corrected ? `, ${corrected} re-classified from administrative` : '')
     });
 
     // 6) Persist once (clear + write).
