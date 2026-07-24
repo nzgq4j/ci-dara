@@ -100,6 +100,11 @@ export async function runShredV2(solicitationId: bigint, companyId: bigint): Pro
     }
     const factorNames = factors.map((f) => f.name.trim());
     const factorNameSet = new Set(factorNames.map((n) => n.toLowerCase()));
+    // Name + described scope for each factor, so the classifier can link each obligation to the factor
+    // whose scope covers it (not just guess from a bare name). This is what enriches the L→M roll-up.
+    const factorBrief = factors.length
+      ? factors.map((f) => `- ${f.name.trim()}${(f.description ?? '').trim() ? `: ${(f.description ?? '').trim().slice(0, 240)}` : ''}`).join('\n')
+      : '(none)';
     await endStep(companyId, rid, 'Extract Section M factors', 'done', { count: factors.length, ms: t() - s, detail: factorNames.slice(0, 6).join(' · ') || 'none found' });
 
     const factorRows: Prisma.RequirementCreateManyInput[] = factors.map((f) => {
@@ -125,8 +130,8 @@ export async function runShredV2(solicitationId: bigint, companyId: bigint): Pro
       s = t();
       await beginStep(companyId, rid, label, `${chunk.length} candidates`);
       const user =
-        `SECTION M FACTORS (governingFactors must come only from these names):\n` +
-        (factorNames.length ? factorNames.map((n) => `- ${n}`).join('\n') : '(none)') +
+        `SECTION M EVALUATION FACTORS — link each obligation to the factor(s) whose described scope it falls under (governingFactors must use these exact names):\n` +
+        factorBrief +
         `\n\nCANDIDATES (classify each by candidateId):\n` +
         chunk.map((c) => `[${c.candidateId}] (${c.modalClass}; from ${originLabel(c.docRole)}; ${c.citation}) ${c.text}`).join('\n');
       try {
