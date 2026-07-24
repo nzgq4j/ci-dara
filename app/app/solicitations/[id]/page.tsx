@@ -23,6 +23,7 @@ import { runEvaluation, runComplianceSweep, runComplianceCheck, regenerateResult
 import { reconcileAmendment, applyAmendmentChange } from '@/utils/dara/amendments';
 import { enqueueReviewRun, enqueuePassRun, triggerWorker, syncMatrixFromPasses, enqueueComplianceCheck, isComplianceCheckActive, enqueueReconcile, activeReconcileAmendmentIds, enqueueReparse } from '@/utils/dara/passes';
 import { runShred } from '@/utils/dara/shred/run';
+import { runShredV2Proof } from '@/utils/dara/shred-v2/run';
 import { isPlatformAdmin } from '@/utils/dara/admin';
 import ParseHistory, { type ParseSummary } from '@/components/dara/ParseHistory';
 import type { ParseResult } from '@/utils/dara/parse-result';
@@ -338,6 +339,27 @@ async function enqueueShredAction(formData: FormData): Promise<{ ok: boolean; co
   });
   revalidatePath(`/app/solicitations/${solId}`);
   return { ok: result.ok, count: result.counts.factors + result.counts.requirements, error: result.error };
+}
+
+// TEMPORARY — single-call "shred v2" proof. Runs the whole canonical knowledge-base extraction in one
+// AI call and records whether it truncated + how much came back (stashed on the solicitation notes as
+// shredV2Proof). Does NOT touch the live matrix. Used to decide single-call vs sequenced for production.
+async function shredV2ProofAction(formData: FormData): Promise<{ ok: boolean; count: number; error?: string }> {
+  'use server';
+  const daraUser = await authedUser();
+  const solId = BigInt(String(formData.get('solId')));
+  await requireViewableSolicitation(solId, daraUser);
+  const r = await runShredV2Proof(solId, daraUser.companyId);
+  await recordAudit({
+    action: 'requirement.shred', companyId: daraUser.companyId, actorId: daraUser.id, actorEmail: daraUser.email,
+    entityType: 'solicitation', entityId: solId,
+    metadata: { v2Proof: true, truncated: r.truncated, stopReason: r.stopReason, counts: r.counts, jsonBytes: r.jsonBytes, tokenOut: r.tokenOut }
+  });
+  revalidatePath(`/app/solicitations/${solId}`);
+  const err = r.truncated
+    ? `Single call truncated at ${r.tokenOut} output tokens (${r.jsonBytes} bytes, ${r.counts.requirements} requirements before cutoff).`
+    : r.error;
+  return { ok: r.ok, count: r.counts.requirements, error: err };
 }
 
 // Standalone compliance sweep: check the pass/fail administrative requirements against
@@ -1936,6 +1958,17 @@ export default async function SolicitationDetailPage({
               noun="requirement"
               verb="generated"
               className={btnPrimary}
+            />
+            <AiActionButton
+              action={shredV2ProofAction}
+              fields={{ solId: sid }}
+              idle={<Sparkles className="h-4 w-4" />}
+              label="Shred v2 (single-call proof)"
+              pendingLabel="Running the whole knowledge-base extraction in ONE call…"
+              steps={['Sending the full corpus in a single call…', 'Model is emitting the canonical JSON…', 'Recording completion vs. truncation…']}
+              noun="requirement"
+              verb="extracted"
+              className={btnGhost}
             />
             {complianceTotal > 0 && (
               <ComplianceCheckControl
